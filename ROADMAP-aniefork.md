@@ -31,8 +31,8 @@ merged; delete the row once a merge of upstream brings it back.
 
 | Change | Where | Upstream |
 |---|---|---|
-| **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Not offered |
-| **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Not offered; upstream has the same gap, so it is a candidate for a pull request |
+| **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Offered 2026-10-11 as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266), stacked on #265. Branch `selection-glide`, rewritten in upstream's style |
+| **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
 
 ## Selection glide
 
@@ -130,6 +130,22 @@ git fetch upstream
 git merge upstream/main
 ```
 
+To look before merging (none of this touches the working tree):
+
+```sh
+git fetch upstream
+git log --oneline main..upstream/main
+git diff --stat main...upstream/main -- crates/ui-egui/src/lib.rs crates/ui-egui/src/grid.rs crates/ui-egui/src/control.rs crates/ui-egui/src/ribbon.rs
+git merge-tree --write-tree --name-only main upstream/main
+```
+
+The log is what is new, the diff shows whether upstream changed the files that hold the hooks, and
+the last command lists the files a merge would conflict in (it exits 1 when there are any).
+
+**Backlog:** a scheduled check that does this, runs the gate on a trial merge in a separate folder
+and writes a report, either on the workstation through the Claude app or as a GitHub workflow in
+the fork. Decided 2026-10-11: check by hand for now.
+
 Sync often: upstream lands many commits a day, and small merges are easy. What can still conflict:
 
 - **The hooks above**, when upstream edits the lines around them. Take upstream's code and put
@@ -161,6 +177,14 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (offered upstream):** Both changes were sent to upstream as pull requests from
+  branches cut from `upstream/main` and rewritten in upstream's style (no `aniefork` paths):
+  #265, the clear active cell, with the contributor entry for arcanii; and #266, the selection
+  glide with View › Animations, stacked on #265. The upstream version keeps the glide's state on
+  the grid state, puts the setting's strings in upstream's five catalogs, updates
+  `docs/control-protocol.md` and `docs/ui-parity.md`, and leaves out the
+  `GRIDCRAFT_SELECTION_GLIDE_MS` override. When they merge and upstream is merged back, delete
+  the fork's copies (the `aniefork` module's parts and their hooks) and the table rows.
 - **2026-10-11 (merge of upstream 0.5.0):** Merged 222 upstream commits (`9f896c1`). Three files
   conflicted, each at a hook, and were settled by taking upstream's code and putting the hook
   back: `lib.rs` (module list), `control.rs` (command listing) and `ribbon.rs` (the View tab,
