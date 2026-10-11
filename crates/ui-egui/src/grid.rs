@@ -844,9 +844,10 @@ fn paint_selection(p: &Painter, geo: &Geo, sh: &Sheet, sel: &gridcraft_engine::S
         if r.is_single() && sel.ranges.len() == 1 {
             continue;
         }
-        // The current area's fill moves with its outline (aniefork).
-        let rect = if *r == sel.current() { cur } else { geo.range_rect(sh, *r) };
-        p.rect_filled(rect, 0.0, t.sel_fill);
+        // The current area's fill moves with its outline, and the active cell stays clear (aniefork).
+        for rect in crate::aniefork::selection::fill_rects(geo, sh, sel, *r, cur) {
+            p.rect_filled(rect, 0.0, t.sel_fill);
+        }
     }
     let active = geo.cell_rect(sh, sh.merge_at(sel.active).map(|m| m.start).unwrap_or(sel.active));
     let active = match sh.merge_at(sel.active) {

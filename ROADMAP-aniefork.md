@@ -21,7 +21,7 @@ logged in this file instead.
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | none yet |
-| Fork carries | 1 change upstream lacks (below) |
+| Fork carries | 2 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -31,6 +31,7 @@ merged; delete the row once a merge of upstream brings it back.
 | Change | Where | Upstream |
 |---|---|---|
 | **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` and `control.rs` (listed below) | Not offered |
+| **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Not offered; upstream has the same gap, so it is a candidate for a pull request |
 
 ## Selection glide
 
@@ -75,8 +76,25 @@ The fork glides. WordCraft's fork does the same for the text caret.
   and clicks and scripted moves don't glide. Excel may or may not behave the same.
 - A setting to turn it off (Excel: Options › Advanced › "Provide feedback with animation"), and
   following the system's reduced-motion setting. Today: the environment variable above.
-- The active cell inside a selected range is shaded like the rest of the range (an upstream
-  painting gap in `paint_selection`, seen while checking the glide). It should stay clear.
+
+## The active cell stays clear
+
+In Excel the active cell of a selected range is not shaded: it shows where typing will go.
+Upstream GridCraft shades the whole range alike. The fork leaves the active cell clear.
+
+- **What is left clear:** the active cell in every area of the selection that contains it; the
+  whole merged cell when the active cell is merged; a lone active cell among several areas
+  (Ctrl+click) is not shaded at all. The other areas are shaded whole, and a single selected cell
+  has no fill, as before.
+- **How:** the fill is translucent, so a cell can't be cleared by painting over it. Each area is
+  shaded as up to four rectangles around the active cell (above, below and beside it) that never
+  overlap. Their joins fall on the lines that continue the cell's edges and don't show: checked
+  with gridlines off at 100 %, 115 % and 137 % zoom, at 1× and 1.5× display scale.
+- **With the glide:** the current area's fill follows its gliding outline; the clear cell is at
+  the active cell's real place from the first frame.
+- **Tests:** `cargo test -p gridcraft-ui-egui aniefork` (the rectangles around a hole in every
+  position, hostile numbers, and the fill for a real sheet: one area, several areas, a merged
+  active cell).
 
 ## Hooks in upstream files
 
@@ -87,7 +105,7 @@ still there:
 |---|---|
 | `crates/ui-egui/src/lib.rs` | `pub mod aniefork;` |
 | `crates/ui-egui/src/grid.rs`, `paint_selection` | `cur` (the current area's rectangle) comes from `crate::aniefork::selection::glide(…)`, at the top of the function, instead of `geo.range_rect(sh, sel.current())` further down |
-| `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill loop | the current area is filled at `cur`; the other areas at their cells as before |
+| `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill loop | each area is filled with the rectangles from `crate::aniefork::selection::fill_rects(…)` (the current area at `cur`, the active cell left out) instead of its whole `geo.range_rect(sh, *r)` |
 | `crates/ui-egui/src/grid.rs`, `show`, the marching ants | `marching_phase` comes from `crate::aniefork::selection::ants_phase(…)` instead of stepping by 0.5 per frame |
 | `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
 
@@ -121,6 +139,13 @@ checked-out file has CRLF line endings. It is not a sign that the catalog change
 
 Newest first.
 
+- **2026-10-11 (M1, active cell in a selection):** The active cell inside a selected range is no
+  longer shaded with the rest of the range (upstream's line for it painted a transparent
+  rectangle). The fill now goes around it: in every area of the selection, around the whole merged
+  cell when it is one, and following the gliding outline of the current area. In the `aniefork`
+  module, behind the existing hook in the fill loop of `paint_selection`. Checked in headless
+  renders (light, dark, several areas, a merged cell, and for seams with gridlines off at three
+  zoom levels) and by three tests.
 - **2026-10-11 (M1, selection glide):** The selection outline glides to a new selection instead of
   jumping, like Excel's on Windows: 0.12 s, decelerating, from wherever it is drawn (so a held
   arrow key reads as one motion), with its fill and fill handle; a range grows edge by edge.

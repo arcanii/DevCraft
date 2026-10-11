@@ -24,6 +24,9 @@
 //! always "the cells' rectangle plus what is left of the offset", in screen points. Scrolling
 //! under a gliding outline therefore carries it along, and an arrow key held at the edge of the
 //! window (the sheet scrolls, the cell stays where it is on screen) doesn't make it wobble.
+//!
+//! The selection's fill leaves the active cell clear ([`fill_rects`]), as Excel's does, so it is
+//! plain where typing will go. Upstream shades it like the rest of the selection.
 
 use egui::{Rect, pos2};
 use gridcraft_engine::Selection;
@@ -196,6 +199,41 @@ pub fn glide(ctx: &egui::Context, app: &SheetApp, geo: &Geo, sh: &Sheet, sel: &S
 /// The outline's glide state this frame (for tests and tools).
 pub fn state(ctx: &egui::Context) -> SelectionGlide {
     ctx.data(|d| d.get_temp::<SelectionGlide>(state_id())).unwrap_or_default()
+}
+
+/// The grid's hook for the selection's fill: the rectangles to shade for `range`, one of the
+/// selection's areas. The current area is shaded where its `outline` is drawn this frame (it
+/// glides), the others on their cells, and every area leaves the active cell clear.
+pub fn fill_rects(geo: &Geo, sh: &Sheet, sel: &Selection, range: RangeRef, outline: Rect) -> impl Iterator<Item = Rect> {
+    let area = if range == sel.current() { outline } else { geo.range_rect(sh, range) };
+    around(area, active_rect(geo, sh, sel))
+}
+
+/// Where the active cell is on screen: the whole merged cell when it is part of one.
+fn active_rect(geo: &Geo, sh: &Sheet, sel: &Selection) -> Rect {
+    match sh.merge_at(sel.active) {
+        Some(merged) => geo.range_rect(sh, merged),
+        None => geo.cell_rect(sh, sel.active),
+    }
+}
+
+/// `area` without `hole`: the strips above and below the hole, then what is left beside it. A
+/// translucent fill cannot be painted over to clear it again, so the hole has to be left out.
+/// Rectangles with no size, or made of numbers that are not sane, are dropped.
+fn around(area: Rect, hole: Rect) -> impl Iterator<Item = Rect> {
+    // `intersect` takes the sane side of a NaN, which would make a broken hole cover the area.
+    let hole = if hole.is_finite() { area.intersect(hole) } else { Rect::NOTHING };
+    let parts = if hole.is_positive() {
+        [
+            Rect::from_min_max(area.min, pos2(area.max.x, hole.min.y)),
+            Rect::from_min_max(pos2(area.min.x, hole.max.y), area.max),
+            Rect::from_min_max(pos2(area.min.x, hole.min.y), pos2(hole.min.x, hole.max.y)),
+            Rect::from_min_max(pos2(hole.max.x, hole.min.y), pos2(area.max.x, hole.max.y)),
+        ]
+    } else {
+        [area, Rect::NOTHING, Rect::NOTHING, Rect::NOTHING]
+    };
+    parts.into_iter().filter(|r| r.is_positive() && r.is_finite())
 }
 
 /// The grid's hook for the marching ants around a copied range: their dash offset by egui's
@@ -461,6 +499,122 @@ mod tests {
             let p = ants_phase_at(now);
             assert!((0.0..=8.0).contains(&p), "{now}: {p}");
         }
+    }
+
+    fn area_of(parts: &[Rect]) -> f32 {
+        parts.iter().map(Rect::area).sum()
+    }
+
+    #[test]
+    fn the_fill_goes_around_the_active_cell() {
+        let area = Rect::from_min_max(pos2(100.0, 50.0), pos2(400.0, 250.0));
+        let check = |hole: Rect, pieces: usize| {
+            let parts: Vec<Rect> = around(area, hole).collect();
+            assert_eq!(parts.len(), pieces, "{hole:?}: {parts:?}");
+            let cut = area.intersect(hole);
+            let cut_area = if cut.is_positive() { cut.area() } else { 0.0 };
+            assert!((area_of(&parts) - (area.area() - cut_area)).abs() < 0.5, "everything but the hole is shaded: {hole:?}");
+            for (i, a) in parts.iter().enumerate() {
+                assert!(area.contains_rect(*a), "nothing outside the area: {a:?}");
+                assert!(!a.shrink(0.01).intersects(hole), "the hole stays clear: {a:?} vs {hole:?}");
+                // No part is shaded twice: the fill is translucent, an overlap would show darker.
+                assert!(parts.iter().skip(i + 1).all(|b| !a.shrink(0.01).intersects(*b)), "{parts:?}");
+            }
+        };
+        // In the middle, in each corner (the usual place: where the drag began), along an edge.
+        check(Rect::from_min_max(pos2(200.0, 100.0), pos2(264.0, 116.0)), 4);
+        check(Rect::from_min_max(pos2(100.0, 50.0), pos2(164.0, 66.0)), 2);
+        check(Rect::from_min_max(pos2(336.0, 50.0), pos2(400.0, 66.0)), 2);
+        check(Rect::from_min_max(pos2(100.0, 234.0), pos2(164.0, 250.0)), 2);
+        check(Rect::from_min_max(pos2(336.0, 234.0), pos2(400.0, 250.0)), 2);
+        check(Rect::from_min_max(pos2(100.0, 100.0), pos2(164.0, 116.0)), 3);
+        // A merged active cell as wide, or as tall, as the area; and one that is all of it.
+        check(Rect::from_min_max(pos2(100.0, 100.0), pos2(400.0, 132.0)), 2);
+        check(Rect::from_min_max(pos2(200.0, 50.0), pos2(264.0, 250.0)), 2);
+        check(area, 0);
+        check(area.expand(30.0), 0);
+        // The active cell is in another area, or only partly under a gliding outline.
+        check(Rect::from_min_max(pos2(500.0, 300.0), pos2(564.0, 316.0)), 1);
+        check(Rect::from_min_max(pos2(400.0, 50.0), pos2(464.0, 66.0)), 1);
+        check(Rect::from_min_max(pos2(380.0, 240.0), pos2(444.0, 256.0)), 2);
+    }
+
+    #[test]
+    fn a_fill_of_hostile_numbers_shades_nothing_broken() {
+        let sane = Rect::from_min_max(pos2(0.0, 0.0), pos2(64.0, 16.0));
+        let bad = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX, f32::MIN, -1.0, 0.0];
+        for a in bad {
+            for b in bad {
+                let weird = Rect::from_min_max(pos2(a, b), pos2(b, a));
+                for (area, hole) in [(sane, weird), (weird, sane), (weird, weird)] {
+                    for part in around(area, hole) {
+                        assert!(part.is_positive() && part.is_finite(), "{area:?} around {hole:?}: {part:?}");
+                    }
+                }
+                // A hole that makes no sense leaves the whole area shaded.
+                if !weird.intersects(sane) {
+                    assert_eq!(around(sane, weird).collect::<Vec<_>>(), vec![sane]);
+                }
+            }
+        }
+    }
+
+    /// The fill for the real sheet: every area of the selection, the active cell left out.
+    #[test]
+    fn a_selected_range_leaves_its_active_cell_clear() {
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        let view = Rect::from_min_max(pos2(0.0, 0.0), pos2(1200.0, 800.0));
+        let fill = |session: &gridcraft_engine::Session| -> (Vec<Rect>, Rect, Geo) {
+            let d = session.active().unwrap();
+            let sh = d.wb.active().unwrap();
+            let geo = Geo::new(sh, view, egui::Vec2::ZERO);
+            let outline = geo.range_rect(sh, d.selection.current());
+            let parts = d.selection.ranges.iter().flat_map(|r| fill_rects(&geo, sh, &d.selection, *r, outline)).collect();
+            (parts, active_rect(&geo, sh, &d.selection), geo)
+        };
+        let cells = |session: &gridcraft_engine::Session, geo: &Geo, a1: &str| {
+            let sh = session.active().unwrap().wb.active().unwrap();
+            geo.range_rect(sh, RangeRef::parse(a1).unwrap())
+        };
+        let shaded = |parts: &[Rect], r: Rect| parts.iter().any(|p| p.intersects(r.shrink(1.0)));
+
+        // One area, the active cell at its corner and then inside it (Tab and Enter move it).
+        for active in ["B2", "C4", "D5"] {
+            session.run("selection.set", json!({"range": "B2:D5", "active": active})).unwrap();
+            let (parts, hole, geo) = fill(&session);
+            assert_eq!(hole, cells(&session, &geo, active));
+            assert!(!shaded(&parts, hole), "{active} stays clear: {parts:?}");
+            for other in ["B2", "B5", "C3", "C4", "D2", "D5"].into_iter().filter(|c| *c != active) {
+                assert!(shaded(&parts, cells(&session, &geo, other)), "{other} is shaded with {active} active");
+            }
+            let range = cells(&session, &geo, "B2:D5");
+            assert!((area_of(&parts) - (range.area() - hole.area())).abs() < 0.5);
+        }
+
+        // Several areas: the others are shaded whole, a lone active cell not at all.
+        session.run("selection.set", json!({"range": "A1:A3,C2:D3,F6", "active": "F6"})).unwrap();
+        let (parts, hole, geo) = fill(&session);
+        assert_eq!(session.active().unwrap().selection.ranges.len(), 3);
+        assert!(!shaded(&parts, hole));
+        let whole = cells(&session, &geo, "A1:A3").area() + cells(&session, &geo, "C2:D3").area();
+        assert!((area_of(&parts) - whole).abs() < 0.5, "{parts:?}");
+
+        // A merged active cell is left clear as a whole.
+        session.run("selection.set", json!({"range": "B2:C3"})).unwrap();
+        session.run("home.mergeCells", json!({})).unwrap();
+        session.run("selection.set", json!({"range": "B2:E6", "active": "B2"})).unwrap();
+        let (parts, hole, geo) = fill(&session);
+        assert_eq!(hole, cells(&session, &geo, "B2:C3"), "the merged cell, not just its first cell");
+        assert!(!shaded(&parts, hole));
+        assert!(shaded(&parts, cells(&session, &geo, "D2")) && shaded(&parts, cells(&session, &geo, "B4")));
+
+        // Mid-glide the current area is shaded where its outline is, not on its cells.
+        let d = session.active().unwrap();
+        let sh = d.wb.active().unwrap();
+        let outline = Rect::from_min_max(pos2(600.0, 400.0), pos2(700.0, 500.0));
+        let parts: Vec<Rect> = fill_rects(&geo, sh, &d.selection, d.selection.current(), outline).collect();
+        assert_eq!(parts, vec![outline]);
     }
 
     fn harness(dt: f64) -> egui_kittest::Harness<'static, SheetApp> {
