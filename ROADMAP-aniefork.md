@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-11, upstream `9f896c1` (GridCraft 0.5.0), 222 commits |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 2 changes upstream lacks (below) |
+| Fork carries | 3 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -33,6 +33,7 @@ merged; delete the row once a merge of upstream brings it back.
 |---|---|---|
 | **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Offered 2026-10-11 as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266), stacked on #265. Branch `selection-glide`, rewritten in upstream's style |
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
+| **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs` and `ribbon.rs` | Not offered |
 
 ## Selection glide
 
@@ -106,6 +107,30 @@ Upstream GridCraft shades the whole range alike. The fork leaves the active cell
   position, hostile numbers, and the fill for a real sheet: one area, several areas, a merged
   active cell).
 
+## File ▸ Options
+
+The settings dialog Excel has and upstream doesn't. It holds the settings that work today:
+
+- **General:** the display theme and the interface language (upstream's settings, changed through
+  upstream's own commands, and still on the View tab too), and the user name, which is the author
+  of comments and notes.
+- **Feedback:** Animations (the selection glide).
+- **Ribbon:** Show the Developer tab.
+
+The dialog edits a copy and nothing changes until OK. `file.options` is the command behind it:
+with parameters it changes the settings named (`theme`, `language`, `userName`, `animations`,
+`developerTab`) and returns all of them; without parameters it only reports them and never opens
+the dialog. A value that makes no sense is an error and changes nothing. It is a UI command of the
+fork's, so upstream's generated command checklist is not affected.
+
+Upstream's labels in the dialog follow the interface language; the fork's own are in English.
+
+### Open
+- The rest of what Excel's Options holds, as the features behind it come to exist: the direction
+  Enter moves, the default font and sheets of a new workbook, R1C1 references. The engine has
+  preferences for these, but nothing reads them yet.
+- Translations of the fork's labels in the dialog.
+
 ## Hooks in upstream files
 
 Everything else the fork adds is in files of its own. After merging upstream, check these are
@@ -119,9 +144,12 @@ still there:
 | `crates/ui-egui/src/grid.rs`, `show`, the marching ants | `marching_phase` comes from `crate::aniefork::selection::ants_phase(…)` instead of stepping by 0.5 per frame |
 | `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
-| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `animations: bool` (default `true`), between `formula_bar_expanded` and `status_bar` |
+| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the fields `animations: bool` (default `true`) and `developer_tab: bool` (default `false`), between `formula_bar_expanded` and `status_bar` |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/ribbon.rs`, `view`, in the Display theme column, after the picker | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
+| `crates/ui-egui/src/ribbon.rs`, `file_menu`, after the loop over upstream's items | `crate::aniefork::file_menu(app, ui);` adds Options… |
+| `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them; every fork dialog comes through here |
+| `crates/ui-egui/src/dialogs.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
 
 ## Syncing with upstream
 
@@ -177,6 +205,10 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (File ▸ Options):** A settings dialog, opened from the File menu: theme, language,
+  user name, Animations, and whether the ribbon shows the Developer tab (the tab itself comes
+  next). `file.options` is its command, and agents can open, fill in and confirm the dialog.
+  Checked in headless renders and by six tests, one of them through the real File menu.
 - **2026-10-11 (offered upstream):** Both changes were sent to upstream as pull requests from
   branches cut from `upstream/main` and rewritten in upstream's style (no `aniefork` paths):
   #265, the clear active cell, with the contributor entry for arcanii; and #266, the selection

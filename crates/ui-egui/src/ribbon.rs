@@ -230,6 +230,8 @@ fn file_menu(app: &mut SheetApp, ui: &mut Ui) {
                 ui.close();
             }
         }
+        // The fork's File items (aniefork).
+        crate::aniefork::file_menu(app, ui);
     });
 }
 

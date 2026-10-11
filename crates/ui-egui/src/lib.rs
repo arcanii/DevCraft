@@ -50,6 +50,8 @@ pub struct UiState {
     pub formula_bar_expanded: bool,
     /// Motion in the UI: the selection outline glides to a new selection (aniefork).
     pub animations: bool,
+    /// The ribbon shows the Developer tab (File ▸ Options; aniefork).
+    pub developer_tab: bool,
     pub status_bar: bool,
     pub recent: Vec<String>,
     /// Interface language. English by default (so tests and headless renders never depend on the
@@ -70,6 +72,7 @@ impl Default for UiState {
             formula_bar: true,
             formula_bar_expanded: false,
             animations: true,
+            developer_tab: false,
             status_bar: true,
             recent: vec![],
             language: i18n::Language::En,

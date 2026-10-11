@@ -585,7 +585,13 @@ impl Dialog {
                 );
                 return None;
             }
-            _ => return None,
+            // Any other name may be one of the fork's dialogs (aniefork).
+            name => {
+                let (title, values, command) = crate::aniefork::dialog(app, name, &params)?;
+                let mut d = Dialog::custom(name, title, values);
+                d.command = command;
+                d
+            }
         };
         Some(d)
     }
@@ -846,6 +852,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         open = false;
                     }
                 }
+                // The fork's dialogs (aniefork).
+                _ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(app, ui, &mut d, &mut confirm, &mut open),
                 _ => form(ui, &mut d, &mut confirm, &mut open),
             }
         });

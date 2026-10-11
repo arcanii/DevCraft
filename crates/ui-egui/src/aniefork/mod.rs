@@ -4,6 +4,8 @@
 //! (`storytold/gridcraft`) only ever meet the short hooks that call into it. See
 //! `AGENTS-aniefork.md` at the repository root.
 
+pub mod developer;
+pub mod options;
 pub mod selection;
 
 use serde_json::{Value as Json, json};
@@ -13,18 +15,27 @@ use crate::i18n::Language;
 
 /// The fork's UI-only commands: id, label and params doc. Like upstream's own (`view.theme`…),
 /// they act on the window rather than the workbook, so they live in the UI crate.
-const COMMANDS: &[(&str, &str, &str)] = &[("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}")];
+const COMMANDS: &[(&str, &str, &str)] = &[
+    ("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}"),
+    (
+        "file.options",
+        "Options",
+        "{theme?: \"system\"|\"light\"|\"dark\", language?: \"en\"…, userName?, animations?: bool, developerTab?: bool} changes the settings named and returns all of them; with no params it only reports them",
+    ),
+];
 
 /// Hook of `SheetApp::run_ui_command`: runs `id` when it is one of the fork's commands.
 ///
 /// - `view.animations {on?: bool}` turns motion in the UI on or off (today: the selection
 ///   outline's glide); without `on` it toggles. Returns `{on}`. Saved with the UI preferences.
+/// - `file.options {…}` is the settings dialog's command: see [`options`].
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     match id {
         "view.animations" => {
             app.ui.animations = p.get("on").and_then(Json::as_bool).unwrap_or(!app.ui.animations);
             Some(Ok(json!({"on": app.ui.animations})))
         }
+        "file.options" => Some(options::run(app, p)),
         _ => None,
     }
 }
@@ -54,6 +65,36 @@ fn tr(lang: Language, text: &'static str) -> &'static str {
         (ANIMATIONS_HINT, Language::Ru) => "Рамка выделения плавно скользит к новой ячейке, а не перескакивает",
         (ANIMATIONS_HINT, Language::PtBr) => "Desliza o contorno da seleção até a nova célula em vez de saltar",
         _ => text,
+    }
+}
+
+/// Hook of `Dialog::open`: for a name that is one of the fork's dialogs, its title, the values it
+/// starts from, and the command OK runs with those values.
+pub fn dialog(app: &SheetApp, name: &str, _params: &Json) -> Option<(&'static str, Json, Option<&'static str>)> {
+    match name {
+        options::NAME => Some(("Options", options::values(app), Some("file.options"))),
+        _ => None,
+    }
+}
+
+/// Hook of `dialogs::show`: whether the fork draws the dialog of this name.
+pub fn draws_dialog(name: &str) -> bool {
+    matches!(name, options::NAME)
+}
+
+/// Hook of `dialogs::show`: draws one of the fork's dialogs.
+pub fn dialog_ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut crate::dialogs::Dialog, confirm: &mut bool, open: &mut bool) {
+    if d.name == options::NAME {
+        options::ui(app, ui, d, confirm, open);
+    }
+}
+
+/// Hook of the ribbon's File menu: the fork's items, after upstream's.
+pub fn file_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
+    ui.separator();
+    if ui.button("Options…").clicked() {
+        app.open_dialog(options::NAME, json!({}));
+        ui.close();
     }
 }
 
