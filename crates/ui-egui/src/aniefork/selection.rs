@@ -15,7 +15,8 @@
 //! - another sheet or workbook, an outline that wasn't drawn the frame before, a move that starts
 //!   or ends off screen: it appears in place;
 //! - a control-channel screenshot is on its way, or egui's animations are off (the headless
-//!   harness turns them off): it appears in place, so scripted pictures never catch it in flight.
+//!   harness turns them off): it appears in place, so scripted pictures never catch it in flight;
+//! - Animations is turned off (View tab, `view.animations`): it jumps, as upstream does.
 //!
 //! Only painting is delayed. The selection itself, hit testing (the fill handle, the border you
 //! drag) and the cell editor use the real cells at once.
@@ -183,8 +184,9 @@ pub fn glide(ctx: &egui::Context, app: &SheetApp, geo: &Geo, sh: &Sheet, sel: &S
         view: geo.cells,
         now: ctx.input(|i| i.time),
         frame_nr: ctx.cumulative_frame_nr(),
-        // egui's own switch for "no animations"; and a screenshot shows the outline on its cells.
-        animate: ctx.global_style().animation_time > 0.0 && !app.shots.in_flight(),
+        // The Animations setting; egui's own switch for "no animations"; and a screenshot shows
+        // the outline on its cells.
+        animate: app.ui.animations && ctx.global_style().animation_time > 0.0 && !app.shots.in_flight(),
     };
     let (outline, gliding) = ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<SelectionGlide>(state_id());
@@ -253,6 +255,7 @@ fn ants_phase_at(now: f64) -> f32 {
 mod tests {
     use super::*;
     use egui::{Vec2, vec2};
+    use egui_kittest::kittest::Queryable;
     use gridcraft_engine::core::CellRef;
     use serde_json::json;
 
@@ -676,6 +679,29 @@ mod tests {
         }
         assert!(!state(&h.ctx).is_gliding(), "and comes to rest");
         assert_eq!(state(&h.ctx).drawn(), b1, "exactly on the cell");
+        // Turned off in the View tab (the real checkbox), the outline jumps; turned on, it glides again.
+        h.state_mut().ui.ribbon_tab = "View".into();
+        h.run_steps(2);
+        h.get_by_label("Animations").click();
+        h.run_steps(2);
+        assert!(!h.state().ui.animations, "the checkbox turns the setting off");
+        h.state_mut().run("selection.set", json!({"cell": "E9"})).unwrap();
+        let e9 = cell_rect(&h, "E9");
+        for _ in 0..5 {
+            h.step();
+            assert_eq!(state(&h.ctx).drawn(), e9, "no animations: the outline is on its cells at once");
+            assert!(!state(&h.ctx).is_gliding());
+        }
+        assert_eq!(h.state_mut().run("view.animations", json!({})), Ok(json!({"on": true})));
+        h.state_mut().run("selection.set", json!({"cell": "B1"})).unwrap();
+        h.step();
+        h.step();
+        let x = state(&h.ctx).drawn().min.x;
+        assert!(state(&h.ctx).is_gliding() && x > b1.min.x && x < e9.min.x, "turned back on, it glides: {x}");
+        for _ in 0..40 {
+            h.step();
+        }
+        assert_eq!(state(&h.ctx).drawn(), cell_rect(&h, "B1"));
         // Zooming moves the cell on screen but doesn't glide the outline.
         h.state_mut().run("view.zoom", json!({"percent": 150})).unwrap();
         for _ in 0..3 {

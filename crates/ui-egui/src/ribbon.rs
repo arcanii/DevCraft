@@ -1570,6 +1570,8 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
         if ui.checkbox(&mut dark, "Dark Mode").changed() {
             app.ui.dark = dark;
         }
+        // The fork's settings: settings live in the View tab (aniefork).
+        crate::aniefork::view_options(app, ui);
     });
 }
 

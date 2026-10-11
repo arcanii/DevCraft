@@ -30,7 +30,7 @@ merged; delete the row once a merge of upstream brings it back.
 
 | Change | Where | Upstream |
 |---|---|---|
-| **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` and `control.rs` (listed below) | Not offered |
+| **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Not offered |
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Not offered; upstream has the same gap, so it is a candidate for a pull request |
 
 ## Selection glide
@@ -54,7 +54,12 @@ The fork glides. WordCraft's fork does the same for the text caret.
 - **Timing:** 0.12 s with a decelerating (ease-out cubic) curve, the same at any frame rate.
   `GRIDCRAFT_SELECTION_GLIDE_MS` overrides the duration: `0` turns the glide off, a large value (up
   to 10000) slows it down enough to study.
-- **Off switches:** the glide stands down when egui's animations are off
+- **Turning it off:** View › **Animations** (a checkbox under Dark Mode: settings live in the
+  View tab, and there is no Options dialog). Off, the outline jumps as upstream's does. The choice
+  is saved with the other UI preferences (`animations` in `ui.json`; on by default, and a file
+  written before the setting existed leaves it on). Agents: `view.animations {on?}` sets or
+  toggles it and returns `{on}`; it is listed by `engine.commands` and shown by `ui.inspect`.
+- **Other off switches:** the glide stands down when egui's animations are off
   (`style.animation_time == 0`). The headless test harness (`egui_kittest`, so the offscreen
   `snapshot` example too) turns them off. In the desktop app, a screenshot asked for over the
   control channel (`ui.screenshot`) holds the outline on its cells from the request until the
@@ -74,8 +79,10 @@ The fork glides. WordCraft's fork does the same for the text caret.
   this for Word's caret (its `ROADMAP-aniefork.md` has the method): 100 ms along
   `cubic-bezier(0,0,0,1)`, a second key snaps to where the caret was heading before gliding on,
   and clicks and scripted moves don't glide. Excel may or may not behave the same.
-- A setting to turn it off (Excel: Options › Advanced › "Provide feedback with animation"), and
-  following the system's reduced-motion setting. Today: the environment variable above.
+- Following the system's reduced-motion setting (Windows: Settings › Accessibility › Visual
+  effects › Animation effects), which Excel does. Today the Animations setting is the user's own.
+- An Options dialog (Excel: File › Options, where "Provide feedback with animation" lives).
+  Neither the fork nor upstream has one; until then the setting is on the View tab.
 
 ## The active cell stays clear
 
@@ -108,6 +115,10 @@ still there:
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill loop | each area is filled with the rectangles from `crate::aniefork::selection::fill_rects(…)` (the current area at `cur`, the active cell left out) instead of its whole `geo.range_rect(sh, *r)` |
 | `crates/ui-egui/src/grid.rs`, `show`, the marching ants | `marching_phase` comes from `crate::aniefork::selection::ants_phase(…)` instead of stepping by 0.5 per frame |
 | `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
+| `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed: `v.extend(crate::aniefork::commands());` |
+| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `animations: bool` (default `true`), between `formula_bar_expanded` and `status_bar` |
+| `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
+| `crates/ui-egui/src/ribbon.rs`, `view`, under the Dark Mode checkbox | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
 
 ## Syncing with upstream
 
@@ -139,6 +150,12 @@ checked-out file has CRLF line endings. It is not a sign that the catalog change
 
 Newest first.
 
+- **2026-10-11 (M1, Animations setting):** The glide can be turned off: View › Animations, a
+  checkbox under Dark Mode, saved with the UI preferences and on by default. `view.animations
+  {on?}` does the same for agents. The setting's logic is in the `aniefork` module; upstream's
+  files get the saved field and three one-line hooks (the command, its listing, the checkbox).
+  Checked by clicking the real checkbox in the headless app (off: the outline jumps; on again: it
+  glides) and by three more tests.
 - **2026-10-11 (M1, active cell in a selection):** The active cell inside a selected range is no
   longer shaded with the rest of the range (upstream's line for it painted a transparent
   rectangle). The fill now goes around it: in every area of the selection, around the whole merged

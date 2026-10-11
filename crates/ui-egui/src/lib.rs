@@ -40,6 +40,8 @@ pub struct UiState {
     pub ribbon_collapsed: bool,
     pub formula_bar: bool,
     pub formula_bar_expanded: bool,
+    /// Motion in the UI: the selection outline glides to a new selection (aniefork).
+    pub animations: bool,
     pub status_bar: bool,
     pub recent: Vec<String>,
 }
@@ -52,6 +54,7 @@ impl Default for UiState {
             ribbon_collapsed: false,
             formula_bar: true,
             formula_bar_expanded: false,
+            animations: true,
             status_bar: true,
             recent: vec![],
         }
@@ -170,6 +173,10 @@ impl SheetApp {
 
     /// UI-only commands (dialogs, view toggles that aren't saved in the file).
     fn run_ui_command(&mut self, id: &str, p: &Json) -> Option<Result<Json, String>> {
+        // The fork's own UI commands (aniefork).
+        if let Some(r) = aniefork::run_command(self, id, p) {
+            return Some(r);
+        }
         let r = match id {
             "ui.ribbonTab" => {
                 self.ui.ribbon_tab = p.get("tab").and_then(Json::as_str).unwrap_or("Home").to_string();
