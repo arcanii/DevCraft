@@ -1,0 +1,131 @@
+# GridCraft aniefork roadmap
+
+This is the fork's own record: [arcanii/gridcraft](https://github.com/arcanii/gridcraft), a fork of
+[storytold/gridcraft](https://github.com/storytold/gridcraft). The sister forks
+[arcanii/wordcraft](https://github.com/arcanii/wordcraft) and
+[arcanii/pdfcraft](https://github.com/arcanii/pdfcraft) keep the same kind of file, and all three
+follow the same rules ([`AGENTS-aniefork.md`](AGENTS-aniefork.md)).
+
+Upstream's [ROADMAP.md](ROADMAP.md), `docs/`, `CLAUDE.md` and `AGENTS.md` are kept **identical to
+upstream** here, so merging upstream doesn't conflict on bookkeeping. Work done in the fork is
+logged in this file instead.
+
+- **Fork work:** add a line to the log below, and keep the tables true. Do not edit `ROADMAP.md`
+  or upstream's `docs/`.
+- **A branch meant as an upstream pull request:** follow upstream's rules there (`CLAUDE.md`),
+  including its progress documents. Cut the branch from `upstream/main`, not from the fork's `main`.
+
+## Sync status
+
+| | |
+|---|---|
+| Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
+| Last merge of upstream | none yet |
+| Fork carries | 1 change upstream lacks (below) |
+
+## What the fork carries
+
+Changes in the fork that upstream does not have. Update the last column when one is offered or
+merged; delete the row once a merge of upstream brings it back.
+
+| Change | Where | Upstream |
+|---|---|---|
+| **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` and `control.rs` (listed below) | Not offered |
+
+## Selection glide
+
+Excel for Windows doesn't move its cell cursor instantly: press an arrow key or click a cell and
+the border slides to the new place; extend the selection and it grows. Upstream GridCraft jumps.
+The fork glides. WordCraft's fork does the same for the text caret.
+
+- **What glides:** the outline of the selection's current area, together with its fill and its
+  fill handle, when the selection changes: arrows, Enter, Tab, Home/End, a click, a drag,
+  Shift+arrows, the Name Box, Go To, any command. A new move takes over from wherever the outline
+  is drawn, so a held arrow key reads as one continuous motion. A selection that grows or shrinks
+  moves edge by edge; the anchored corner stays put.
+- **What doesn't:** the same cells moving on screen (scrolling, zoom, a resized column or window)
+  keep their outline glued to them. Another sheet or workbook, an outline that wasn't drawn the
+  frame before, and moves that start or end off screen appear in place. An arrow key held at the
+  edge of the window scrolls the sheet under an outline that stays where it is. The header
+  highlight, the Name Box and the other areas of a multiple selection change at once.
+- **Only painting waits.** The selection itself, hit testing (the fill handle, the border you drag)
+  and the cell editor use the real cells immediately; typing is never held up by a glide.
+- **Timing:** 0.12 s with a decelerating (ease-out cubic) curve, the same at any frame rate.
+  `GRIDCRAFT_SELECTION_GLIDE_MS` overrides the duration: `0` turns the glide off, a large value (up
+  to 10000) slows it down enough to study.
+- **Off switches:** the glide stands down when egui's animations are off
+  (`style.animation_time == 0`). The headless test harness (`egui_kittest`, so the offscreen
+  `snapshot` example too) turns them off. In the desktop app, a screenshot asked for over the
+  control channel (`ui.screenshot`) holds the outline on its cells from the request until the
+  picture is delivered. Either way, scripted pictures never catch an outline in flight.
+- **Marching ants:** the dashes around a copied range now advance by the clock (the same pace as
+  before at rest) instead of once per painted frame; otherwise every glide, which repaints each
+  frame, made them lurch forward.
+- **Clean room:** the behaviour is from using Excel as a user; nothing was read from the Excel
+  program. The duration and curve are our estimate.
+- **Tests:** `cargo test -p gridcraft-ui-egui aniefork` (the motion, frame-rate independence,
+  retargeting, scrolling and view changes, off-screen and far edges, hostile numbers, the outline
+  gliding in the real grid, and a control-channel screenshot holding it still).
+
+### Open
+- Measure Excel's cell cursor (duration, curve, what long jumps and scrolling moves do) from a
+  capture of its window and set `GLIDE_SECS` and the curve to match. WordCraft's fork has done
+  this for Word's caret (its `ROADMAP-aniefork.md` has the method): 100 ms along
+  `cubic-bezier(0,0,0,1)`, a second key snaps to where the caret was heading before gliding on,
+  and clicks and scripted moves don't glide. Excel may or may not behave the same.
+- A setting to turn it off (Excel: Options › Advanced › "Provide feedback with animation"), and
+  following the system's reduced-motion setting. Today: the environment variable above.
+- The active cell inside a selected range is shaded like the rest of the range (an upstream
+  painting gap in `paint_selection`, seen while checking the glide). It should stay clear.
+
+## Hooks in upstream files
+
+Everything else the fork adds is in files of its own. After merging upstream, check these are
+still there:
+
+| File | Hook |
+|---|---|
+| `crates/ui-egui/src/lib.rs` | `pub mod aniefork;` |
+| `crates/ui-egui/src/grid.rs`, `paint_selection` | `cur` (the current area's rectangle) comes from `crate::aniefork::selection::glide(…)`, at the top of the function, instead of `geo.range_rect(sh, sel.current())` further down |
+| `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill loop | the current area is filled at `cur`; the other areas at their cells as before |
+| `crates/ui-egui/src/grid.rs`, `show`, the marching ants | `marching_phase` comes from `crate::aniefork::selection::ants_phase(…)` instead of stepping by 0.5 per frame |
+| `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
+
+## Syncing with upstream
+
+```sh
+git fetch upstream
+git merge upstream/main
+```
+
+Sync often: upstream lands many commits a day, and small merges are easy. What can still conflict:
+
+- **The hooks above**, when upstream edits the selection painting in `grid.rs` or the screenshot
+  queue in `control.rs`. Take upstream's code and put the hook back.
+- **`ATTRIBUTION.md`:** when both sides add assets (the fork has none so far).
+
+After a merge, run `cargo xtask ci` before committing it, and update the tables above.
+
+## Building
+
+The workspace says `rust-version = "1.90"`, but egui 0.36 needs Rust 1.95 or newer; an older
+toolchain fails with a dependency error (pdfcraft's fork found the same and carries a fix).
+`cargo xtask ci` also needs the `wasm32-unknown-unknown` target.
+
+On Windows the gate's last step fails on an untouched checkout: `cargo xtask parity --check`
+compares the generated text with `docs/parity.md` byte for byte, and with `core.autocrlf=true` the
+checked-out file has CRLF line endings. It is not a sign that the catalog changed. The other steps
+(fmt, clippy, tests, assets, layers, wasm) are meaningful there.
+
+## Log
+
+Newest first.
+
+- **2026-10-11 (M1, selection glide):** The selection outline glides to a new selection instead of
+  jumping, like Excel's on Windows: 0.12 s, decelerating, from wherever it is drawn (so a held
+  arrow key reads as one motion), with its fill and fill handle; a range grows edge by edge.
+  Scrolling, zoom, other sheets and off-screen moves don't glide, and control-channel screenshots
+  and the headless harness always see it at rest. The marching ants now run by the clock. All of
+  it is in the new `aniefork` module of `ui-egui`, with hooks in `grid.rs` and `control.rs`.
+  Checked in a frame-by-frame headless render, in the desktop app with the glide slowed to 10 s,
+  and by twelve tests. This file and `AGENTS-aniefork.md` were started.

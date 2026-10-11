@@ -50,6 +50,13 @@ pub struct Shots {
     pending: Vec<(u64, Option<String>, Sender<ControlResponse>, f64)>,
 }
 
+impl Shots {
+    /// A screenshot was asked for and hasn't been delivered yet: animations hold still (aniefork).
+    pub(crate) fn in_flight(&self) -> bool {
+        !self.queued.is_empty() || !self.pending.is_empty()
+    }
+}
+
 fn ok(v: Json) -> Outcome {
     Outcome::Done(json!({"ok": true, "result": v}))
 }

@@ -425,7 +425,8 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     header_menu(app, ui);
     context_menu(app, ui);
     if app.session.clipboard.is_some() {
-        app.grid.marching_phase = (app.grid.marching_phase + 0.5) % 8.0;
+        // The ants march by the clock, not per frame: a gliding outline repaints more often (aniefork).
+        app.grid.marching_phase = crate::aniefork::selection::ants_phase(ui.ctx());
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
     }
 }
@@ -836,12 +837,15 @@ fn paint_cf_icon(p: &Painter, r: Rect, set: &str, idx: usize) {
 }
 
 fn paint_selection(p: &Painter, geo: &Geo, sh: &Sheet, sel: &gridcraft_engine::Selection, t: &Tokens, app: &SheetApp) {
+    // The current area's outline glides to a new selection instead of jumping (aniefork).
+    let cur = crate::aniefork::selection::glide(p.ctx(), app, geo, sh, sel);
     // Fill all areas except the active cell.
     for r in &sel.ranges {
         if r.is_single() && sel.ranges.len() == 1 {
             continue;
         }
-        let rect = geo.range_rect(sh, *r);
+        // The current area's fill moves with its outline (aniefork).
+        let rect = if *r == sel.current() { cur } else { geo.range_rect(sh, *r) };
         p.rect_filled(rect, 0.0, t.sel_fill);
     }
     let active = geo.cell_rect(sh, sh.merge_at(sel.active).map(|m| m.start).unwrap_or(sel.active));
@@ -852,7 +856,6 @@ fn paint_selection(p: &Painter, geo: &Geo, sh: &Sheet, sel: &gridcraft_engine::S
     if !(sel.ranges.len() == 1 && sel.current().is_single()) {
         p.rect_filled(active.shrink(1.0), 0.0, t.grid_bg.gamma_multiply(0.0));
     }
-    let cur = geo.range_rect(sh, sel.current());
     // Editing a formula: outline its references instead of the selection.
     if let Some(ed) = &app.editor
         && ed.is_formula()
