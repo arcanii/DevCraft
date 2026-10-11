@@ -2,16 +2,17 @@
 //! give GridCraft new abilities (web panels, Python). Designed in `docs/decisions-aniefork.md`
 //! (ADR-0001).
 //!
-//! This is the subsystem's first piece, and it runs no code: it finds modules, reads their
-//! manifests, fingerprints exactly what they contain, and keeps the user's decisions to trust
-//! them. Everything that later serves a panel or runs a script asks this crate first whether the
-//! module is trusted and what it was granted.
+//! It finds modules, reads their manifests, fingerprints exactly what they contain, keeps the
+//! user's decisions to trust them, and runs a trusted module's Python scripts. Whatever runs or
+//! serves anything of a module asks first, here, whether the module is trusted and what it was
+//! granted.
 //!
 //! - [`manifest`]: `module.toml`, and the permissions a module can ask for.
 //! - [`module`]: modules on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
+//! - [`python`]: running a trusted module's scripts in a process of their own.
 //! - [`starter`]: "New Module".
-//! - [`paths`]: where modules and decisions are kept.
+//! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
 //!
 //! It has no dependency on the UI toolkit or on the rest of GridCraft, so that it can be offered
 //! upstream as a piece of its own.
@@ -21,6 +22,8 @@
 pub mod manifest;
 pub mod module;
 pub mod paths;
+pub mod python;
+pub mod settings;
 pub mod sha256;
 pub mod starter;
 pub mod trust;

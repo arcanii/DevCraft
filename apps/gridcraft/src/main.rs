@@ -160,6 +160,11 @@ fn services() -> Services {
             };
             let _ = std::process::Command::new(cmd).arg(url).spawn();
         })),
+        // A question only the person at the screen can answer: the system's own dialog (aniefork).
+        confirm: Some(Box::new(|title: &str, text: &str| {
+            let dialog = rfd::MessageDialog::new().set_level(rfd::MessageLevel::Warning).set_title(title).set_description(text);
+            dialog.set_buttons(rfd::MessageButtons::YesNo).show() == rfd::MessageDialogResult::Yes
+        })),
         ..Default::default()
     }
 }

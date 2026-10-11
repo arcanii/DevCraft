@@ -32,3 +32,8 @@ pub fn modules_dir() -> Option<PathBuf> {
 pub fn trust_file() -> Option<PathBuf> {
     data_dir().map(|dir| dir.join("trusted-modules.json"))
 }
+
+/// The Development subsystem's own settings (which Python to use).
+pub fn settings_file() -> Option<PathBuf> {
+    data_dir().map(|dir| dir.join("developer.json"))
+}

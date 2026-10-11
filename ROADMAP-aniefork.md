@@ -35,7 +35,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
 | **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs` and `ribbon.rs` | Not offered |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
-| **Modules and trust** (the Development subsystem, phase 1a): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules. Nothing of a module runs yet. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs` and `crates/ui-egui/Cargo.toml` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
+| **Modules, trust and Python** (the Development subsystem, phases 1a and 1b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own. Panels are not served yet. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
 
 ## Selection glide
 
@@ -166,12 +166,35 @@ refuses trust; those two are still proposals.
 - The decisions are in `trusted-modules.json` beside the settings, and a run without settings
   (the web build, `GRIDCRAFT_NO_PREFS`) has no modules.
 
-The crate depends on nothing else in GridCraft, so it can be offered upstream as a piece of its
-own. Next is phase 1b: running a trusted module's Python, behind an operating-system confirmation
-for giving trust.
+**Phase 1b is built: a trusted module's Python scripts run.**
+
+- **A script is a file in the module's `python` folder with a `main(data)` function.** GridCraft
+  starts the user's own Python (the one named in Developer ▸ Modules, or the first found) with a
+  small runner. The process stays alive between calls, so a module's imports are paid for once,
+  and is started again when the module's files change. Each module has its own.
+- **Nothing runs without trust.** Every call reads the module and the user's decisions from disk
+  and refuses, before any process exists, a module that is untrusted, changed since it was
+  trusted or not granted `python`, and a script that is not one of the module's own files.
+- **The process protects GridCraft from the script.** A script that raises is reported with its
+  traceback; one that runs past its time limit (60 s) is stopped; one that dies costs only its
+  process; what it prints can't garble its reply. Scripts run off the UI thread and can be
+  stopped. It does not limit what the script does to the computer: that is what trust is for.
+- **Giving trust now needs the operating system's own confirmation**, a native yes/no dialog that
+  states the module's name, everything it will be allowed and how many files it has. Synthetic
+  clicks from the control channel can't answer it, and a build without one can't trust modules.
+- **Developer ▸ Modules runs a script by hand**: "Run on the selection" hands the script the
+  selected cells as `{range, sheet, rows}` and shows what it returned, what it printed, or why it
+  failed. The sheet is not changed: writing back belongs to panels, in phase 1c. The dialog also
+  says which Python is used and lets the user name another, and opens the modules folder.
+
+The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
+own. Next is phase 1c: the bridge, `spreadsheet.js`, and panels in the browser.
 
 ### Open
-- "Open Folder" in the dialog: the UI crate can't open a folder in the file manager yet.
+- A script's process is not confined, and stopping it stops only the Python GridCraft started,
+  not processes the script started itself.
+- The trust check hashes the whole module on every call. Fine for small modules; a large one will
+  want the fingerprint cached against its files' times.
 - Wording of the fork's dialogs in other languages.
 
 ## Hooks in upstream files
@@ -196,6 +219,8 @@ still there:
 | `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them; every fork dialog comes through here |
 | `crates/ui-egui/src/dialogs.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
+| `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
+| `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
 | `Cargo.lock` | the new crate's entry. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -253,6 +278,16 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (Development subsystem, phase 1b: Python):** A trusted module's Python scripts
+  run, each module in a Python process of its own that stays alive between calls: one line of
+  JSON in, one out, `main(data)` in the script. Every call is checked against the user's
+  decisions on disk first, so an untrusted or changed module, or a script that isn't the
+  module's, starts nothing. A failing script is reported, a hung one is stopped at its time
+  limit, a dead one costs only its process. Giving trust now ends in the operating system's own
+  yes/no dialog, which the control channel cannot answer. Developer ▸ Modules runs a script on
+  the selection and shows the result, names the Python in use, and opens the modules folder.
+  Checked with the machine's Python 3.14 and by 13 new tests (8 in the crate, 5 through the
+  dialog); the tests that need Python skip themselves where there is none.
 - **2026-10-11 (Development subsystem, phase 1a: modules and trust):** The subsystem's first
   piece, a crate of its own (`crates/aniefork-dev`) that runs no code: module manifests,
   fingerprints over a module's whole contents, and the user's decisions to trust, kept by

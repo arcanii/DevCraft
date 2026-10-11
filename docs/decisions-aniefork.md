@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0 (File ▸ Options, the Developer tab) and phase 1a (modules can be created, inspected and trusted; nothing of a module runs yet) |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted) and phase 1b (a trusted module's Python scripts run, in a process of their own). Panels are not served yet |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -88,10 +88,11 @@ TypeScript is the developer's authoring language; a module ships the JavaScript 
 build. GridCraft does not compile TypeScript.
 
 **3. Python runs as a separate process, using the user's own Python.** `runPython` starts (or
-reuses) a worker for that module, with the interpreter named in Options or found on the system.
-The script must be inside the module's `python` folder. Data goes in and comes back as JSON over
-the worker's standard input and output; what the script prints to standard error shows in a
-Developer console. There is a time limit and a cancel.
+reuses) a worker for that module, with the interpreter named in Developer ▸ Modules or found on
+the system. The script must be one of the files in the module's `python` folder, and has a
+`main(data)` function: data goes in and what `main` returns comes back, as JSON, one line each
+way over the worker's standard input and output. What the script prints is kept apart from its
+reply and handed to the caller. There is a time limit and a stop.
 
 A separate process is what keeps the "never crash" rule: a script that crashes, hangs or runs out
 of memory cannot take the workbook with it. A worker that stays alive between calls keeps pandas
@@ -161,9 +162,13 @@ The requirement: the user chooses to trust a module or not. The mechanics:
 - **Only the user can give trust.** There is no command for it, so the control channel and MCP
   cannot ask for it (`developer.modules` only reports). What gets trusted is the fingerprint the
   user was shown: if the files change between looking and pressing the button, the decision is
-  refused. Before the first piece that runs code ships (phase 1b), giving trust also has to pass
-  a confirmation drawn by the operating system, which the control channel's synthetic clicks
-  cannot press. Until then nothing a trusted module contains is run or served.
+  refused. And the last step is a question drawn by the operating system (the module's name,
+  everything it will be allowed, how many files it has), which the control channel's synthetic
+  clicks cannot answer. A build that has no such dialog (the web build) cannot trust modules.
+- **Running is checked where it happens.** The Python host reads the module and the user's
+  decisions from disk on every call, and refuses, before any process exists, a module that is
+  untrusted, changed, or was not granted `python`, and a script that is not one of its files.
+  There is no command that runs a script, so agents cannot run one either (backlog).
 - **The bridge is closed to everyone else.** Loopback only, a random port, and a secret token made
   for each session and each module, checked on every call along with the request's origin. A panel
   may only run its own module's scripts, by name, from its own folder.
@@ -198,8 +203,12 @@ contents by the user. Directions to weigh when this is taken up:
   script is checked in. This exception has to be settled with upstream before the bridge is
   offered there.
 - Python and a browser become things a module needs, not things GridCraft needs. The app, its
-  tests and its gate must keep working with neither installed: the bridge is tested in-process
-  over HTTP, the Python host against a stand-in interpreter.
+  tests and its gate keep working with neither installed. The tests that run a script use the
+  machine's own Python and skip themselves, saying so, where there is none; everything that
+  decides whether a script may run is tested without it. The bridge will be tested in-process
+  over HTTP.
+- A script's process is not confined: it can start processes of its own, and stopping the script
+  stops only the Python that GridCraft started.
 - The web build has no local processes. There, panels can be frames in the page, but `runPython`
   reports that it is unavailable until a browser Python (Pyodide) is added.
 
@@ -222,7 +231,7 @@ contents by the user. Directions to weigh when this is taken up:
 |---|---|---|
 | 0 | File ▸ Options; the Developer tab, hidden by default; this record | **Done**, 2026-10-11 |
 | 1a | The crate's first piece: manifests, the module list, fingerprints, the trust store; Developer ▸ Modules to see modules and trust or stop trusting them; a "New Module" starter. Nothing runs yet | **Done**, 2026-10-11: a starter module can be created, inspected, trusted, changed (it becomes untrusted again) and trusted again |
-| 1b | The Python host, and the operating-system confirmation for giving trust | A trusted module's script runs on data and returns JSON, with a time limit; an untrusted one is refused |
+| 1b | The Python host, and the operating-system confirmation for giving trust | **Done**, 2026-10-11: a trusted module's script runs on data and returns JSON, with a time limit; an untrusted one is refused. Developer ▸ Modules can run a script on the selection and show what it returned |
 | 1c | The bridge, `spreadsheet.js`, the typings; panels open in the browser | A starter module reads the selection, runs a Python script on it and writes the result back as one undo step, from a panel in the browser |
 | 2 | Panels docked in the window; events; a Developer console; per-module Python environments; Python calling back into the spreadsheet | The same starter module runs docked, reacts to the selection changing, and shows its script's output in the console |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |

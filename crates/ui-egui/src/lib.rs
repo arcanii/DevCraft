@@ -119,6 +119,9 @@ pub struct Services {
     /// insert into a subsequent dialog or open the image as a workbook.
     pub pick_picture_async: Option<Box<dyn Fn(Inbox)>>,
     pub open_url: Option<Box<dyn Fn(&str)>>,
+    /// Ask the person at the screen a yes/no question (title, text) in a dialog drawn by the
+    /// operating system, not by this UI, so that nothing driving the UI can answer it (aniefork).
+    pub confirm: Option<Box<dyn Fn(&str, &str) -> bool>>,
     /// Publish HTML and its plain-text alternative together. `Ok` means the host owns the
     /// write (including any asynchronous fallback); an immediate error uses egui's text path.
     pub copy_html: Option<Box<dyn FnMut(&str, &str) -> Result<(), String>>>,
