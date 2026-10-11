@@ -34,7 +34,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Offered 2026-10-11 as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266), stacked on #265. Branch `selection-glide`, rewritten in upstream's style |
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
 | **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs`; it opens from the File page | Not offered |
-| **The File page:** the File button opens a page that fills the window (a column of pages and actions on the left; Home with the workbooks to start from and the recent ones) where upstream opens a dropdown menu. | `crates/ui-egui/src/aniefork/backstage.rs`, hooks in `ribbon.rs` and `dialogs.rs` | Not offered. Upstream lists the view as partial in `docs/ui-parity.md` |
+| **The File page:** the File button opens a page that fills the window (a column of pages and actions on the left; Home with the workbooks to start from and the recent ones) where upstream opens a dropdown menu. | `crates/ui-egui/src/aniefork/backstage.rs`, hooks in `ribbon.rs` and `dialogs.rs` | Offered 2026-10-11 as [storytold/gridcraft#337](https://github.com/storytold/gridcraft/pull/337). Branch `file-page`, rewritten in upstream's style, without Options… (the dialog is the fork's) |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Modules, trust and Python** (the Development subsystem, phases 1a and 1b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own. Panels are not served yet. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
 
@@ -321,6 +321,13 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (the File page offered upstream):** Sent as pull request #337 from the branch
+  `file-page`, cut from `upstream/main` and independent of #265 and #266. The upstream version
+  lives in `crates/ui-egui/src/backstage.rs` with its window tests in `tests/backstage.rs`,
+  replaces upstream's `file_menu` outright, has no Options… in its column, and updates
+  `docs/control-protocol.md` and `docs/ui-parity.md`. Print and PDF export on the desktop are
+  a feature of their own, not part of it. When it merges and upstream is merged back, delete
+  `aniefork/backstage.rs` and its two hooks, and keep only what puts Options… in the column.
 - **2026-10-11 (the File page):** The File button opens a page over the whole window instead of
   a dropdown menu: a column of pages and actions on the left, Home with the workbooks to start
   from and the recent ones (with how long ago each was changed), and Open, Info and Export. It
