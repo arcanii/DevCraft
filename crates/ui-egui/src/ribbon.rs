@@ -215,6 +215,10 @@ fn file_menu(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let label = egui::RichText::new("File").font(theme::ui_font(13.5)).color(t.accent);
     let file = ui.add_sized(vec2(46.0, 30.0), egui::Button::new(label).frame(false));
+    // The fork opens its File page instead of this menu (aniefork).
+    if crate::aniefork::backstage::file_button(app, &file) {
+        return;
+    }
     egui::Popup::menu(&file).show(|ui| {
         for (label, id, needs_document) in [
             ("New Workbook", "file.new", false),
@@ -234,8 +238,6 @@ fn file_menu(app: &mut SheetApp, ui: &mut Ui) {
                 ui.close();
             }
         }
-        // The fork's File items (aniefork).
-        crate::aniefork::file_menu(app, ui);
     });
 }
 

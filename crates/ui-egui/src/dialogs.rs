@@ -654,6 +654,10 @@ fn build_params(d: &Dialog) -> Json {
 }
 
 pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
+    // The fork's File page fills the window instead of being a window in it (aniefork).
+    if crate::aniefork::backstage::show(app, ctx) {
+        return;
+    }
     let Some(mut d) = app.dialog.take() else { return };
     if d.name == "pasteSpecial" {
         paste_special_shortcuts(&mut d, ctx);

@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-11, upstream `9f896c1` (GridCraft 0.5.0), 222 commits |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 5 changes upstream lacks (below) |
+| Fork carries | 6 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -33,7 +33,8 @@ merged; delete the row once a merge of upstream brings it back.
 |---|---|---|
 | **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Offered 2026-10-11 as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266), stacked on #265. Branch `selection-glide`, rewritten in upstream's style |
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
-| **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs` and `ribbon.rs` | Not offered |
+| **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs`; it opens from the File page | Not offered |
+| **The File page:** the File button opens a page that fills the window (a column of pages and actions on the left; Home with the workbooks to start from and the recent ones) where upstream opens a dropdown menu. | `crates/ui-egui/src/aniefork/backstage.rs`, hooks in `ribbon.rs` and `dialogs.rs` | Not offered. Upstream lists the view as partial in `docs/ui-parity.md` |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Modules, trust and Python** (the Development subsystem, phases 1a and 1b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own. Panels are not served yet. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
 
@@ -109,9 +110,50 @@ Upstream GridCraft shades the whole range alike. The fork leaves the active cell
   position, hostile numbers, and the fill for a real sheet: one area, several areas, a merged
   active cell).
 
+## The File page
+
+What the File button opens: a page over the whole window, laid out the way Excel lays out its
+File view (which it calls the Backstage view), in place of upstream's dropdown menu.
+
+- **A column on the left** turns between the pages (Home, New, Open, Info, Export) and holds the
+  actions that go back to the workbook (Save, Save As…, Close, and About and Options… at the
+  foot). A round button at its head, or Escape, goes back without doing anything.
+- **Home** shows what a new workbook can start from (an empty one and upstream's three samples,
+  each under a small drawing made in code) and the workbooks opened before, each with its folder
+  and how long ago it was changed. A click opens one; the row under the pointer offers to drop
+  its workbook from the list. A workbook that can't be opened says why and stays listed.
+- **Info** shows where the workbook is and the properties saved with it. A property is changed by
+  typing: it is set through `file.properties`, as one undo step, when its field is left.
+- **Export** hands over to the dialog upstream's Share menu opens (CSV, web page). A PDF is
+  offered only on the web build: see Open below.
+- **It has no commands of its own.** Every button runs one of upstream's (`file.new`,
+  `file.open`, `file.save`…), and the buttons keep the labels upstream's menu had, so upstream's
+  own tests of the File menu pass unchanged against the page.
+- **To the rest of the app it is a dialog named `backstage`**, so what upstream does for dialogs
+  holds: the grid and the ribbon's keys stand down while it is up, `ui.dialog {name:
+  "backstage", page?}` opens it for an agent, `ui.dialog.set {field: "page", value}` turns the
+  page, `ui.dialog.cancel` leaves, and `ui.inspect` reports it.
+- **What is being typed into a cell is entered first** when the page opens, since the page is
+  about that workbook. An entry the cell refuses keeps the user in the cell, with the reason.
+- **The list tells ages, not dates** ("3 days ago"): the clock's time zone isn't known to the UI
+  crate, and a date could be a day out. The files are asked about on a thread of their own, so a
+  network drive that is slow or away never holds up the page.
+- **A workbook saved under a name joins the list of recent ones** when the page opens. Upstream
+  adds a workbook only when it is opened from a file.
+
+### Open
+- **Print and PDF.** The desktop app has no way to ask where a PDF should go (its save dialog
+  offers only workbook formats), and upstream's `file.print` hands back a PDF that nothing sends
+  to a printer yet. So the column has no Print, and Export offers PDF only on the web build.
+- Dates in the list once the local time zone is known; pinning a workbook to the list.
+- Upstream's title bar still opens its small Start dialog from the Home button there.
+- Wording in other languages: upstream's labels follow the interface language, the page's own
+  are in English.
+
 ## File ▸ Options
 
-The settings dialog Excel has and upstream doesn't. It holds the settings that work today:
+The settings dialog Excel has and upstream doesn't. It opens from the foot of the File page's
+column. It holds the settings that work today:
 
 - **General:** the display theme and the interface language (upstream's settings, changed through
   upstream's own commands, and still on the View tab too), and the user name, which is the author
@@ -213,7 +255,8 @@ still there:
 | `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the fields `animations: bool` (default `true`) and `developer_tab: bool` (default `false`), between `formula_bar_expanded` and `status_bar` |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/ribbon.rs`, `view`, in the Display theme column, after the picker | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
-| `crates/ui-egui/src/ribbon.rs`, `file_menu`, after the loop over upstream's items | `crate::aniefork::file_menu(app, ui);` adds Options… |
+| `crates/ui-egui/src/ribbon.rs`, `file_menu`, after the File button is added | `if crate::aniefork::backstage::file_button(app, &file) { return; }` opens the fork's File page; upstream's menu below it is left as it is, and no longer runs |
+| `crates/ui-egui/src/dialogs.rs`, `show`, first thing | `if crate::aniefork::backstage::show(app, ctx) { return; }` draws the File page over the whole window when it is the open dialog |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
 | `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
 | `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them; every fork dialog comes through here |
@@ -278,6 +321,13 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (the File page):** The File button opens a page over the whole window instead of
+  a dropdown menu: a column of pages and actions on the left, Home with the workbooks to start
+  from and the recent ones (with how long ago each was changed), and Open, Info and Export. It
+  runs upstream's file commands and keeps the menu's labels, so upstream's File menu tests pass
+  against it untouched; to agents it is a dialog named `backstage`. The earlier hook that added
+  Options… to upstream's menu is gone: Options… is in the page's column. Checked in headless
+  renders (light and dark), in the real app, and by 12 tests.
 - **2026-10-11 (Development subsystem, phase 1b: Python):** A trusted module's Python scripts
   run, each module in a Python process of its own that stays alive between calls: one line of
   JSON in, one out, `main(data)` in the script. Every call is checked against the user's

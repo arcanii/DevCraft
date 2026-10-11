@@ -4,6 +4,7 @@
 //! (`storytold/gridcraft`) only ever meet the short hooks that call into it. See
 //! `AGENTS-aniefork.md` at the repository root.
 
+pub mod backstage;
 pub mod developer;
 pub mod modules;
 pub mod options;
@@ -79,8 +80,10 @@ fn tr(lang: Language, text: &'static str) -> &'static str {
 
 /// Hook of `Dialog::open`: for a name that is one of the fork's dialogs, its title, the values it
 /// starts from, and the command OK runs with those values.
-pub fn dialog(app: &SheetApp, name: &str, _params: &Json) -> Option<(&'static str, Json, Option<&'static str>)> {
+pub fn dialog(app: &mut SheetApp, name: &str, params: &Json) -> Option<(&'static str, Json, Option<&'static str>)> {
     match name {
+        // The File page is a dialog to the rest of the app, though it fills the window.
+        backstage::NAME => Some(("File", backstage::values(app, params)?, None)),
         options::NAME => Some(("Options", options::values(app), Some("file.options"))),
         // No command: nothing an agent can confirm gives a module trust.
         modules::NAME => Some(("Modules", modules::values(), None)),
@@ -99,15 +102,6 @@ pub fn dialog_ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut crate::dialogs::
         options::NAME => options::ui(app, ui, d, confirm, open),
         modules::NAME => modules::ui(app, ui, d, open),
         _ => {}
-    }
-}
-
-/// Hook of the ribbon's File menu: the fork's items, after upstream's.
-pub fn file_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
-    ui.separator();
-    if ui.button("Options…").clicked() {
-        app.open_dialog(options::NAME, json!({}));
-        ui.close();
     }
 }
 

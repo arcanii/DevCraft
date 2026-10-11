@@ -280,9 +280,9 @@ mod tests {
         assert!(a.dialog.is_some() && a.session.prefs.user_name == "Grace");
     }
 
-    /// The whole path in the real window: File ▸ Options…, tick a box, OK.
+    /// The whole path in the real window: File, Options… at the foot of its page, tick a box, OK.
     #[test]
-    fn the_file_menu_opens_the_dialog_and_ok_applies_it() {
+    fn the_file_page_opens_the_dialog_and_ok_applies_it() {
         let mut h = egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SheetApp| {
                 let ctx = ui.ctx().clone();
@@ -295,7 +295,8 @@ mod tests {
         h.get_by_label("File").click();
         h.run_steps(3);
         h.get_by_label("Options…").click();
-        h.run_steps(3);
+        // The dialog takes the page's place on the next frame, and is laid out the one after.
+        h.run_steps(5);
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.clone()).as_deref(), Some(NAME));
         h.get_by_label("Show the Developer tab").click();
         h.get_by_label("Animations").click();
