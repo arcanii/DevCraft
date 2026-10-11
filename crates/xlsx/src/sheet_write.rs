@@ -100,7 +100,8 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         .map(|(a, r)| (*a, *r))
         .collect();
     let mut extra: BTreeMap<CellRef, Value> = BTreeMap::new();
-    for (a, r) in &dynamic {
+    // Values inside spills and legacy array ranges.
+    for (a, r) in sheet.spill_ranges.iter().filter(|(_, r)| !r.is_single()) {
         for c in r.iter().take(1_000_000) {
             if c != *a
                 && let Some(v) = sheet.spill.get(&c)
@@ -251,6 +252,7 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
 
     // sheetData
     let mut keys: BTreeSet<CellRef> = sheet.cells.iter().map(|(c, _)| c).collect();
+    keys.extend(sheet.cell_pictures.keys().copied());
     keys.extend(extra.keys().copied());
     keys.extend(overrides.keys().copied());
     let mut rows: BTreeMap<u32, Vec<CellRef>> = BTreeMap::new();
@@ -291,7 +293,11 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
             let cell = sheet.cells.get(*c);
             let ov = overrides.get(c);
             let ex = extra.get(c);
-            write_cell(&mut s, *c, cell, ov, ex, dynamic.get(c), &sid, out);
+            let array = dynamic.get(c).copied().or_else(|| {
+                let f = cell?.formula.as_ref()?;
+                (f.array.is_none() && crate::array_formula::needs_array(wb, si, *c, f)).then_some(RangeRef::cell(*c))
+            });
+            write_cell(&mut s, *c, cell, sheet.cell_pictures.get(c), ov, ex, array.as_ref(), &sid, out);
         }
         s.push_str("</row>");
     }
@@ -465,9 +471,23 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         for ch in &sheet.charts {
             out.charts += 1;
-            let name = format!("xl/charts/chart{}.xml", out.charts);
-            out.part(&name, Some(CT_CHART), crate::chart::write_chart(wb, si, ch).into_bytes());
-            let rid = drels.add("chart", &format!("../charts/chart{}.xml", out.charts));
+            let rid = if crate::chartex::is_chartex(ch.kind) {
+                let n = out.charts;
+                let xml = crate::chartex::write_chartex(wb, si, ch, &mut out.chart_names);
+                out.part(&format!("xl/charts/chartEx{n}.xml"), Some(crate::chartex::CT_CHARTEX), xml.into_bytes());
+                // Excel expects a chartex part's style and colour parts.
+                out.part(&format!("xl/charts/style{n}.xml"), Some(crate::chartex::CT_STYLE), crate::chartex::style_xml().into_bytes());
+                out.part(&format!("xl/charts/colors{n}.xml"), Some(crate::chartex::CT_COLORS), crate::chartex::colors_xml().into_bytes());
+                let mut crels = Rels::default();
+                crels.add_uri(crate::chartex::REL_STYLE, &format!("style{n}.xml"));
+                crels.add_uri(crate::chartex::REL_COLORS, &format!("colors{n}.xml"));
+                out.part(&format!("xl/charts/_rels/chartEx{n}.xml.rels"), None, crels.xml().into_bytes());
+                drels.add_uri(crate::chartex::REL_CHARTEX, &format!("../charts/chartEx{n}.xml"))
+            } else {
+                let name = format!("xl/charts/chart{}.xml", out.charts);
+                out.part(&name, Some(CT_CHART), crate::chart::write_chart(wb, si, ch).into_bytes());
+                drels.add("chart", &format!("../charts/chart{}.xml", out.charts))
+            };
             objs.push(Obj::Chart(ch, rid));
         }
         for sh in &sheet.shapes {
@@ -536,6 +556,7 @@ fn write_cell(
     s: &mut String,
     c: CellRef,
     cell: Option<&Cell>,
+    picture: Option<&std::sync::Arc<gridcraft_model::CellPicture>>,
     ov: Option<&String>,
     extra: Option<&Value>,
     dynamic: Option<&RangeRef>,
@@ -547,6 +568,11 @@ fn write_cell(
     if style != 0 {
         let _ = write!(s, " s=\"{style}\"");
     }
+    if let Some(picture) = picture {
+        let vm = out.cell_pictures.index(picture);
+        let _ = write!(s, " t=\"e\" vm=\"{vm}\"><v>#VALUE!</v></c>");
+        return;
+    }
     let formula = if ov.is_some() { None } else { cell.and_then(|x| x.formula.as_ref()) };
     let value: Value = match (ov, extra) {
         (Some(t), _) => Value::text(t.as_str()),
@@ -555,10 +581,17 @@ fn write_cell(
     };
     let value = match value {
         Value::Array(a) => a.get(0, 0).cloned().unwrap_or(Value::Empty),
-        Value::Error(CellError::Circ) => Value::Number(0.0),
         v => v,
     };
-    if formula.is_some() && dynamic.is_some() {
+    let value = match value {
+        Value::Error(CellError::Circ) => Value::Number(0.0),
+        // #SPILL! and #CALC! are not error codes of the file format (Excel refuses a file that
+        // caches them); Excel itself caches them as #VALUE!.
+        Value::Error(CellError::Spill | CellError::Calc) => Value::Error(CellError::Value),
+        v => v,
+    };
+    // A non-spilling formula may still need array evaluation to avoid implicit intersection.
+    if dynamic.is_some() && formula.is_some_and(|f| f.array.is_none()) {
         s.push_str(" cm=\"1\"");
         out.dynamic_arrays = true;
     }

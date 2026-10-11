@@ -29,8 +29,8 @@ struct Shared {
 struct RowState {
     next_row: u32,
     shared: HashMap<u32, Shared>,
-    /// Dynamic-array spill ranges: cached values inside them (other than the anchor) are not
-    /// stored, so the formula can spill again.
+    /// Dynamic-array spill ranges and legacy array ranges: cached values inside them (other than
+    /// the anchor) are not stored, so the formula can fill them again.
     dynamic: Vec<RangeRef>,
     dropped: u64,
     rows: u64,
@@ -362,6 +362,24 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
             None => Value::Empty,
         },
     };
+    let picture = c.attr("vm").and_then(|vm| {
+        if vm == "0" {
+            return None;
+        }
+        let picture = vm.parse::<usize>().ok().and_then(|n| n.checked_sub(1)).and_then(|n| cx.cell_pictures.get(n)).cloned().flatten();
+        if picture.is_none() {
+            cx.warn("some cells have unsupported or missing value metadata; kept their scalar fallback (cell pictures may be missing)");
+        }
+        picture
+    });
+    if let Some(picture) = picture {
+        if c.child("f").is_some() {
+            cx.warn("formula-generated cell pictures were imported as static pictures; their formulas were not retained");
+        }
+        sheet.set_picture(pos, picture);
+        sheet.set_style(pos, style);
+        return;
+    }
     let dynamic = c.attr("cm").is_some();
     let formula = c.child("f").and_then(|f| read_formula(cx, st, f, pos, dynamic));
     let value = if formula.is_none() && st.dynamic.iter().any(|r| r.contains(pos) && r.start != pos) { Value::Empty } else { value };
@@ -398,11 +416,10 @@ fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynam
             }
             let mut fm = Formula::new(text);
             let range = f.attr("ref").and_then(RangeRef::parse).unwrap_or(RangeRef::cell(pos));
-            if dynamic {
-                if !range.is_single() {
-                    st.dynamic.push(range);
-                }
-            } else {
+            if !range.is_single() {
+                st.dynamic.push(range);
+            }
+            if !dynamic {
                 fm.array = Some(range);
             }
             Some(fm)

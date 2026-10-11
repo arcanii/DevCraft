@@ -20,7 +20,7 @@ Errors come back as `{"id": …, "ok": false, "error": "…"}`.
 | Method | Params | What it does |
 |---|---|---|
 | `engine.execute` | `{command, params}` | Runs any engine command (see `engine.commands` or `gridcraft-cli commands`) |
-| `engine.commands` | | Every command: id, label, ribbon path, shortcut, params doc, enabled |
+| `engine.commands` | `{search?}` | Every command: id, label, ribbon path, shortcut, params doc, enabled; `search` keeps those whose id, label or ribbon path contains it (case-insensitive) |
 | `engine.journal` | | Commands run so far (replayable) |
 | `document.inspect` | | Workbook summary: sheets, used ranges, tables, charts, names, selection, undo labels |
 | `sheet.read` | `{range?, sheet?, formulas?, formatted?}` | Values (or formulas / displayed text) of a range |
@@ -38,6 +38,18 @@ Errors come back as `{"id": …, "ok": false, "error": "…"}`.
 | `app.open` / `app.save` / `app.quit` | `{path}` / `{path?}` | Files and lifetime |
 
 Any other method name that is a command id (e.g. `home.bold`) runs that command.
+
+Use `engine.execute` with `{command: "view.theme", params: {mode: "system"}}`
+to choose the display theme; `mode` accepts `"system"`, `"light"`, or `"dark"`.
+System follows live OS appearance changes and falls back to Light when the platform supplies no preference.
+The saved choice remains System; new users still start in Light. The legacy
+`view.darkMode` command and `ui.set {dark}` select a fixed Light or Dark theme.
+
+`{command: "app.language.set", params: {language: "ja"}}` switches the interface language
+(`code` is accepted as an alias for `language`); `app.language.english` and
+`app.language.japanese` are shortcuts. Only interface chrome is translated, never command ids or
+document text. The choice is saved in `ui.json`; with nothing saved the desktop app follows the
+system language.
 
 For a headless equivalent (no window), use `gridcraft-cli mcp` or `gridcraft-cli run`;
 see [`mcp.md`](mcp.md) and [`cli.md`](cli.md).

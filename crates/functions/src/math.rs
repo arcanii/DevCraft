@@ -487,7 +487,7 @@ fn integer_args(a: &[Arg]) -> R<Vec<u64>> {
     v.iter()
         .map(|x| {
             let t = x.trunc();
-            if t < 0.0 || t >= 9.007_199_254_740_992e15 { Err(CellError::Num) } else { Ok(t as u64) }
+            if !(0.0..9.007_199_254_740_992e15).contains(&t) { Err(CellError::Num) } else { Ok(t as u64) }
         })
         .collect()
 }
@@ -1006,8 +1006,9 @@ fn countif(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     num_val(range.iter().filter(|v| c.matches(v)).count() as f64)
 }
 
-/// SUMIF / AVERAGEIF: matched numbers from the sum range, which takes the criteria range's
-/// shape anchored at its own top-left.
+/// SUMIF / AVERAGEIF: matched numbers from the sum range, read at the criteria range's positions.
+/// Excel sizes a sum range reference like the criteria range, anchored at its own top-left cell;
+/// the evaluator does that resizing (it has the references), so cells line up one to one here.
 fn if_numbers(a: &[Arg]) -> R<Vec<f64>> {
     let range = as_array(&crate::util::arg(a, 0)?.value);
     let c = Criterion::parse(&crate::util::arg(a, 1)?.value.scalar());

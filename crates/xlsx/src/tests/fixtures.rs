@@ -17,8 +17,8 @@ fn shared_formulas_and_value_types() {
         <row r="2"><c r="A2"><v>2</v></c><c r="B2"><f t="shared" si="0"/><v>5</v></c></row>
         <row r="3"><c r="A3" t="inlineStr"><is><r><t>rich </t></r><r><rPr><b/></rPr><t>text</t></r><rPh><t>ignored</t></rPh></is></c><c r="B3"><f t="shared" si="0"/></c></row>
         <row r="4"><c r="A4" t="b"><v>1</v></c><c r="B4" t="e"><v>#DIV/0!</v></c><c r="C4" t="str"><f>_xlfn.CONCAT("a","b")</f><v>ab</v></c><c r="D4" t="d"><v>2024-01-01T12:00:00</v></c></row>
-        <row r="5"><c r="A5"><f t="array" ref="A5:B6">A1:B2*2</f><v>2</v></c><c r="C5" cm="1"><f t="array" ref="C5:C7">_xlfn.SEQUENCE(3)</f><v>1</v></c></row>
-        <row r="6"><c r="C6"><v>2</v></c></row>
+        <row r="5"><c r="A5"><f t="array" ref="A5:B6">A1:B2*2</f><v>2</v></c><c r="B5"><v>6</v></c><c r="C5" cm="1"><f t="array" ref="C5:C7">_xlfn.SEQUENCE(3)</f><v>1</v></c></row>
+        <row r="6"><c r="A6"><v>4</v></c><c r="C6"><v>2</v></c></row>
         <row><c><v>9</v></c><c><v>10</v></c></row>
     </sheetData>"#;
     let (wb, rep) = read_xlsx(&minimal(body, &[], "", "")).unwrap();
@@ -35,6 +35,7 @@ fn shared_formulas_and_value_types() {
     assert_eq!(s.value(at("D4")), Value::Number(45292.5));
     let a5 = s.cell(at("A5")).unwrap().formula.clone().unwrap();
     assert_eq!(a5.array, Some(RangeRef::parse("A5:B6").unwrap()));
+    assert!(s.cell(at("B5")).is_none() && s.cell(at("A6")).is_none(), "a legacy array's cached values are dropped too");
     let c5 = s.cell(at("C5")).unwrap().formula.clone().unwrap();
     assert_eq!(c5.array, None, "dynamic arrays are not legacy CSE arrays");
     assert_eq!(c5.text, "SEQUENCE(3)");
@@ -279,6 +280,8 @@ fn drawing_with_picture_and_chart() {
         <xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="P" descr="logo"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill><xdr:spPr/></xdr:pic><xdr:clientData/></xdr:twoCellAnchor>
       <xdr:oneCellAnchor><xdr:from><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="4572000" cy="2743200"/>
         <xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="3" name="C"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId2"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor>
+      <xdr:twoCellAnchor editAs="absolute"><xdr:from><xdr:col>7</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>8</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <xdr:sp><xdr:nvSpPr><xdr:cNvPr id="4" name="S"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>
     </xdr:wsDr>"#;
     let chart = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:rich><a:p><a:r><a:t>Sales</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea>
       <c:barChart><c:barDir val="bar"/><c:grouping val="stacked"/><c:ser><c:idx val="0"/><c:tx><c:strRef><c:f>Data!$B$1</c:f></c:strRef></c:tx><c:spPr><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></c:spPr><c:cat><c:strRef><c:f>Data!$A$2:$A$5</c:f></c:strRef></c:cat><c:val><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:val></c:ser><c:dLbls><c:showVal val="1"/></c:dLbls><c:axId val="1"/><c:axId val="2"/></c:barChart>
@@ -322,10 +325,14 @@ fn drawing_with_picture_and_chart() {
     assert_eq!(img.anchor.dx, 10.0);
     assert_eq!(img.anchor.width, 118.0);
     assert_eq!(img.anchor.height, 100.0);
+    // A plain twoCellAnchor is "Move and size with cells".
+    assert_eq!(img.anchor.mode, gridcraft_model::AnchorMode::MoveAndSize);
     let ch = &s.charts[0];
     assert_eq!(ch.kind, gridcraft_model::ChartKind::Combo);
     assert_eq!(ch.title.as_deref(), Some("Sales"));
     assert_eq!(ch.anchor.width, 480.0);
+    // A oneCellAnchor is "Move but don't size with cells".
+    assert_eq!(ch.anchor.mode, gridcraft_model::AnchorMode::MoveOnly);
     assert_eq!(ch.series.len(), 2);
     assert_eq!(ch.series[0].name.as_deref(), Some("Data!$B$1"));
     assert_eq!(ch.series[0].categories.as_deref(), Some("Data!$A$2:$A$5"));
@@ -336,4 +343,107 @@ fn drawing_with_picture_and_chart() {
     assert!(ch.data_labels && ch.gridlines);
     assert_eq!(ch.legend, gridcraft_model::LegendPos::Top);
     assert_eq!(ch.x_title.as_deref(), Some("Region"));
+    // A twoCellAnchor with editAs="absolute" is "Don't move or size with cells".
+    let sp = &s.shapes[0];
+    assert_eq!(sp.kind, gridcraft_model::ShapeKind::Ellipse);
+    assert_eq!(sp.anchor.mode, gridcraft_model::AnchorMode::Absolute);
+}
+
+#[test]
+fn drawing_with_chartex_in_alternate_content() {
+    let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <xdr:twoCellAnchor><xdr:from><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>10</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>15</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:cx1="http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" Requires="cx1">
+          <xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2014/chartex"><cx:chart xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame>
+        </mc:Choice><mc:Fallback><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="2" name="Chart 1"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:sp></mc:Fallback></mc:AlternateContent>
+        <xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"#;
+    let chartex = r#"<cx:chartSpace xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex">
+      <cx:chartData><cx:data id="0"><cx:strDim type="cat"><cx:f>_xlchart.v1.0</cx:f></cx:strDim><cx:numDim type="val"><cx:f>_xlchart.v1.2</cx:f></cx:numDim></cx:data></cx:chartData>
+      <cx:chart><cx:title pos="t" align="ctr" overlay="0"><cx:tx><cx:txData><cx:v>Bridge</cx:v></cx:txData></cx:tx></cx:title>
+        <cx:plotArea><cx:plotAreaRegion><cx:series layoutId="waterfall" uniqueId="{1}"><cx:tx><cx:txData><cx:f>_xlchart.v1.1</cx:f><cx:v>Amount</cx:v></cx:txData></cx:tx><cx:dataLabels pos="outEnd"><cx:visibility seriesName="0" categoryName="0" value="1"/></cx:dataLabels><cx:dataId val="0"/><cx:layoutPr><cx:subtotals><cx:idx val="3"/></cx:subtotals></cx:layoutPr></cx:series></cx:plotAreaRegion>
+        <cx:axis id="0"><cx:catScaling gapWidth="0.5"/><cx:tickLabels/></cx:axis><cx:axis id="1"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis></cx:plotArea>
+        <cx:legend pos="t" align="ctr" overlay="0"/></cx:chart></cx:chartSpace>"#;
+    let drels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2014/relationships/chartEx" Target="../charts/chartEx1.xml"/></Relationships>"#;
+    let srels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#;
+    let bytes = super::minimal(
+        r#"<sheetData/><drawing r:id="rId1"/>"#,
+        &[
+            ("xl/worksheets/_rels/sheet1.xml.rels", srels),
+            ("xl/drawings/drawing1.xml", drawing),
+            ("xl/drawings/_rels/drawing1.xml.rels", drels),
+            ("xl/charts/chartEx1.xml", chartex),
+        ],
+        "",
+        // Chartex data goes through hidden names.
+        r#"<definedNames><definedName name="_xlchart.v1.0" hidden="1">Data!$A$2:$A$5</definedName><definedName name="_xlchart.v1.1" hidden="1">Data!$B$1</definedName><definedName name="_xlchart.v1.2" hidden="1">Data!$B$2:$B$5</definedName></definedNames>"#,
+    );
+    let (wb, _) = read_xlsx(&bytes).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.charts.len(), 1);
+    assert!(s.shapes.is_empty(), "the fallback isn't read as well");
+    assert!(wb.names.is_empty(), "the chart's names aren't workbook names");
+    let ch = &s.charts[0];
+    assert_eq!(ch.kind, gridcraft_model::ChartKind::Waterfall);
+    assert_eq!(ch.title.as_deref(), Some("Bridge"));
+    assert_eq!(ch.anchor.cell, at("E2"));
+    assert_eq!(ch.series.len(), 1);
+    assert_eq!(ch.series[0].name.as_deref(), Some("Data!$B$1"));
+    assert_eq!(ch.series[0].categories.as_deref(), Some("Data!$A$2:$A$5"));
+    assert_eq!(ch.series[0].values, "Data!$B$2:$B$5");
+    assert!(ch.data_labels && ch.gridlines);
+    assert_eq!(ch.legend, gridcraft_model::LegendPos::Top);
+}
+
+#[test]
+fn chartex_parts_as_excel_expects_them() {
+    use gridcraft_model::{Chart, ChartKind, LegendPos, Series};
+    let mut wb = gridcraft_model::Workbook::new();
+    let mut sheet = gridcraft_model::Sheet::new("Data");
+    sheet.charts.push(Chart {
+        id: 1,
+        kind: ChartKind::Waterfall,
+        anchor: Default::default(),
+        title: None,
+        series: vec![Series {
+            name: Some("Data!$B$1".into()),
+            categories: Some("Data!$A$2:$A$5".into()),
+            values: "Data!$B$2:$B$5".into(),
+            ..Default::default()
+        }],
+        legend: LegendPos::Bottom,
+        data_labels: false,
+        gridlines: true,
+        style: 2,
+        x_title: None,
+        y_title: None,
+        source: None,
+        by_rows: false,
+    });
+    wb.sheets = vec![std::sync::Arc::new(sheet)];
+    let bytes = crate::write_xlsx(&wb).unwrap();
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+    let mut part = |n: &str| {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut z.by_name(n).unwrap_or_else(|_| panic!("{n}")), &mut s).unwrap();
+        s
+    };
+    // Data through hidden `_xlchart` names, with style and colour parts.
+    let cx = part("xl/charts/chartEx1.xml");
+    assert!(cx.contains("<cx:f>_xlchart.v1.2</cx:f>") && !cx.contains("Data!"), "{cx}");
+    // Fills are spelled out, not left to the style part.
+    assert!(cx.contains(r#"<cx:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></cx:spPr>"#), "{cx}");
+    assert!(cx.contains(r#"</cx:chart><cx:spPr><a:solidFill><a:schemeClr val="bg1"/>"#), "{cx}");
+    let book = part("xl/workbook.xml");
+    assert!(book.contains(r#"<definedName name="_xlchart.v1.1" hidden="1">Data!$B$2:$B$5</definedName>"#), "{book}");
+    let rels = part("xl/charts/_rels/chartEx1.xml.rels");
+    assert!(rels.contains("relationships/chartStyle") && rels.contains("relationships/chartColorStyle"));
+    assert!(part("xl/charts/style1.xml").contains("<cs:chartStyle"));
+    assert!(part("xl/charts/colors1.xml").contains("<cs:colorStyle"));
+    let types = part("[Content_Types].xml");
+    assert!(types.contains("chartstyle+xml") && types.contains("chartcolorstyle+xml") && types.contains("chartex+xml"));
+    // Reading resolves the names and doesn't keep them.
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    assert!(back.names.is_empty());
+    let s = &back.sheet(0).unwrap().charts[0].series[0];
+    assert_eq!((s.name.as_deref(), s.categories.as_deref(), s.values.as_str()), (Some("Data!$B$1"), Some("Data!$A$2:$A$5"), "Data!$B$2:$B$5"));
 }

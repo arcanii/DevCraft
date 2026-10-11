@@ -1,4 +1,4 @@
-//! GridCraft file formats: XLSX (Office Open XML SpreadsheetML, transitional and strict) and CSV.
+//! GridCraft file formats: XLSX (transitional and strict) and CSV import/export, plus XLSB and ODS data import.
 //!
 //! Clean-room implementation from ECMA-376 / ISO/IEC 29500 and observed behaviour. All entry
 //! points work on byte slices (no file system access), so the crate builds for WebAssembly.
@@ -10,19 +10,25 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod array_formula;
+mod cfb;
 mod chart;
+mod chartex;
 mod csv;
 mod drawing;
 mod fmla;
+mod ods;
 mod package;
 mod pivot;
 mod read;
+mod richdata;
 mod sheet_read;
 mod sheet_write;
 mod styles;
 mod tables;
 mod theme;
 mod write;
+mod xlsb;
 mod xml;
 
 #[cfg(test)]
@@ -32,6 +38,8 @@ use gridcraft_core::DateSystem;
 use gridcraft_model::Workbook;
 
 pub use csv::{read_csv, write_csv};
+pub use ods::read_ods;
+pub use xlsb::read_xlsb;
 
 /// Errors from reading or writing files.
 #[derive(Debug, thiserror::Error)]
@@ -92,14 +100,31 @@ impl Default for CsvOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Xlsx,
+    Xlsb,
+    Ods,
     Csv,
+    /// A password-protected (encrypted) workbook: a compound file with an `EncryptedPackage`.
+    Encrypted,
+    /// Another compound (CFB/OLE2) file: an Excel 97-2003 `.xls` or other legacy Office binary.
+    LegacyBinary,
     Unknown,
 }
 
-/// Guesses the format from the first bytes: a zip package is XLSX, text is CSV.
+/// Guesses the format from content: ODS mimetype, XLSB package content types, other ZIP packages as XLSX, text as CSV.
 pub fn sniff(bytes: &[u8]) -> Format {
     if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") || bytes.starts_with(b"PK\x07\x08") {
-        return Format::Xlsx;
+        return if ods::has_mimetype(bytes) {
+            Format::Ods
+        } else if xlsb::is_xlsb(bytes) {
+            Format::Xlsb
+        } else {
+            Format::Xlsx
+        };
+    }
+    // CFB/OLE2 compound file: a password-protected workbook when it holds an encryption
+    // stream, otherwise a legacy binary (.xls, .doc…).
+    if bytes.starts_with(&cfb::SIGNATURE) {
+        return if cfb::is_encrypted(bytes) { Format::Encrypted } else { Format::LegacyBinary };
     }
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) || bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Format::Csv;

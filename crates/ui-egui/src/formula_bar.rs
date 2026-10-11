@@ -65,19 +65,31 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
 fn active_input(app: &SheetApp) -> String {
     let Some(d) = app.session.active() else { return String::new() };
     let Some(sh) = d.wb.active() else { return String::new() };
-    let a = d.selection.active;
+    let a = sh.merge_at(d.selection.active).map(|m| m.start).unwrap_or(d.selection.active);
+    if let Some(picture) = sh.cell_pictures.get(&a) {
+        return if picture.alt.is_empty() { "Picture in cell".into() } else { format!("Picture: {}", picture.alt) };
+    }
     if let Some(c) = sh.cell(a) {
         if c.formula.is_some() && d.wb.styles.get(c.style).protection.hidden && sh.is_protected() {
             return String::new();
         }
-        return c.input_text();
+        return if let Some(f) = &c.formula {
+            let shown = crate::formula_locale::display(&c.input_text(), app.ui.language.formula_locale(), &d.wb, d.wb.active_sheet);
+            // A legacy array formula shows in braces (`{=A1:A2*2}`), as `Cell::bar_text` does.
+            if f.array.is_some() { format!("{{{shown}}}") } else { shown }
+        } else {
+            c.input_text()
+        };
     }
     // A spilled cell shows the anchor's formula greyed out in Excel; we show it plainly.
     for (anchor, r) in &sh.spill_ranges {
         if r.contains(a)
             && let Some(f) = sh.cell(*anchor).and_then(|c| c.formula.as_ref())
         {
-            return format!("={}", f.text);
+            if gridcraft_engine::display::formula_hidden(&d.wb, sh, *anchor) {
+                return String::new();
+            }
+            return crate::formula_locale::display(&format!("={}", f.text), app.ui.language.formula_locale(), &d.wb, d.wb.active_sheet);
         }
     }
     String::new()
@@ -166,7 +178,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
             ed.caret_to_end = false;
             ed.sync_caret = true;
         }
-        if !ed.autocomplete.is_empty() && (tab || (enter && false)) {
+        if !ed.autocomplete.is_empty() && tab {
             ed.accept_autocomplete();
         } else if enter {
             action = Some((if shift { -1 } else { 1 }, 0, false, false));
@@ -293,7 +305,12 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
             ed.completion = crate::editor::column_completion(sh, ed.cell, &ed.text);
         }
         ed.point = None;
-        let names: Vec<String> = function_names();
+        let names: Vec<String> = function_names()
+            .iter()
+            .map(|name| {
+                app.session.active().map(|d| crate::formula_locale::completion_name(name, ed.locale, &d.wb, ed.sheet)).unwrap_or(name).to_string()
+            })
+            .collect();
         ed.update_autocomplete(&names);
         app.session.mode = if ed.can_point() {
             gridcraft_engine::Mode::Point
@@ -334,11 +351,11 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
                         if r.clicked() {
                             pick = Some(i);
                         }
-                        if sel && let Some(desc) = function_description(n) {
+                        if sel && let Some(desc) = crate::formula_locale::description(n, ed.locale) {
                             r.on_hover_text(desc);
                         }
                     }
-                    if let Some(desc) = ed.autocomplete.get(ed.ac_index).and_then(|n| function_description(n)) {
+                    if let Some(desc) = ed.autocomplete.get(ed.ac_index).and_then(|n| crate::formula_locale::description(n, ed.locale)) {
                         ui.separator();
                         ui.add(egui::Label::new(egui::RichText::new(desc).small()).wrap());
                     }
@@ -348,20 +365,20 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
                         ed.request_focus = true;
                     }
                 } else if let Some((name, arg)) = ed.current_function()
-                    && let Some(sig) = function_signature(&name)
+                    && let Some(sig) = crate::formula_locale::signature(&name, ed.locale)
                 {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         let (head, rest) = sig.split_once('(').unwrap_or((&sig, ""));
-                        ui.label(egui::RichText::new(format!("{head}(")).font(theme::ui_font(12.0)));
+                        ui.label(egui::RichText::new(format!("{}(", ed.locale.function_name(head))).font(theme::ui_font(12.0)));
                         let inner = rest.trim_end_matches(')');
-                        let parts: Vec<&str> = inner.split(", ").collect();
+                        let parts: Vec<&str> = inner.split(&format!("{} ", ed.locale.list_separator())).collect();
                         for (i, part) in parts.iter().enumerate() {
                             let is_cur = i == arg.min(parts.len().saturating_sub(1)) || (part.contains("...") && arg >= i);
                             let txt = egui::RichText::new(*part).font(if is_cur { theme::ui_bold(12.0) } else { theme::ui_font(12.0) });
                             ui.label(txt);
                             if i + 1 < parts.len() {
-                                ui.label(egui::RichText::new(", ").font(theme::ui_font(12.0)));
+                                ui.label(egui::RichText::new(format!("{} ", ed.locale.list_separator())).font(theme::ui_font(12.0)));
                             }
                         }
                         ui.label(egui::RichText::new(")").font(theme::ui_font(12.0)));

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use gridcraft_core::{CellError, CellRef, DateSystem, RangeRef, Value};
 use gridcraft_model::*;
 
+use crate::package::Package;
 use crate::{read_xlsx, write_xlsx};
 
 fn at(a: &str) -> CellRef {
@@ -245,7 +246,8 @@ fn sample() -> Workbook {
     let png = b"\x89PNG\r\n\x1a\n0000IHDRfake".to_vec();
     s.images.push(Image {
         id: 10,
-        anchor: Anchor { cell: at("C10"), dx: 5.0, dy: 4.0, width: 120.0, height: 80.0 },
+        // A non-default anchor mode, to prove it survives an xlsx round-trip.
+        anchor: Anchor { cell: at("C10"), dx: 5.0, dy: 4.0, width: 120.0, height: 80.0, mode: AnchorMode::MoveOnly },
         data: png,
         mime: "image/png".into(),
         alt: "Logo \"x\"".into(),
@@ -253,7 +255,7 @@ fn sample() -> Workbook {
     s.shapes.push(Shape {
         id: 11,
         kind: ShapeKind::Ellipse,
-        anchor: Anchor { cell: at("E10"), dx: 0.0, dy: 0.0, width: 64.0, height: 40.0 },
+        anchor: Anchor { cell: at("E10"), dx: 0.0, dy: 0.0, width: 64.0, height: 40.0, mode: AnchorMode::Absolute },
         fill: Color::Rgb(0x4472C4),
         line: Color::Rgb(0x000000),
         text: "Hi\nthere".into(),
@@ -261,7 +263,7 @@ fn sample() -> Workbook {
     s.shapes.push(Shape {
         id: 12,
         kind: ShapeKind::Arrow,
-        anchor: Anchor { cell: at("E14"), dx: 0.0, dy: 0.0, width: 64.0, height: 0.0 },
+        anchor: Anchor { cell: at("E14"), dx: 0.0, dy: 0.0, width: 64.0, height: 0.0, ..Default::default() },
         fill: Color::Auto,
         line: Color::Rgb(0xFF0000),
         text: String::new(),
@@ -269,7 +271,7 @@ fn sample() -> Workbook {
     s.shapes.push(Shape {
         id: 13,
         kind: ShapeKind::TextBox,
-        anchor: Anchor { cell: at("E16"), dx: 0.0, dy: 0.0, width: 64.0, height: 40.0 },
+        anchor: Anchor { cell: at("E16"), dx: 0.0, dy: 0.0, width: 64.0, height: 40.0, ..Default::default() },
         fill: Color::Auto,
         line: Color::Auto,
         text: "box".into(),
@@ -277,7 +279,7 @@ fn sample() -> Workbook {
     let base_chart = Chart {
         id: 20,
         kind: ChartKind::ColumnClustered,
-        anchor: Anchor { cell: at("J5"), dx: 0.0, dy: 0.0, width: 480.0, height: 288.0 },
+        anchor: Anchor { cell: at("J5"), dx: 0.0, dy: 0.0, width: 480.0, height: 288.0, ..Default::default() },
         title: Some("Sales".into()),
         series: vec![Series {
             name: Some("'Data & Stuff'!$B$1".into()),
@@ -287,6 +289,7 @@ fn sample() -> Workbook {
             color: Some(Color::Rgb(0xFF0000)),
             secondary: false,
             kind: None,
+            smooth: false,
         }],
         legend: LegendPos::Bottom,
         data_labels: true,
@@ -324,6 +327,7 @@ fn sample() -> Workbook {
         kind: Some(ChartKind::Line),
         secondary: true,
         color: None,
+        smooth: false,
         ..base_chart.series[0].clone()
     });
     s.charts.push(combo);
@@ -420,14 +424,17 @@ fn full_roundtrip() {
         ia.cell == ib.cell && close(ia.dx, ib.dx) && close(ia.dy, ib.dy) && close(ia.width, ib.width) && close(ia.height, ib.height),
         "{ia:?} {ib:?}"
     );
+    // The anchor mode (Excel's editAs) survives the round-trip.
+    assert_eq!(ib.mode, AnchorMode::MoveOnly, "image anchor mode");
+    assert_eq!(b.shapes[0].anchor.mode, AnchorMode::Absolute, "shape anchor mode");
+    assert_eq!(b.shapes[1].anchor.mode, AnchorMode::MoveAndSize, "default anchor mode");
     assert_eq!(b.shapes.len(), 3);
     for (x, y) in a.shapes.iter().zip(&b.shapes) {
         assert_eq!((x.kind, &x.text, x.fill, x.line), (y.kind, &y.text, y.fill, y.line));
     }
     assert_eq!(b.charts.len(), a.charts.len());
     for (x, y) in a.charts.iter().zip(&b.charts) {
-        let expect_kind = if x.kind == ChartKind::Waterfall { ChartKind::ColumnClustered } else { x.kind };
-        assert_eq!(y.kind, expect_kind, "chart kind");
+        assert_eq!(y.kind, x.kind, "chart kind");
         assert_eq!(y.title, x.title);
         assert_eq!(y.legend, x.legend);
         assert_eq!(y.data_labels, x.data_labels);
@@ -562,4 +569,34 @@ fn writing_repairs_invalid_models() {
     assert_eq!(s.value(at("A1")), Value::text("X"));
     assert_eq!(s.tables[0].name, "Table1");
     assert_eq!(s.cell(at("B2")).unwrap().style, StyleId::DEFAULT);
+}
+
+fn sheet1_xml(bytes: &[u8]) -> (String, bool) {
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut s = String::new();
+    z.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut s).unwrap();
+    let metadata = z.by_name("xl/metadata.xml").is_ok();
+    (s, metadata)
+}
+
+/// Excel refuses to open a file whose cached values include `#SPILL!` or `#CALC!`.
+#[test]
+fn spill_and_calc_errors_are_cached_as_value_errors() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.set_value(at("A1"), Value::Number(1.0));
+    s.cells.set(at("C1"), Cell { value: Value::Error(CellError::Spill), ..Cell::formula(Formula::new("A1:A3*2")) });
+    s.cells.set(at("C2"), Cell { value: Value::Error(CellError::Calc), ..Cell::formula(Formula::new("FILTER(A1:A3,A1:A3>5)")) });
+    s.cells.set(at("C3"), Cell { value: Value::Error(CellError::NA), ..Cell::formula(Formula::new("NA()")) });
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    assert!(!xml.contains("#SPILL!") && !xml.contains("#CALC!"), "{xml}");
+    let mut pkg = Package::open(&bytes).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+    for (address, text, value) in [("C1", "A1:A3*2", "#VALUE!"), ("C2", "_xlfn._xlws.FILTER(A1:A3,A1:A3>5)", "#VALUE!"), ("C3", "NA()", "#N/A")] {
+        let cell = sheet.child("sheetData").unwrap().kids("row").flat_map(|row| row.kids("c")).find(|cell| cell.attr("r") == Some(address)).unwrap();
+        assert_eq!(cell.attr("t"), Some("e"));
+        assert_eq!(cell.child("f").unwrap().text, text);
+        assert_eq!(cell.child("v").unwrap().text, value);
+    }
 }

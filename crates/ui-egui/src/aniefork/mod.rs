@@ -9,10 +9,11 @@ pub mod selection;
 use serde_json::{Value as Json, json};
 
 use crate::SheetApp;
+use crate::i18n::Language;
 
-/// The fork's UI-only commands: id and label. Like upstream's own (`view.darkMode`…), they act on
-/// the window rather than the workbook, so they live in the UI crate.
-const COMMANDS: &[(&str, &str)] = &[("view.animations", "Animations")];
+/// The fork's UI-only commands: id, label and params doc. Like upstream's own (`view.theme`…),
+/// they act on the window rather than the workbook, so they live in the UI crate.
+const COMMANDS: &[(&str, &str, &str)] = &[("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}")];
 
 /// Hook of `SheetApp::run_ui_command`: runs `id` when it is one of the fork's commands.
 ///
@@ -31,14 +32,37 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
 /// Hook of the control channel's `engine.commands`: the fork's commands, listed like upstream's
 /// UI commands.
 pub fn commands() -> impl Iterator<Item = Json> {
-    COMMANDS.iter().map(|(id, label)| json!({"id": id, "label": label, "enabled": true, "ui": true}))
+    COMMANDS.iter().map(|(id, label, params)| json!({"id": id, "label": label, "params": params, "enabled": true, "ui": true}))
 }
 
-/// Hook of the ribbon's View tab: the fork's settings, under Dark Mode (settings live in the
-/// View tab).
+const ANIMATIONS: &str = "Animations";
+const ANIMATIONS_HINT: &str = "Glide the selection outline to the cell you move to instead of jumping there";
+
+/// The fork's interface strings in the languages upstream translates. They are kept here so that
+/// upstream's catalogs stay untouched; any other language shows the English text, as upstream's
+/// untranslated labels do.
+fn tr(lang: Language, text: &'static str) -> &'static str {
+    match (text, lang) {
+        (ANIMATIONS, Language::Ja) => "アニメーション",
+        (ANIMATIONS, Language::Zh) => "动画",
+        (ANIMATIONS, Language::Ko) => "애니메이션",
+        (ANIMATIONS, Language::Ru) => "Анимация",
+        (ANIMATIONS, Language::PtBr) => "Animações",
+        (ANIMATIONS_HINT, Language::Ja) => "選択範囲の枠を、移動先のセルまで滑らかに動かします（瞬時には切り替えません）",
+        (ANIMATIONS_HINT, Language::Zh) => "选择框平滑滑动到新的单元格，而不是直接跳过去",
+        (ANIMATIONS_HINT, Language::Ko) => "선택 테두리가 바로 건너뛰지 않고 이동한 셀까지 부드럽게 미끄러집니다",
+        (ANIMATIONS_HINT, Language::Ru) => "Рамка выделения плавно скользит к новой ячейке, а не перескакивает",
+        (ANIMATIONS_HINT, Language::PtBr) => "Desliza o contorno da seleção até a nova célula em vez de saltar",
+        _ => text,
+    }
+}
+
+/// Hook of the ribbon's View tab: the fork's settings, under upstream's Display theme picker
+/// (settings live in the View tab).
 pub fn view_options(app: &mut SheetApp, ui: &mut egui::Ui) {
+    let lang = app.ui.language;
     let mut on = app.ui.animations;
-    if ui.checkbox(&mut on, "Animations").on_hover_text("Glide the selection outline to the cell you move to instead of jumping there").changed() {
+    if ui.checkbox(&mut on, tr(lang, ANIMATIONS)).on_hover_text(tr(lang, ANIMATIONS_HINT)).changed() {
         app.run_or_alert("view.animations", json!({"on": on}));
     }
 }
@@ -81,7 +105,7 @@ mod tests {
         assert_eq!(a.run("view.animations", json!({"on": "yes"})), Ok(json!({"on": true})));
         assert_eq!(a.run("view.animations", Json::Null), Ok(json!({"on": false})));
         // Other ids are left to upstream.
-        assert!(run_command(&mut a, "view.darkMode", &json!({})).is_none());
+        assert!(run_command(&mut a, "view.theme", &json!({})).is_none());
         assert!(run_command(&mut a, "", &json!({})).is_none());
     }
 
@@ -91,15 +115,35 @@ mod tests {
         let ctx = egui::Context::default();
         let reply = |o: crate::control::Outcome| match o {
             crate::control::Outcome::Done(v) => v,
-            crate::control::Outcome::Screenshot { .. } => Json::Null,
+            _ => Json::Null,
         };
         let listed = reply(crate::control::handle(&mut a, &ctx, "engine.commands", &json!({})));
-        let entry = listed["result"].as_array().and_then(|all| all.iter().find(|c| c["id"] == "view.animations")).cloned();
-        assert_eq!(entry, Some(json!({"id": "view.animations", "label": "Animations", "enabled": true, "ui": true})));
+        let entry = listed["result"].as_array().and_then(|all| all.iter().find(|c| c["id"] == "view.animations")).cloned().unwrap();
+        assert_eq!((&entry["label"], &entry["enabled"], &entry["ui"]), (&json!("Animations"), &json!(true), &json!(true)));
+        assert!(entry["params"].as_str().is_some_and(|doc| doc.contains("on")), "{entry}");
+        // Upstream's search of the listing finds it too.
+        let found = reply(crate::control::handle(&mut a, &ctx, "engine.commands", &json!({"search": "animations"})));
+        assert!(found["result"].as_array().is_some_and(|all| all.iter().any(|c| c["id"] == "view.animations")), "{found}");
         let ran = reply(crate::control::handle(&mut a, &ctx, "engine.execute", &json!({"command": "view.animations", "params": {"on": false}})));
         assert_eq!(ran, json!({"ok": true, "result": {"on": false}}));
         // `ui.inspect` reports it with the other UI preferences.
         let seen = reply(crate::control::handle(&mut a, &ctx, "ui.inspect", &json!({})));
         assert_eq!(seen["result"]["ui"]["animations"], json!(false));
+    }
+
+    #[test]
+    fn the_setting_is_worded_in_the_languages_upstream_translates() {
+        for text in [ANIMATIONS, ANIMATIONS_HINT] {
+            assert_eq!(tr(Language::En, text), text);
+            for lang in [Language::Ja, Language::Zh, Language::Ko, Language::Ru, Language::PtBr] {
+                let translated = tr(lang, text);
+                assert!(!translated.is_empty() && translated != text, "{lang:?}: {text}");
+            }
+            // Every language shows something: its own words, or the English ones.
+            for lang in Language::ALL {
+                assert!(!tr(lang, text).is_empty());
+            }
+        }
+        assert_eq!(tr(Language::Ja, "Sheet1!A1"), "Sheet1!A1", "text that isn't the fork's is left alone");
     }
 }

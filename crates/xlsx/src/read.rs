@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gridcraft_core::{DateSystem, RangeRef};
-use gridcraft_model::{CalcMode, DefinedName, Sheet, Style, StyleId, StyleTable, Visibility, Workbook};
+use gridcraft_model::{CalcMode, CellPicture, DefinedName, Sheet, Style, StyleId, StyleTable, Visibility, Workbook};
 
 use crate::package::{Package, Rel};
 use crate::styles::{StylesIn, read_styles};
@@ -26,6 +26,8 @@ pub struct Ctx<'a> {
     pub next_id: u32,
     /// Custom number formats from the styles part, by id.
     pub num_fmts: std::collections::HashMap<u32, String>,
+    /// Value metadata blocks, indexed by the worksheet's one-based `vm` attribute.
+    pub cell_pictures: Vec<Option<Arc<CellPicture>>>,
 }
 
 impl Ctx<'_> {
@@ -76,6 +78,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         persons: Default::default(),
         next_id: 1,
         num_fmts: Default::default(),
+        cell_pictures: vec![],
     };
     let root_rels = cx.pkg.rels("")?;
     let wb_part = find_rel(&root_rels, "officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "xl/workbook.xml".into());
@@ -95,6 +98,13 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         return Err(IoError::Format(format!("unexpected root element <{}> in workbook part", wb_xml.name)));
     }
     let wb_rels = cx.pkg.rels(&wb_part)?;
+    cx.cell_pictures = match crate::richdata::read(&mut cx, &wb_rels) {
+        Ok(pictures) => pictures,
+        Err(error) => {
+            cx.warn(format!("cell-picture data could not be read ({error}); scalar fallbacks were retained"));
+            vec![]
+        }
+    };
     let mut wb = Workbook::new();
     wb.sheets.clear();
 
@@ -216,7 +226,8 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     }
     wb.active_sheet = file_to_model.get(active_tab).copied().flatten().unwrap_or(0);
 
-    // Defined names.
+    // Defined names. Chartex parts refer to their data through hidden `_xlchart.*` names.
+    let mut chart_names: Vec<(String, String)> = vec![];
     if let Some(dn) = wb_xml.child("definedNames") {
         for d in dn.kids("definedName") {
             let Some(name) = d.attr("name") else { continue };
@@ -230,6 +241,10 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             let text = d.text.trim();
             let lname = name.to_ascii_lowercase();
             if lname == "_xlnm._filterdatabase" {
+                continue;
+            }
+            if lname.starts_with("_xlchart.") {
+                chart_names.push((lname, crate::fmla::from_file(text)));
                 continue;
             }
             if lname == "_xlnm.print_area" || lname == "_xlnm.print_titles" {
@@ -256,6 +271,23 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         }
     }
 
+    if !chart_names.is_empty() {
+        let resolve = |f: &mut String| {
+            if let Some((_, r)) = chart_names.iter().find(|(n, _)| f.eq_ignore_ascii_case(n)) {
+                *f = r.clone();
+            }
+        };
+        for sheet in wb.sheets.iter_mut().filter(|s| !s.charts.is_empty()) {
+            for ch in Arc::make_mut(sheet).charts.iter_mut() {
+                for s in ch.series.iter_mut() {
+                    resolve(&mut s.values);
+                    s.categories.iter_mut().for_each(&resolve);
+                    s.name.iter_mut().for_each(&resolve);
+                }
+            }
+        }
+    }
+
     // Document properties.
     if let Some(r) = find_rel(&root_rels, "core-properties").cloned()
         && let Ok(Some(x)) = cx.pkg.read_xml(&r.target)
@@ -279,11 +311,13 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     if wb_rels.iter().any(|r| r.kind == "externalLink") {
         cx.warn("links to external workbooks are not supported");
     }
+    // Calls of LAMBDA names are spelled like the names (the parser upper-cases them).
+    wb.apply_name_call_case();
     wb.styles = cx.styles;
     Ok((wb, cx.report))
 }
 
-fn unique_name(wb: &Workbook, name: &str, i: usize) -> String {
+pub(crate) fn unique_name(wb: &Workbook, name: &str, i: usize) -> String {
     let mut base: String = name.chars().filter(|c| !matches!(c, ':' | '\\' | '/' | '?' | '*' | '[' | ']')).take(31).collect();
     if base.trim().is_empty() {
         base = format!("Sheet{}", i + 1);

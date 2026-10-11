@@ -56,6 +56,14 @@ pub enum Edit {
     Delete { axis: Axis, at: u32, count: u32 },
     /// Cut-paste of a block: references into `from` now point into the block at `to` (top-left).
     Move { from: RangeRef, to_row: u32, to_col: u32 },
+    /// Insert Cells shifting down (`Rows`) or right (`Cols`): the cells of `range` and those
+    /// below (right of) it move by its height (width), within its columns (rows) only.
+    InsertCells { axis: Axis, range: RangeRef },
+    /// Delete Cells shifting up (`Rows`) or left (`Cols`): `range` goes and the cells below
+    /// (right of) it move back by its height (width), within its columns (rows) only.
+    DeleteCells { axis: Axis, range: RangeRef },
+    /// Cut-paste to another sheet; fully contained references follow the destination sheet too.
+    MoveToSheet { from: RangeRef, to_sheet: String, to_row: u32, to_col: u32 },
 }
 
 /// Adjusts a formula living on sheet `host` after `edit` on sheet `target`.
@@ -158,6 +166,21 @@ fn adjust_ref(r: &Reference, edit: &Edit) -> Option<Reference> {
             };
             Some(Reference { sheet: r.sheet.clone(), kind })
         }
+        Edit::InsertCells { axis, range } | Edit::DeleteCells { axis, range } => {
+            // Like inserting/deleting lines, for references that lie within the shifted
+            // columns (rows); Excel leaves references reaching outside them as they are.
+            let span = r.range();
+            let (inside, at, count) = match axis {
+                Axis::Rows => (range.start.col <= span.start.col && span.end.col <= range.end.col, range.start.row, range.height()),
+                Axis::Cols => (range.start.row <= span.start.row && span.end.row <= range.end.row, range.start.col, range.width()),
+            };
+            if !inside {
+                return Some(r.clone());
+            }
+            let axis = *axis;
+            let lines = if matches!(edit, Edit::InsertCells { .. }) { Edit::Insert { axis, at, count } } else { Edit::Delete { axis, at, count } };
+            adjust_ref(r, &lines)
+        }
         Edit::Move { from, to_row, to_col } => {
             let dr = *to_row as i64 - from.start.row as i64;
             let dc = *to_col as i64 - from.start.col as i64;
@@ -175,6 +198,26 @@ fn adjust_ref(r: &Reference, edit: &Edit) -> Option<Reference> {
                 k => k.clone(),
             };
             Some(Reference { sheet: r.sheet.clone(), kind })
+        }
+        Edit::MoveToSheet { from, to_sheet, to_row, to_col } => {
+            if !from.contains_range(&r.range()) {
+                return Some(r.clone());
+            }
+            let mut moved = adjust_ref(r, &Edit::Move { from: *from, to_row: *to_row, to_col: *to_col })?;
+            // Whole-row/column references have no anchors, but their indices must move too.
+            moved.kind = match &r.kind {
+                RefKind::Rows(a, aa, b, ba) => {
+                    let dr = *to_row as i64 - from.start.row as i64;
+                    RefKind::Rows(shift_line(*a, false, dr, MAX_ROWS)?, *aa, shift_line(*b, false, dr, MAX_ROWS)?, *ba)
+                }
+                RefKind::Cols(a, aa, b, ba) => {
+                    let dc = *to_col as i64 - from.start.col as i64;
+                    RefKind::Cols(shift_line(*a, false, dc, MAX_COLS)?, *aa, shift_line(*b, false, dc, MAX_COLS)?, *ba)
+                }
+                _ => moved.kind,
+            };
+            moved.sheet = SheetSel::Named(to_sheet.clone());
+            Some(moved)
         }
     }
 }
@@ -197,14 +240,39 @@ pub fn rename_sheet(e: Expr, old: &str, new: &str) -> Expr {
             }
             Expr::Ref(r)
         }
+        // Sheet-qualified defined name `Old!MyName` is stored as one string.
+        Expr::Name(n) => match n.split_at_checked(old.len()) {
+            Some((head, rest)) if head.eq_ignore_ascii_case(old) && rest.starts_with('!') => {
+                Expr::Name(format!("{}{rest}", crate::printer::quote_sheet(new)))
+            }
+            _ => Expr::Name(n),
+        },
         other => other,
     })
 }
 
-/// References to a deleted sheet become `#REF!`.
-pub fn delete_sheet(e: Expr, name: &str) -> Expr {
+/// References to a deleted sheet become `#REF!`. `order` lists the sheet names (before the deletion) in tab order:
+/// a 3-D span that loses an end sheet shrinks to the neighbouring surviving sheet, as in Excel.
+pub fn delete_sheet(e: Expr, name: &str, order: &[String]) -> Expr {
+    let pos = |n: &str| order.iter().position(|o| o.eq_ignore_ascii_case(n));
     e.map(&mut |x| match x {
         Expr::Ref(r) if r.sheet_name().is_some_and(|n| n.eq_ignore_ascii_case(name)) => Expr::Error(CellError::Ref),
+        Expr::Ref(mut r) => {
+            if let SheetSel::Span(a, b) = &r.sheet
+                && (a.eq_ignore_ascii_case(name) || b.eq_ignore_ascii_case(name))
+            {
+                let (Some(ia), Some(ib)) = (pos(a), pos(b)) else { return Expr::Ref(r) };
+                if ia == ib {
+                    return Expr::Error(CellError::Ref);
+                }
+                // The deleted end moves one sheet towards the other end; the span keeps its direction.
+                let inward = |from: usize, to: usize| order.get(if from < to { from + 1 } else { from.saturating_sub(1) });
+                let (na, nb) = if a.eq_ignore_ascii_case(name) { (inward(ia, ib), order.get(ib)) } else { (order.get(ia), inward(ib, ia)) };
+                let (Some(na), Some(nb)) = (na, nb) else { return Expr::Error(CellError::Ref) };
+                r.sheet = if na.eq_ignore_ascii_case(nb) { SheetSel::Named(na.clone()) } else { SheetSel::Span(na.clone(), nb.clone()) };
+            }
+            Expr::Ref(r)
+        }
         other => other,
     })
 }

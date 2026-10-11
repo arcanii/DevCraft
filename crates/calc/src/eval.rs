@@ -13,6 +13,10 @@ use gridcraft_model::Workbook;
 
 /// Largest array a reference may expand to.
 pub const MAX_CELLS: u64 = 16_000_000;
+/// References up to this many cells are read at their full size; larger ones (`A:A`, ranges
+/// reserved for data to come such as `$A$2:$A$50000`) stop at the sheet's used range, so that
+/// formulas over them stay fast.
+const FULL_SIZE_CELLS: u64 = 16_384;
 const MAX_DEPTH: usize = 400;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,9 +58,18 @@ pub trait Host {
     fn random(&mut self) -> f64;
     /// Called when a volatile or dynamic-reference function is used.
     fn note_volatile(&mut self) {}
+    /// The spill range of the dynamic array anchored at `anchor` (`None`: it doesn't spill).
+    fn spill_range(&mut self, sheet: usize, anchor: CellRef) -> Option<RangeRef> {
+        self.workbook().sheet(sheet)?.spill_ranges.get(&anchor).copied()
+    }
     /// Values of a block, row-major. Hosts can override with a sparse fast path.
     fn range_values(&mut self, sheet: usize, range: RangeRef) -> Vec<Value> {
         range.iter().map(|c| self.cell_value(sheet, c)).collect()
+    }
+    /// The sheet's used range (`Sheet::used_range`, which walks every stored row). Hosts that
+    /// keep the workbook unchanged while evaluating can remember it.
+    fn used_range(&mut self, sheet: usize) -> Option<RangeRef> {
+        self.workbook().sheet(sheet).and_then(|s| s.used_range())
     }
 }
 
@@ -129,7 +142,10 @@ impl<'h> Evaluator<'h> {
         if a.range.is_single() {
             return self.host.cell_value(a.sheet, a.range.start);
         }
-        let range = self.trim(a);
+        // A reference keeps its size, so the array has its shape and its blanks count
+        // (`=A1:A10`, `SUMPRODUCT(--(A1:A10=""))`).
+        let cells = u64::from(a.range.height()) * u64::from(a.range.width());
+        let range = if cells > FULL_SIZE_CELLS { self.trim(a) } else { a.range };
         let (h, w) = (range.height() as usize, range.width() as usize);
         if (h as u64) * (w as u64) > MAX_CELLS {
             return Value::Error(CellError::Num);
@@ -140,9 +156,11 @@ impl<'h> Evaluator<'h> {
 
     /// Trims the bottom/right of an area to the sheet's used range (keeps the top-left so
     /// positions stay right).
-    pub fn trim(&self, a: &Area) -> RangeRef {
-        let Some(sheet) = self.host.workbook().sheet(a.sheet) else { return a.range };
-        let used = sheet.used_range();
+    pub fn trim(&mut self, a: &Area) -> RangeRef {
+        if self.host.workbook().sheet(a.sheet).is_none() {
+            return a.range;
+        }
+        let used = self.host.used_range(a.sheet);
         let (mut r1, mut c1) = (a.range.end.row, a.range.end.col);
         match used {
             Some(u) => {
@@ -322,6 +340,19 @@ impl<'h> Evaluator<'h> {
     }
 
     fn unary(&mut self, op: UnOp, x: &Expr) -> Ev {
+        if op == UnOp::Spill {
+            return match self.eval(x) {
+                Ev::R(areas) => match areas.as_slice() {
+                    [a] if a.range.is_single() => match self.host.spill_range(a.sheet, a.range.start) {
+                        Some(range) => Ev::R(vec![Area { sheet: a.sheet, range }]),
+                        None => err(CellError::Ref),
+                    },
+                    _ => err(CellError::Ref),
+                },
+                Ev::V(Value::Error(e)) => err(e),
+                _ => err(CellError::Ref),
+            };
+        }
         if op == UnOp::At {
             let ev = self.eval(x);
             return match ev {
@@ -343,7 +374,7 @@ impl<'h> Evaluator<'h> {
                 UnOp::Neg => Value::number(-n),
                 UnOp::Plus => Value::number(n),
                 UnOp::Percent => Value::number(n / 100.0),
-                UnOp::At => Value::number(n),
+                UnOp::At | UnOp::Spill => Value::number(n),
             },
             op == UnOp::Plus,
         ))
@@ -696,8 +727,20 @@ impl<'h> Evaluator<'h> {
             return err(CellError::Value);
         }
         let mut evaluated = Vec::with_capacity(args.len());
-        for a in args {
-            let ev = self.eval(a);
+        // SUMIF/AVERAGEIF: the size of the criteria range (argument 1), which the sum range takes.
+        let mut criteria_shape = None;
+        for (i, a) in args.iter().enumerate() {
+            let mut ev = self.eval(a);
+            if resizes_sum_range(name, args.len()) {
+                if i == 0 {
+                    criteria_shape = ev_shape(&ev);
+                } else if i == 2
+                    && let (Some((h, w)), Ev::R(areas)) = (criteria_shape, &ev)
+                    && let [area] = areas.as_slice()
+                {
+                    ev = Ev::R(vec![Area { sheet: area.sheet, range: resized_sum_range(area.range, h, w) }]);
+                }
+            }
             let from_ref = matches!(ev, Ev::R(_));
             let value = match ev {
                 Ev::R(areas) if areas.len() > 1 => {
@@ -881,7 +924,7 @@ impl<'h> Evaluator<'h> {
     }
 
     /// Whole rows/columns trimmed for ROW()/COLUMN() arrays.
-    fn trim_lines(&self, a: &Area) -> RangeRef {
+    fn trim_lines(&mut self, a: &Area) -> RangeRef {
         if a.range.is_full_cols() || a.range.is_full_rows() { self.trim(a) } else { a.range }
     }
 
@@ -1306,30 +1349,64 @@ fn binary_scalar(op: BinOp, a: &Value, b: &Value) -> Value {
     }
 }
 
+/// SUMIF and AVERAGEIF with a sum range: Excel sizes the sum range like the criteria range.
+fn resizes_sum_range(name: &str, args: usize) -> bool {
+    args == 3 && matches!(name, "SUMIF" | "AVERAGEIF")
+}
+
+/// Height and width of a single-area reference or an array argument.
+fn ev_shape(ev: &Ev) -> Option<(u32, u32)> {
+    match ev {
+        Ev::R(areas) => match areas.as_slice() {
+            [a] => Some((a.range.height(), a.range.width())),
+            _ => None,
+        },
+        Ev::V(Value::Array(a)) => Some((u32::try_from(a.rows).unwrap_or(u32::MAX), u32::try_from(a.cols).unwrap_or(u32::MAX))),
+        Ev::V(_) => Some((1, 1)),
+        Ev::L(_) => None,
+    }
+}
+
+/// The range SUMIF/AVERAGEIF add up: from the sum range's top-left cell, as many rows and columns
+/// as the criteria range (`height` × `width`), cut off at the sheet's edge.
+pub fn resized_sum_range(sum: RangeRef, height: u32, width: u32) -> RangeRef {
+    let row = sum.start.row.saturating_add(height.saturating_sub(1)).min(MAX_ROWS - 1);
+    let col = sum.start.col.saturating_add(width.saturating_sub(1)).min(MAX_COLS - 1);
+    RangeRef::new(sum.start, CellRef::new(row, col))
+}
+
 /// Collects the static references of an expression with their sheets resolved; `dynamic` is
 /// set when the formula uses INDIRECT/OFFSET/names/tables whose targets can change.
 pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
     let mut out = Vec::new();
     let mut dynamic = false;
-    e.walk(&mut |x| match x {
-        Expr::Ref(r) => {
-            let range = r.range();
-            match &r.sheet {
-                SheetSel::Current => out.push(Area { sheet, range }),
-                SheetSel::Named(n) => {
-                    if let Some(i) = wb.sheet_index(n) {
-                        out.push(Area { sheet: i, range });
-                    }
-                }
-                SheetSel::Span(a, b) => {
-                    if let (Some(i), Some(j)) = (wb.sheet_index(a), wb.sheet_index(b)) {
-                        for s in i.min(j)..=i.max(j) {
-                            out.push(Area { sheet: s, range });
-                        }
-                    }
+    let push = |out: &mut Vec<Area>, r: &Reference, range: RangeRef| match &r.sheet {
+        SheetSel::Current => out.push(Area { sheet, range }),
+        SheetSel::Named(n) => {
+            if let Some(i) = wb.sheet_index(n) {
+                out.push(Area { sheet: i, range });
+            }
+        }
+        SheetSel::Span(a, b) => {
+            if let (Some(i), Some(j)) = (wb.sheet_index(a), wb.sheet_index(b)) {
+                for s in i.min(j)..=i.max(j) {
+                    out.push(Area { sheet: s, range });
                 }
             }
         }
+    };
+    e.walk(&mut |x| match x {
+        Expr::Ref(r) => push(&mut out, r, r.range()),
+        // The cells SUMIF/AVERAGEIF really read from the sum range (see `resized_sum_range`); when
+        // the criteria range's size isn't known statically, recalculate the formula every time.
+        Expr::Call(n, args) if resizes_sum_range(n, args.len()) => match (args.first(), args.get(2)) {
+            (Some(Expr::Ref(c)), Some(Expr::Ref(s))) => {
+                let (crit, sum) = (c.range(), s.range());
+                push(&mut out, s, resized_sum_range(sum, crit.height(), crit.width()));
+            }
+            (_, Some(Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) | Expr::Missing)) => {}
+            _ => dynamic = true,
+        },
         Expr::Call(n, _)
             if matches!(n.as_str(), "INDIRECT" | "OFFSET" | "NOW" | "TODAY" | "RAND" | "RANDBETWEEN" | "RANDARRAY" | "CELL" | "INFO") =>
         {
@@ -1337,6 +1414,20 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
         }
         Expr::Name(_) | Expr::Struct(_) => dynamic = true,
         Expr::Call(n, _) if gridcraft_functions::lookup(n).is_none() && !is_special(n) => dynamic = true,
+        // A range ending in a function's result (`A1:INDEX(B1:B9,n)`) covers the cells between
+        // the references inside it, not only those references.
+        Expr::Binary(BinOp::Range, a, b) if !matches!((&**a, &**b), (Expr::Ref(_), Expr::Ref(_))) => {
+            let mut inner = precedents(wb, sheet, a).0;
+            inner.extend(precedents(wb, sheet, b).0);
+            let mut boxes: Vec<Area> = Vec::new();
+            for area in inner {
+                match boxes.iter_mut().find(|x| x.sheet == area.sheet) {
+                    Some(x) => x.range = x.range.union(&area.range),
+                    None => boxes.push(area),
+                }
+            }
+            out.extend(boxes);
+        }
         _ => {}
     });
     (out, dynamic)

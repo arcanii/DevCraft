@@ -96,7 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture",
             ["Insert", "Illustrations"],
             None,
-            "{path? | base64?: \"...\", mime?, at?: \"B2\", width?, height?, alt?}",
+            "{path? | base64?: \"...\", mime?, at?: \"B2\", width?, height?, alt?, mode?: moveOnly|moveAndSize|absolute, placement?: cell|overCells}",
             has_doc,
             insert_picture
         ),
@@ -122,8 +122,18 @@ pub fn specs() -> Vec<CommandSpec> {
             s,
             &with(p, "kind", json!("textBox"))
         )),
+        cmd!("shape.setText", "Edit Text Box", [], None, "{id: textBox id, text: string}", has_doc, shape_set_text),
         cmd!("object.delete", "Delete Object", [], None, "{kind: chart|image|shape, id}", has_doc, delete_object),
         cmd!("object.move", "Move Object", [], None, "{kind: chart|image|shape, id, at?: \"C3\", dx?, dy?, width?, height?}", has_doc, move_object),
+        cmd!(
+            "object.setAnchorMode",
+            "Object Properties",
+            [],
+            None,
+            "{kind: chart|image|shape, id, mode: moveAndSize|moveOnly|absolute}",
+            has_doc,
+            set_anchor_mode
+        ),
         cmd!(
             "insert.link",
             "Link",
@@ -220,6 +230,13 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
         } else {
             let sh = cx.sheet_mut(sheet)?;
             sh.cells.shift_rows_in_cols(r.start.col, r.end.col, r.start.row, 1);
+            sh.cell_pictures = std::mem::take(&mut sh.cell_pictures)
+                .into_iter()
+                .filter_map(|(c, v)| {
+                    let dest = if c.col >= r.start.col && c.col <= r.end.col && c.row >= r.start.row { c.offset(1, 0) } else { Some(c) };
+                    dest.map(|c| (c, v))
+                })
+                .collect();
             for (i, c) in (r.start.col..=r.end.col).enumerate() {
                 sh.set_value(CellRef::new(r.start.row, c), gridcraft_core::Value::text(format!("Column{}", i + 1)));
             }
@@ -228,17 +245,24 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
         };
         let sh = cx.sheet_mut(sheet)?;
         let mut names: Vec<String> = Vec::new();
+        // Lower-case names taken, and the next suffix for each header, so that thousands of equal
+        // headers don't take cubic time.
+        let mut taken = std::collections::HashSet::new();
+        let mut next_suffix = std::collections::HashMap::new();
         for c in r.start.col..=r.end.col {
             let mut n = sh.value(CellRef::new(r.start.row, c)).display();
             if n.is_empty() {
                 n = format!("Column{}", c - r.start.col + 1);
             }
             let base = n.clone();
-            let mut k = 2;
-            while names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+            let key = base.to_ascii_lowercase();
+            let mut k = next_suffix.get(&key).copied().unwrap_or(2);
+            while taken.contains(&n.to_ascii_lowercase()) {
                 n = format!("{base}{k}");
                 k += 1;
             }
+            next_suffix.insert(key, k);
+            taken.insert(n.to_ascii_lowercase());
             // Headers are text.
             sh.set_value(CellRef::new(r.start.row, c), gridcraft_core::Value::text(n.as_str()));
             names.push(n);
@@ -304,7 +328,7 @@ fn table_flag(s: &mut Session, p: &Json, which: &str) -> Result<Json> {
                         t.range.end.row = t.range.end.row.saturating_sub(1);
                         let (c0, c1) = (t.range.start.col, t.range.end.col);
                         for c in c0..=c1 {
-                            sh.cells.remove(CellRef::new(row, c));
+                            sh.remove_cell(CellRef::new(row, c));
                         }
                     }
                     write_totals(sh, ti);
@@ -333,12 +357,11 @@ fn write_totals(sh: &mut Sheet, ti: usize) {
         let c = CellRef::new(row, t.range.start.col + i as u32);
         if let Some(code) = col.totals.subtotal_code() {
             let f = format!("=SUBTOTAL({code},{}[{}])", t.name, col.name);
-            sh.cells
-                .set(c, Cell { formula: Some(std::sync::Arc::new(Formula::new(&f))), value: gridcraft_core::Value::Empty, style: sh.style_id(c) });
+            sh.set_cell(c, Cell { formula: Some(std::sync::Arc::new(Formula::new(&f))), value: gridcraft_core::Value::Empty, style: sh.style_id(c) });
         } else if let Some(l) = &col.totals_label {
             sh.set_value(c, gridcraft_core::Value::text(l.as_str()));
         } else {
-            sh.cells.remove(c);
+            sh.remove_cell(c);
         }
     }
 }
@@ -508,6 +531,7 @@ pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> 
                 color: None,
                 secondary: false,
                 kind: None,
+                smooth: false,
             });
         }
     } else {
@@ -521,15 +545,19 @@ pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> 
                 color: None,
                 secondary: false,
                 kind: None,
+                smooth: false,
             });
         }
     }
     out
 }
 
+/// Most cells a chart's source block may span (bounds the series it builds).
+const MAX_CHART_CELLS: u64 = 1_000_000;
+
 fn insert_chart(s: &mut Session, p: &Json) -> Result<Json> {
     let r = block(s, p)?;
-    if r.count() > 1_000_000 {
+    if r.count() > MAX_CHART_CELLS {
         return Err(bad("insert.chart", "range too large for a chart"));
     }
     let sheet = target_sheet(s, p)?;
@@ -566,6 +594,7 @@ fn insert_chart(s: &mut Session, p: &Json) -> Result<Json> {
             dy: 0.0,
             width: f64_param(p, "width").unwrap_or(480.0) as f32,
             height: f64_param(p, "height").unwrap_or(288.0) as f32,
+            mode: anchor_mode_param(p).unwrap_or_default(),
         },
         title,
         series,
@@ -654,19 +683,53 @@ fn chart_switch(s: &mut Session, p: &Json) -> Result<Json> {
     edit(s, |cx| {
         let Some(sh) = cx.wb.sheet(si) else { return Ok(Json::Null) };
         let Some(c) = sh.charts.get(ci) else { return Ok(Json::Null) };
-        let Some(src) = c.source.clone() else { return Ok(Json::Null) };
+        // Charts read from a file have no source range: take the block their series span.
+        let Some((src, by_rows)) = c.source.clone().map(|s| (s, c.by_rows)).or_else(|| series_block(&c.series)) else { return Ok(Json::Null) };
         let (sheet_name, body) = split_sheet(&src);
         let src_sheet = sheet_name.and_then(|n| cx.wb.sheet_index(&n)).unwrap_or(si);
-        let Some(r) = RangeRef::parse(body) else { return Ok(Json::Null) };
+        let Some(mut r) = RangeRef::parse(body) else { return Ok(Json::Null) };
         let Some(ssh) = cx.wb.sheet(src_sheet) else { return Ok(Json::Null) };
-        let by_rows = !c.by_rows;
+        // Whole-column/row references (common in files) span a million cells: clip the block's
+        // far edges to the cells in use, then refuse anything still too large to chart.
+        if let Some(used) = ssh.used_range() {
+            r.end.row = r.end.row.min(used.end.row).max(r.start.row);
+            r.end.col = r.end.col.min(used.end.col).max(r.start.col);
+        }
+        if r.count() > MAX_CHART_CELLS {
+            return Err(bad("chart.switchRowColumn", "range too large for a chart"));
+        }
+        let by_rows = !by_rows;
         let series = series_from_range(ssh, r, by_rows);
         if let Some(c) = cx.sheet_mut(si)?.charts.get_mut(ci) {
+            c.source.get_or_insert(src);
             c.by_rows = by_rows;
             c.series = series;
         }
         Ok(Json::Null)
     })
+}
+
+/// The block a chart's series come from, and whether each series is a row of it: the bounding
+/// range of the series names, categories and values, when they're all references to one sheet.
+fn series_block(series: &[Series]) -> Option<(String, bool)> {
+    let mut sheet: Option<String> = None;
+    let mut bounds: Option<RangeRef> = None;
+    let mut rows = 0;
+    for s in series {
+        for (i, f) in [Some(&s.values), s.categories.as_ref(), s.name.as_ref()].into_iter().flatten().enumerate() {
+            let Ok(gridcraft_formula::Expr::Ref(r)) = gridcraft_formula::parse(f) else { return None };
+            let gridcraft_formula::SheetSel::Named(n) = &r.sheet else { return None };
+            if !sheet.get_or_insert_with(|| n.clone()).eq_ignore_ascii_case(n) {
+                return None;
+            }
+            let range = r.range();
+            if i == 0 && range.height() == 1 && range.width() > 1 {
+                rows += 1;
+            }
+            bounds = Some(bounds.map_or(range, |b| b.union(&range)));
+        }
+    }
+    Some((format!("{}!{}", gridcraft_formula::quote_sheet(&sheet?), bounds?.a1()), rows > 0 && rows == series.len()))
 }
 
 fn chart_delete(s: &mut Session, p: &Json) -> Result<Json> {
@@ -696,14 +759,39 @@ fn insert_sparkline(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {
+    let placement = str_param(p, "placement").unwrap_or("overCells");
+    if !matches!(placement, "cell" | "overCells") {
+        return Err(bad("insert.picture", "placement must be cell or overCells"));
+    }
     let data = if let Some(b) = str_param(p, "base64") {
         crate::io::base64_decode(b).ok_or_else(|| bad("insert.picture", "invalid base64"))?
     } else if let Some(path) = str_param(p, "path") {
         crate::io::read_file(path)?
     } else {
-        s.ui_requests.push(crate::UiRequest::Dialog("insertPicture".into(), json!({})));
+        s.ui_requests.push(crate::UiRequest::Dialog("insertPicture".into(), json!({"placement": placement})));
         return ok();
     };
+    if placement == "cell" {
+        let mime = validate_cell_picture(&data)?;
+        let d = s.doc()?;
+        let sheet = d.wb.active_sheet;
+        let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
+        let at = match str_param(p, "at") {
+            Some(a) => CellRef::parse(a).ok_or_else(|| bad("insert.picture", "invalid cell address"))?,
+            None => d.selection.active,
+        };
+        let at = sh.merge_at(at).map(|r| r.start).unwrap_or(at);
+        let style = sh.style_id(at);
+        if sh.is_protected() && d.wb.styles.get(style).protection.locked {
+            return Err(EngineError::Other("The cell you're trying to change is on a protected sheet.".into()));
+        }
+        let picture = CellPicture { data, mime: mime.into(), alt: str_param(p, "alt").unwrap_or("").into() };
+        return edit(s, |cx| {
+            cx.sheet_mut(sheet)?.set_picture(at, std::sync::Arc::new(picture));
+            cx.touch(sheet, at);
+            Ok(json!({"cell": at.a1(), "placement": "cell"}))
+        });
+    }
     if data.len() > 64 * 1024 * 1024 {
         return Err(bad("insert.picture", "image larger than 64 MB"));
     }
@@ -723,6 +811,8 @@ fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {
             dy: 0.0,
             width: f64_param(p, "width").map(|v| v as f32).unwrap_or(w as f32 * scale),
             height: f64_param(p, "height").map(|v| v as f32).unwrap_or(h as f32 * scale),
+            // Excel inserts pictures as "Move but don't size with cells" (`editAs="oneCell"`).
+            mode: anchor_mode_param(p).unwrap_or(gridcraft_model::AnchorMode::MoveOnly),
         },
         data,
         mime,
@@ -733,6 +823,33 @@ fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {
         cx.sheet_mut(sheet)?.images.push(img);
         Ok(json!({"image": id}))
     })
+}
+
+/// Validate before mutating the workbook; header dimensions alone do not prove the pixels decode.
+fn validate_cell_picture(data: &[u8]) -> Result<&'static str> {
+    if data.len() > 16 * 1024 * 1024 {
+        return Err(bad("insert.picture", "cell pictures must be at most 16 MiB"));
+    }
+    let format = image::guess_format(data).map_err(|_| bad("insert.picture", "choose a valid PNG or JPEG picture"))?;
+    let mime = match format {
+        image::ImageFormat::Png => "image/png",
+        image::ImageFormat::Jpeg => "image/jpeg",
+        _ => return Err(bad("insert.picture", "cell pictures support PNG and JPEG")),
+    };
+    let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(data), format)
+        .into_dimensions()
+        .map_err(|_| bad("insert.picture", "invalid image dimensions"))?;
+    if width == 0 || height == 0 || width > 8192 || height > 8192 || u64::from(width) * u64::from(height) > 16_000_000 {
+        return Err(bad("insert.picture", "cell pictures are limited to 8192 pixels per side and 16 million pixels"));
+    }
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(data), format);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map_err(|_| bad("insert.picture", "picture cannot be decoded within the 64 MiB limit"))?;
+    Ok(mime)
 }
 
 fn insert_shape(s: &mut Session, p: &Json) -> Result<Json> {
@@ -764,6 +881,7 @@ fn insert_shape(s: &mut Session, p: &Json) -> Result<Json> {
             dy: 0.0,
             width: f64_param(p, "width").unwrap_or(144.0) as f32,
             height: f64_param(p, "height").unwrap_or(if kind == ShapeKind::Line { 0.0 } else { 96.0 }) as f32,
+            mode: anchor_mode_param(p).unwrap_or_default(),
         },
         fill,
         line,
@@ -773,6 +891,37 @@ fn insert_shape(s: &mut Session, p: &Json) -> Result<Json> {
     edit(s, |cx| {
         cx.sheet_mut(sheet)?.shapes.push(shape);
         Ok(json!({"shape": id}))
+    })
+}
+
+/// A text box holds at most as many characters as a cell.
+const SHAPE_TEXT_MAX_CHARS: usize = 32_767;
+
+fn shape_set_text(s: &mut Session, p: &Json) -> Result<Json> {
+    let id =
+        p.get("id").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok()).ok_or_else(|| bad("shape.setText", "`id` must be a text box id"))?;
+    let text = str_param(p, "text").ok_or_else(|| bad("shape.setText", "`text` must be a string"))?;
+    if text.chars().nth(SHAPE_TEXT_MAX_CHARS).is_some() {
+        return Err(bad("shape.setText", "`text` is longer than 32,767 characters"));
+    }
+    let d = s.doc()?;
+    let sheet = d.wb.active_sheet;
+    let sh = d.wb.active().ok_or_else(|| bad("shape.setText", "no such text box"))?;
+    let shape = sh.shapes.iter().find(|shape| shape.id == id).ok_or_else(|| bad("shape.setText", "no such text box"))?;
+    if shape.kind != ShapeKind::TextBox {
+        return Err(bad("shape.setText", "the shape is not a text box"));
+    }
+    // Sheet protection locks drawing objects (there is no "edit objects" allowance yet).
+    if sh.is_protected() {
+        return Err(EngineError::Other(PROTECTED.into()));
+    }
+    if shape.text == text {
+        return ok();
+    }
+    edit(s, |cx| {
+        let shape = cx.sheet_mut(sheet)?.shapes.iter_mut().find(|shape| shape.id == id).ok_or_else(|| bad("shape.setText", "no such text box"))?;
+        shape.text = text.into();
+        Ok(Json::Null)
     })
 }
 
@@ -800,7 +949,8 @@ fn move_object(s: &mut Session, p: &Json) -> Result<Json> {
         let anchor = match kind.as_str() {
             "chart" => sh.charts.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
             "image" => sh.images.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
-            _ => sh.shapes.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
+            "shape" => sh.shapes.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
+            _ => None,
         };
         let Some(a) = anchor else { return Err(bad("object.move", "no such object")) };
         if let Some(at) = cell_param(p, "at") {
@@ -819,6 +969,30 @@ fn move_object(s: &mut Session, p: &Json) -> Result<Json> {
             a.height = v.clamp(0.0, 10000.0) as f32;
         }
         Ok(Json::Null)
+    })
+}
+
+/// Sets an object's anchor mode (Excel's "Move and size with cells" / "Move but don't size with
+/// cells" / "Don't move or size with cells"), so it follows — or ignores — its rows and columns
+/// when the sheet is sorted or edited structurally.
+fn set_anchor_mode(s: &mut Session, p: &Json) -> Result<Json> {
+    let id = u32_param(p, "id").ok_or_else(|| bad("object.setAnchorMode", "missing `id`"))?;
+    let kind = str_param(p, "kind").unwrap_or("").to_string();
+    if !matches!(kind.as_str(), "chart" | "image" | "shape") {
+        return Err(bad("object.setAnchorMode", "kind must be chart, image or shape"));
+    }
+    let mode = anchor_mode_param(p).ok_or_else(|| bad("object.setAnchorMode", "mode must be moveAndSize, moveOnly or absolute"))?;
+    let sheet = s.doc()?.wb.active_sheet;
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        let anchor = match kind.as_str() {
+            "chart" => sh.charts.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
+            "image" => sh.images.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
+            _ => sh.shapes.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
+        };
+        let Some(a) = anchor else { return Err(bad("object.setAnchorMode", "no such object")) };
+        a.mode = mode;
+        Ok(json!({"mode": anchor_mode_name(mode)}))
     })
 }
 
@@ -846,7 +1020,7 @@ fn insert_link(s: &mut Session, p: &Json) -> Result<Json> {
         });
         let sh = cx.sheet_mut(sheet)?;
         if let Some(t) = text.clone().or_else(|| sh.value(at).is_empty().then(|| target.clone())) {
-            sh.cells.set(at, Cell { value: gridcraft_core::Value::text(t.as_str()), formula: None, style: link_style });
+            sh.set_cell(at, Cell { value: gridcraft_core::Value::text(t.as_str()), formula: None, style: link_style });
         } else {
             sh.set_style(at, link_style);
         }
@@ -1134,7 +1308,7 @@ fn insert_icon(s: &mut Session, p: &Json) -> Result<Json> {
     let shape = Shape {
         id,
         kind: ShapeKind::Icon,
-        anchor: Anchor { cell: at, dx: 4.0, dy: 4.0, width: size, height: size },
+        anchor: Anchor { cell: at, dx: 4.0, dy: 4.0, width: size, height: size, mode: anchor_mode_param(p).unwrap_or_default() },
         fill: color,
         line: Color::Auto,
         text: name,

@@ -112,7 +112,8 @@ fn data_range(s: &Session, p: &Json) -> Result<RangeRef> {
     }
     let sel = d.selection.current();
     if !sel.is_single() {
-        let used = sh.used_range().unwrap_or(sel);
+        // An empty sheet has no data to work on: just the active cell.
+        let Some(used) = sh.used_range() else { return Ok(RangeRef::cell(d.selection.active)) };
         return Ok(sel.intersection(&used).unwrap_or(sel));
     }
     Ok(current_region(sh, d.selection.active))
@@ -265,6 +266,7 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
         // Move whole lines (cells with formulas adjusted for relative references).
         let lanes: Vec<u32> = if by_cols { (body.start.row..=body.end.row).collect() } else { (body.start.col..=body.end.col).collect() };
         let mut moved: Vec<(CellRef, Option<Cell>)> = Vec::with_capacity(body.count() as usize);
+        let mut pictures = Vec::new();
         for (dst_i, &src_i) in order.iter().enumerate() {
             for &k in &lanes {
                 let src = line(src_i, k);
@@ -277,21 +279,52 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
                     let shifted = gridcraft_formula::adjust::shift_relative(e, dst.row as i64 - src.row as i64, dst.col as i64 - src.col as i64);
                     c.formula = Some(Arc::new(Formula::from_expr(shifted)));
                 }
+                if let Some(picture) = sh.cell_pictures.get(&src) {
+                    pictures.push((dst, picture.clone()));
+                }
                 moved.push((dst, cell));
             }
         }
         // Row heights travel with rows.
         let heights: Vec<Option<LineInfo>> =
             if by_cols { vec![] } else { order.iter().map(|&i| sh.rows.get(&(body.start.row + i)).copied()).collect() };
+        // Floating objects anchored inside the sorted body travel with their lines, unless they
+        // are pinned absolutely ("Don't move or size with cells", `editAs="absolute"`). Reordering
+        // is the inverse of `order`: `dst_of[src] = dst`.
+        let dst_of: Vec<u32> = {
+            let mut v = vec![0u32; order.len()];
+            for (dst_i, &src_i) in order.iter().enumerate() {
+                if let Some(slot) = v.get_mut(src_i as usize) {
+                    *slot = dst_i as u32;
+                }
+            }
+            v
+        };
+        // The object's own geometry (its top-left anchor cell, offset and size) is read from the
+        // pre-sort `sh`; a two-cell object's bottom-right cell is derived from its size here so it
+        // can be re-fitted to the lines it spans after the sort.
+        let objs: Vec<Anchor> =
+            sh.images.iter().map(|o| o.anchor).chain(sh.charts.iter().map(|o| o.anchor)).chain(sh.shapes.iter().map(|o| o.anchor)).collect();
+        let descs: Vec<(u32, u32, f32, f32)> = objs
+            .iter()
+            .map(|a| {
+                let x2 = sh.col_left(a.cell.col) + a.dx as f64 + a.width.max(0.0) as f64;
+                let y2 = sh.row_top(a.cell.row) + a.dy as f64 + a.height.max(0.0) as f64;
+                let tc = sh.col_at(x2);
+                let tr = sh.row_at(y2);
+                (tc, tr, (x2 - sh.col_left(tc)) as f32, (y2 - sh.row_top(tr)) as f32)
+            })
+            .collect();
         let shm = cx.sheet_mut(sheet)?;
         for (c, cell) in &moved {
             match cell {
-                Some(x) => shm.cells.set(*c, x.clone()),
+                Some(x) => shm.set_cell(*c, x.clone()),
                 None => {
-                    shm.cells.remove(*c);
+                    shm.remove_cell(*c);
                 }
             }
         }
+        shm.cell_pictures.extend(pictures);
         for (i, h) in heights.into_iter().enumerate() {
             let row = body.start.row + i as u32;
             match h {
@@ -305,6 +338,34 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
                 }
             }
         }
+        // Re-anchor floating objects now that the row heights are final. `objs` was collected as
+        // images ++ charts ++ shapes, so the same index maps straight onto each vec.
+        // Only objects anchored inside the sorted block move: within its lines on the sort axis
+        // and within its span on the other axis (a picture beside the block stays put).
+        let (b0, b1) = if by_cols { (body.start.col, body.end.col) } else { (body.start.row, body.end.row) };
+        let (o0, o1) = if by_cols { (body.start.row, body.end.row) } else { (body.start.col, body.end.col) };
+        let ni = shm.images.len();
+        let nch = shm.charts.len();
+        for (i, (a, desc)) in objs.into_iter().zip(descs).enumerate() {
+            let other = if by_cols { a.cell.row } else { a.cell.col };
+            if other < o0 || other > o1 {
+                continue;
+            }
+            let na = sorted_anchor(shm, a, desc, by_cols, b0, b1, &dst_of);
+            if na != a {
+                if i < ni {
+                    if let Some(o) = shm.images.get_mut(i) {
+                        o.anchor = na;
+                    }
+                } else if i < ni + nch {
+                    if let Some(o) = shm.charts.get_mut(i - ni) {
+                        o.anchor = na;
+                    }
+                } else if let Some(o) = shm.shapes.get_mut(i - ni - nch) {
+                    o.anchor = na;
+                }
+            }
+        }
         for (c, _) in moved {
             cx.changed.push((sheet, c));
         }
@@ -312,6 +373,35 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
         Ok(Json::Null)
     })?;
     Ok(json!({"sorted": body.a1()}))
+}
+
+/// Re-anchor one floating object for a sort. `bottom` is the object's bottom-right line and the
+/// offset of that corner inside it, measured before the sort. `map` (via `dst_of`) translates a
+/// line index on the moving axis and is the identity outside `b0..=b1`. `sh` is the post-sort
+/// grid (row heights already reordered), so re-fitting uses the heights the object lands on.
+/// Objects pinned absolutely ("Don't move or size with cells") never move; "move but don't size"
+/// keeps its size; "move and size" is re-fitted when its whole extent stays inside the body.
+fn sorted_anchor(sh: &Sheet, a: Anchor, bottom: (u32, u32, f32, f32), by_cols: bool, b0: u32, b1: u32, dst_of: &[u32]) -> Anchor {
+    if a.mode == AnchorMode::Absolute {
+        return a;
+    }
+    let (tc, tr, tdx, tdy) = bottom;
+    let map = |v: u32| -> u32 { if v >= b0 && v <= b1 { dst_of.get((v - b0) as usize).map_or(v, |&d| b0 + d) } else { v } };
+    let (axis_start, axis_end) = if by_cols { (a.cell.col, tc) } else { (a.cell.row, tr) };
+    if axis_start < b0 || axis_start > b1 {
+        return a;
+    }
+    let (nr, nc) = if by_cols { (a.cell.row, map(a.cell.col)) } else { (map(a.cell.row), a.cell.col) };
+    if a.mode == AnchorMode::MoveAndSize && axis_end >= b0 && axis_end <= b1 {
+        let (nbr, nbc) = if by_cols { (tr, map(tc)) } else { (map(tr), tc) };
+        let x1 = sh.col_left(nc) + a.dx as f64;
+        let y1 = sh.row_top(nr) + a.dy as f64;
+        let x2 = sh.col_left(nbc) + tdx as f64;
+        let y2 = sh.row_top(nbr) + tdy as f64;
+        Anchor { cell: CellRef::new(nr, nc), dx: a.dx, dy: a.dy, width: (x2 - x1).max(0.0) as f32, height: (y2 - y1).max(0.0) as f32, mode: a.mode }
+    } else {
+        Anchor { cell: CellRef::new(nr, nc), ..a }
+    }
 }
 
 // ---------------------------------------------------------------- filter
@@ -579,6 +669,9 @@ fn remove_duplicates(s: &mut Session, p: &Json) -> Result<Json> {
     let r = data_range(s, p)?;
     let d = s.doc()?;
     let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
+    // Rows and columns past the data are blank: only the part with data is compared (whole
+    // columns compared a million blank rows and reported them as removed duplicates).
+    let r = sh.used_range().and_then(|u| r.intersection(&u)).unwrap_or(RangeRef::cell(r.start));
     let header = bool_param(p, "header").unwrap_or_else(|| guess_header(&d.wb, sh, r));
     let cols: Vec<u32> = p
         .get("columns")
@@ -600,21 +693,30 @@ fn remove_duplicates(s: &mut Session, p: &Json) -> Result<Json> {
                 removed += 1;
             }
         }
+        let pictures: Vec<_> = keep
+            .iter()
+            .enumerate()
+            .flat_map(|(i, row)| {
+                (r.start.col..=r.end.col)
+                    .filter_map(move |col| sh.cell_pictures.get(&CellRef::new(*row, col)).map(|p| (CellRef::new(start + i as u32, col), p.clone())))
+            })
+            .collect();
         let rows: Vec<Vec<Option<Cell>>> =
             keep.iter().map(|row| (r.start.col..=r.end.col).map(|c| sh.cell(CellRef::new(*row, c)).cloned()).collect()).collect();
         let shm = cx.sheet_mut(sheet)?;
         for row in start..=r.end.row {
             for c in r.start.col..=r.end.col {
-                shm.cells.remove(CellRef::new(row, c));
+                shm.remove_cell(CellRef::new(row, c));
             }
         }
         for (i, cells) in rows.into_iter().enumerate() {
             for (j, cell) in cells.into_iter().enumerate() {
                 if let Some(cell) = cell {
-                    shm.cells.set(CellRef::new(start + i as u32, r.start.col + j as u32), cell);
+                    shm.set_cell(CellRef::new(start + i as u32, r.start.col + j as u32), cell);
                 }
             }
         }
+        shm.cell_pictures.extend(pictures);
         for c in RangeRef::new(CellRef::new(start, r.start.col), r.end).iter() {
             cx.changed.push((sheet, c));
         }
@@ -662,13 +764,12 @@ fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         for (c, t) in out {
-            let old = cx.wb.sheet(sheet).and_then(|sh| sh.cell(c)).cloned();
-            let cell = super::edit::input_to_cell(&t, old.as_ref(), &mut cx.wb).unwrap_or(None);
+            let cell = super::edit::input_to_cell(&t, sheet, c, &mut cx.wb).unwrap_or(None);
             let shm = cx.sheet_mut(sheet)?;
             match cell {
-                Some(x) => shm.cells.set(c, x),
+                Some(x) => shm.set_cell(c, x),
                 None => {
-                    shm.cells.remove(c);
+                    shm.remove_cell(c);
                 }
             }
             cx.changed.push((sheet, c));
@@ -683,9 +784,15 @@ fn split_delimited(text: &str, delims: &[char], consecutive: bool, quote: char) 
     let mut cur = String::new();
     let mut in_q = false;
     let mut last_delim = false;
-    for c in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
         if c == quote {
-            in_q = !in_q;
+            if in_q && chars.peek() == Some(&quote) {
+                cur.push(quote);
+                chars.next();
+            } else {
+                in_q = !in_q;
+            }
             continue;
         }
         if !in_q && delims.contains(&c) {
@@ -718,16 +825,42 @@ fn op_param(s: Option<&str>) -> CfOperator {
     }
 }
 
+/// `r` minus `cut`, as up to four non-overlapping rectangles.
+fn subtract_range(r: RangeRef, cut: &RangeRef) -> Vec<RangeRef> {
+    let Some(i) = r.intersection(cut) else { return vec![r] };
+    let mut out = Vec::new();
+    if i.start.row > r.start.row {
+        out.push(RangeRef::new(r.start, CellRef::new(i.start.row - 1, r.end.col)));
+    }
+    if i.end.row < r.end.row {
+        out.push(RangeRef::new(CellRef::new(i.end.row + 1, r.start.col), r.end));
+    }
+    if i.start.col > r.start.col {
+        out.push(RangeRef::new(CellRef::new(i.start.row, r.start.col), CellRef::new(i.end.row, i.start.col - 1)));
+    }
+    if i.end.col < r.end.col {
+        out.push(RangeRef::new(CellRef::new(i.start.row, i.end.col + 1), CellRef::new(i.end.row, r.end.col)));
+    }
+    out
+}
+
+/// Removes the cells of `cuts` from every validation, keeping the rest of each rule's ranges.
+fn remove_validation_cells(validations: &mut Vec<Validation>, cuts: &[RangeRef]) {
+    for dv in validations.iter_mut() {
+        for cut in cuts {
+            dv.ranges = dv.ranges.iter().flat_map(|r| subtract_range(*r, cut)).collect();
+        }
+    }
+    validations.retain(|d| !d.ranges.is_empty());
+}
+
 fn validation(s: &mut Session, p: &Json) -> Result<Json> {
     let ranges = target_ranges(s, p)?;
     let sheet = target_sheet(s, p)?;
     if bool_param(p, "clear").unwrap_or(false) {
         return edit(s, |cx| {
             let sh = cx.sheet_mut(sheet)?;
-            for dv in sh.validations.iter_mut() {
-                dv.ranges.retain(|r| !ranges.iter().any(|x| x.contains_range(r)));
-            }
-            sh.validations.retain(|d| !d.ranges.is_empty());
+            remove_validation_cells(&mut sh.validations, &ranges);
             Ok(Json::Null)
         });
     }
@@ -767,10 +900,7 @@ fn validation(s: &mut Session, p: &Json) -> Result<Json> {
     };
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
-        for v in sh.validations.iter_mut() {
-            v.ranges.retain(|r| !ranges.iter().any(|x| x.contains_range(r)));
-        }
-        sh.validations.retain(|d| !d.ranges.is_empty());
+        remove_validation_cells(&mut sh.validations, &ranges);
         sh.validations.push(dv.clone());
         Ok(Json::Null)
     })
@@ -868,7 +998,7 @@ fn circle_invalid(s: &mut Session, _: &Json) -> Result<Json> {
             let r = sh.used_range().and_then(|u| r.intersection(&u));
             let Some(r) = r else { continue };
             for c in r.iter().take(100_000) {
-                let text = sh.cell(c).map(|x| x.input_text()).unwrap_or_default();
+                let text = sh.input_text(c);
                 if !text.is_empty() && check_validation(&d.wb, sheet, c, &text).is_some() {
                     bad_cells.push(c.a1());
                 }
@@ -1005,6 +1135,28 @@ fn subtotal(s: &mut Session, p: &Json) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_validation_edits_keep_the_rest_of_the_old_rule() {
+        let mut s = Session::new();
+        s.new_workbook();
+        let rule = |range: &str, lo: &str, hi: &str| json!({"range": range, "type": "whole", "operator": "between", "formula1": lo, "formula2": hi});
+        let ok = |s: &mut Session, cell: &str, input: &str| {
+            s.execute("data.validate", json!({"cell": cell, "input": input})).unwrap()["ok"] == json!(true)
+        };
+        s.execute("data.validation", rule("B1:B3", "1", "10")).unwrap();
+        s.execute("data.validation", json!({"range": "B2", "clear": true})).unwrap();
+        assert!(ok(&mut s, "B2", "999"));
+        assert!(!ok(&mut s, "B1", "999"));
+        assert!(!ok(&mut s, "B3", "999"));
+        s.execute("data.validation", rule("B2:B4", "100", "200")).unwrap();
+        for cell in ["B2", "B3", "B4"] {
+            assert!(ok(&mut s, cell, "150"), "{cell}");
+            assert!(!ok(&mut s, cell, "5"), "{cell}");
+        }
+        assert!(ok(&mut s, "B1", "5"));
+        assert!(!ok(&mut s, "B1", "150"));
+    }
 
     #[test]
     fn split() {

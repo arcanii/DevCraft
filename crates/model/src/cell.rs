@@ -42,6 +42,16 @@ impl Formula {
     }
 }
 
+/// A static picture stored as cell content, independent of floating drawing anchors.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CellPicture {
+    /// Encoded PNG/JPEG bytes, base64 in JSON. Sheet entries share the payload through Arc.
+    #[serde(with = "crate::b64")]
+    pub data: Vec<u8>,
+    pub mime: String,
+    pub alt: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Cell {
     /// Constant value, or the cached result of the formula.
@@ -73,6 +83,14 @@ impl Cell {
                 t.to_string()
             }
             v => v.display(),
+        }
+    }
+    /// What the formula bar shows when not editing: [`input_text`](Self::input_text), with a
+    /// legacy array formula in braces (`{=A1:A2*2}`).
+    pub fn bar_text(&self) -> String {
+        match &self.formula {
+            Some(f) if f.array.is_some() => format!("{{={}}}", f.text),
+            _ => self.input_text(),
         }
     }
 }

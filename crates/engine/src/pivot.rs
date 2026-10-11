@@ -126,18 +126,25 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
         return Err("The source range is too large for a PivotTable.".into());
     }
     let mut headers: Vec<String> = Vec::new();
+    // Names taken so far (lower-case), and the next suffix to try for each repeated header, so
+    // that thousands of equal headers don't take cubic time.
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut next_suffix: HashMap<String, usize> = HashMap::new();
     let mut formats = Vec::new();
     for c in r.start.col..=r.end.col {
         let h = crate::display::cell_text(wb, sh, CellRef::new(r.start.row, c)).trim().to_string();
         if h.is_empty() {
             return Err(FIELD_NAME_ERR.into());
         }
+        let key = h.to_ascii_lowercase();
         let mut n = h.clone();
-        let mut k = 2;
-        while headers.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+        let mut k = next_suffix.get(&key).copied().unwrap_or(2);
+        while taken.contains(&n.to_ascii_lowercase()) {
             n = format!("{h}{k}");
             k += 1;
         }
+        next_suffix.insert(key, k);
+        taken.insert(n.to_ascii_lowercase());
         headers.push(n);
         let fmt = if r.end.row > r.start.row {
             wb.styles.get(sh.style_id(CellRef::new(r.start.row + 1, c))).num_fmt.as_str().to_string()
@@ -1184,11 +1191,11 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
     }
     let shm = wb.sheet_mut(sheet).ok_or("There's no such sheet.")?;
     if let Some(old) = pt.last_range {
-        shm.cells.take_range(old);
+        shm.take_cells(old);
     }
-    shm.cells.take_range(area);
+    shm.take_cells(area);
     for (c, cell) in cells {
-        shm.cells.set(c, cell);
+        shm.set_cell(c, cell);
     }
     for (col, wpt) in widths {
         if wpt > shm.col_width(col) && !shm.is_col_hidden(col) {
@@ -1205,7 +1212,7 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
 pub fn clear_output(wb: &mut Workbook, sheet: usize, idx: usize) {
     let Some(shm) = wb.sheet_mut(sheet) else { return };
     let Some(r) = shm.pivots.get(idx).and_then(|p| p.last_range) else { return };
-    shm.cells.take_range(r);
+    shm.take_cells(r);
     if let Some(p) = shm.pivots.get_mut(idx) {
         p.last_range = None;
     }

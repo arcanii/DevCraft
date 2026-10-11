@@ -20,7 +20,8 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | none yet |
+| Last merge of upstream | 2026-10-11, upstream `9f896c1` (GridCraft 0.5.0), 222 commits |
+| Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 2 changes upstream lacks (below) |
 
 ## What the fork carries
@@ -54,8 +55,10 @@ The fork glides. WordCraft's fork does the same for the text caret.
 - **Timing:** 0.12 s with a decelerating (ease-out cubic) curve, the same at any frame rate.
   `GRIDCRAFT_SELECTION_GLIDE_MS` overrides the duration: `0` turns the glide off, a large value (up
   to 10000) slows it down enough to study.
-- **Turning it off:** View › **Animations** (a checkbox under Dark Mode: settings live in the
-  View tab, and there is no Options dialog). Off, the outline jumps as upstream's does. The choice
+- **Turning it off:** View › **Animations** (a checkbox under the Display theme picker: settings
+  live in the View tab, and there is no Options dialog). Its label and hint are worded in the
+  languages upstream translates, from a table of the fork's own (`tr` in `aniefork/mod.rs`); any
+  other language shows them in English. Off, the outline jumps as upstream's does. The choice
   is saved with the other UI preferences (`animations` in `ui.json`; on by default, and a file
   written before the setting existed leaves it on). Agents: `view.animations {on?}` sets or
   toggles it and returns `{on}`; it is listed by `engine.commands` and shown by `ui.inspect`.
@@ -115,10 +118,10 @@ still there:
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill loop | each area is filled with the rectangles from `crate::aniefork::selection::fill_rects(…)` (the current area at `cur`, the active cell left out) instead of its whole `geo.range_rect(sh, *r)` |
 | `crates/ui-egui/src/grid.rs`, `show`, the marching ants | `marching_phase` comes from `crate::aniefork::selection::ants_phase(…)` instead of stepping by 0.5 per frame |
 | `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
-| `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed: `v.extend(crate::aniefork::commands());` |
+| `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `animations: bool` (default `true`), between `formula_bar_expanded` and `status_bar` |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
-| `crates/ui-egui/src/ribbon.rs`, `view`, under the Dark Mode checkbox | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
+| `crates/ui-egui/src/ribbon.rs`, `view`, in the Display theme column, after the picker | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
 
 ## Syncing with upstream
 
@@ -129,8 +132,15 @@ git merge upstream/main
 
 Sync often: upstream lands many commits a day, and small merges are easy. What can still conflict:
 
-- **The hooks above**, when upstream edits the selection painting in `grid.rs` or the screenshot
-  queue in `control.rs`. Take upstream's code and put the hook back.
+- **The hooks above**, when upstream edits the lines around them. Take upstream's code and put
+  the hook back. The 0.5.0 merge conflicted at three: the module list in `lib.rs` (both sides
+  added modules), the command listing in `control.rs` (upstream now filters it) and the View tab
+  in `ribbon.rs` (upstream replaced the Dark Mode checkbox with a Display theme picker). The hooks
+  in `grid.rs`, `UiState` and `run_ui_command` merged by themselves.
+- **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
+  must list commands in the shape upstream's listing uses (0.5.0 added `params`), and
+  `aniefork::tr` covers the interface languages upstream has: when upstream adds one, the fork's
+  strings show in English there until they are added to that table.
 - **`ATTRIBUTION.md`:** when both sides add assets (the fork has none so far).
 
 After a merge, run `cargo xtask ci` before committing it, and update the tables above.
@@ -142,14 +152,24 @@ toolchain fails with a dependency error (pdfcraft's fork found the same and carr
 `cargo xtask ci` also needs the `wasm32-unknown-unknown` target.
 
 On Windows the gate's last step fails on an untouched checkout: `cargo xtask parity --check`
-compares the generated text with `docs/parity.md` byte for byte, and with `core.autocrlf=true` the
-checked-out file has CRLF line endings. It is not a sign that the catalog changed. The other steps
-(fmt, clippy, tests, assets, layers, wasm) are meaningful there.
+compares the generated text with `docs/parity-checklist.md` (`docs/parity.md` before 0.5.0) byte
+for byte, and with `core.autocrlf=true` the checked-out file has CRLF line endings. It is not a
+sign that the catalog changed. The other steps (fmt, clippy, tests, assets, layers, wasm) are
+meaningful there.
 
 ## Log
 
 Newest first.
 
+- **2026-10-11 (merge of upstream 0.5.0):** Merged 222 upstream commits (`9f896c1`). Three files
+  conflicted, each at a hook, and were settled by taking upstream's code and putting the hook
+  back: `lib.rs` (module list), `control.rs` (command listing) and `ribbon.rs` (the View tab,
+  where upstream's Display theme picker replaced the Dark Mode checkbox; Animations is now under
+  the picker). Upstream's command listing gained a `params` field and its interface became
+  translatable, so the fork's command documents its parameter and the Animations label and hint
+  are worded in Japanese, Chinese, Korean, Russian and Portuguese in a table of the fork's own.
+  Gate after the merge: fmt, clippy, 600 tests, assets, layers and wasm pass; `parity` fails on
+  Windows line endings as before.
 - **2026-10-11 (M1, Animations setting):** The glide can be turned off: View › Animations, a
   checkbox under Dark Mode, saved with the UI preferences and on by default. `view.animations
   {on?}` does the same for agents. The setting's logic is in the `aniefork` module; upstream's

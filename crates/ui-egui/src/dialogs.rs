@@ -31,6 +31,8 @@ pub struct Dialog {
     pub search: String,
     pub list_index: usize,
     pub result: Option<Json>,
+    picture_inbox: Option<crate::Inbox>,
+    picture_target: Option<(u64, usize)>,
 }
 
 impl Dialog {
@@ -49,6 +51,8 @@ impl Dialog {
             search: String::new(),
             list_index: 0,
             result: None,
+            picture_inbox: None,
+            picture_target: None,
         }
     }
 
@@ -63,6 +67,8 @@ impl Dialog {
             search: String::new(),
             list_index: 0,
             result: None,
+            picture_inbox: None,
+            picture_target: None,
         }
     }
 
@@ -188,10 +194,10 @@ impl Dialog {
                         label: "Paste",
                         options: vec![
                             ("all", "All"),
-                            ("formulas", "Formulas"),
-                            ("values", "Values"),
-                            ("formats", "Formats"),
-                            ("comments", "Comments and notes"),
+                            ("formulas", "Formulas (F)"),
+                            ("values", "Values (V)"),
+                            ("formats", "Formats (T)"),
+                            ("comments", "Comments and notes (C)"),
                             ("validation", "Validation"),
                             ("allExceptBorders", "All except borders"),
                             ("columnWidths", "Column widths"),
@@ -205,7 +211,7 @@ impl Dialog {
                         options: vec![("none", "None"), ("add", "Add"), ("subtract", "Subtract"), ("multiply", "Multiply"), ("divide", "Divide")],
                     },
                     Check { key: "skipBlanks", label: "Skip blanks" },
-                    Check { key: "transpose", label: "Transpose" },
+                    Check { key: "transpose", label: "Transpose (E)" },
                     Check { key: "link", label: "Paste Link" },
                 ],
                 json!({"what": "all", "operation": "none"}),
@@ -548,7 +554,18 @@ impl Dialog {
                 ],
                 json!({"chart": p("chart")}),
             ),
-            "insertPicture" => Dialog::custom("insertPicture", "Insert Picture", json!({"path": ""})),
+            "insertPicture" => {
+                let placement = params.get("placement").and_then(Json::as_str).unwrap_or("overCells");
+                let mut dialog = Dialog::form(
+                    "insertPicture",
+                    if placement == "cell" { "Place Picture in Cell" } else { "Place Picture over Cells" },
+                    "insert.picture",
+                    vec![],
+                    json!({"path": "", "placement": placement, "at": active}),
+                );
+                dialog.picture_target = app.view_key();
+                dialog
+            }
             "pickList" => Dialog::custom("pickList", "Pick From List", json!({})),
             "saveCopy" => Dialog::custom("saveCopy", "Save a Copy", json!({"format": p("format")})),
             "saveChanges" => Dialog::custom("saveChanges", "Save Changes?", json!({"title": p("title")})),
@@ -632,6 +649,9 @@ fn build_params(d: &Dialog) -> Json {
 
 pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
+    if d.name == "pasteSpecial" {
+        paste_special_shortcuts(&mut d, ctx);
+    }
     let mut open = true;
     let mut win_open = true;
     let mut confirm = false;
@@ -641,14 +661,15 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" => 520.0,
         _ => 380.0,
     };
-    egui::Window::new(d.title.clone())
+    let window = egui::Window::new(d.title.clone())
         .id(egui::Id::new("dialog").with(&d.name))
         .collapsible(false)
         .resizable(false)
         .default_width(width)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -40.0))
-        .open(&mut win_open)
-        .show(ctx, |ui| {
+        .open(&mut win_open);
+    let window = if d.name == "insertPicture" { window.default_height(240.0) } else { window };
+    window.show(ctx, |ui| {
             ui.set_min_width(width - 20.0);
             match d.name.as_str() {
                 "formatCells" => format_cells(app, ui, &mut d, &mut confirm),
@@ -687,20 +708,55 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                     });
                 }
                 "insertPicture" => {
-                    ui.label("Picture file path (PNG or JPEG):");
-                    let mut path = d.values.get("path").and_then(Json::as_str).unwrap_or("").to_string();
-                    ui.text_edit_singleline(&mut path);
-                    d.values.insert("path".into(), json!(path));
-                    if let Some(pick) = &app.services.pick_open
-                        && ui.button("Browse…").clicked()
-                        && let Some(p) = pick()
-                    {
-                        d.values.insert("path".into(), json!(p));
+                    // A private inbox dies with this dialog; late browser results
+                    // cannot affect a later picture choice or another workbook.
+                    let arrived = d.picture_inbox.as_ref().and_then(|inbox| {
+                        inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop()
+                    });
+                    if let Some((name, bytes)) = arrived {
+                        d.picture_inbox = None;
+                        if bytes.len() > 16 * 1024 * 1024 {
+                            app.message = Some((d.title.clone(), "Choose a PNG or JPEG no larger than 16 MB.".into()));
+                        } else {
+                            d.values.remove("path");
+                            d.values.insert("alt".into(), json!(name));
+                            d.values.insert("base64".into(), json!(gridcraft_engine::io::base64_encode(&bytes)));
+                        }
+                    }
+                    if app.services.pick_picture_async.is_some() {
+                        let name = d.values.get("alt").and_then(Json::as_str).unwrap_or("No picture selected");
+                        ui.label(name);
+                    } else {
+                        ui.label("Picture file path (PNG or JPEG):");
+                        let mut path = d.values.get("path").and_then(Json::as_str).unwrap_or("").to_string();
+                        if ui.text_edit_singleline(&mut path).changed() {
+                            d.values.remove("base64");
+                            d.values.insert("path".into(), json!(path));
+                        }
+                    }
+                    if (app.services.pick_picture.is_some() || app.services.pick_picture_async.is_some()) && ui.button("Browse…").clicked() {
+                        if let Some(start) = &app.services.pick_picture_async {
+                            let inbox = crate::Inbox::default();
+                            start(inbox.clone());
+                            d.picture_inbox = Some(inbox);
+                        } else if let Some(pick) = &app.services.pick_picture
+                            && let Some(path) = pick()
+                        {
+                            d.values.remove("base64");
+                            let alt = std::path::Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or("");
+                            d.values.insert("alt".into(), json!(alt));
+                            d.values.insert("path".into(), json!(path));
+                        }
+                    }
+                    ui.label("Description (optional):");
+                    let mut alt = d.values.get("alt").and_then(Json::as_str).unwrap_or("").to_string();
+                    if ui.text_edit_singleline(&mut alt).changed() {
+                        d.values.insert("alt".into(), json!(alt));
+                    }
+                    if d.values.get("placement").and_then(Json::as_str) == Some("cell") {
+                        ui.label(egui::RichText::new("Fits inside the selected cell and moves with its content.").small());
                     }
                     ok_cancel(ui, &mut confirm, &mut open);
-                    if confirm {
-                        app.run_or_alert("insert.picture", json!({"path": d.values.get("path")}));
-                    }
                 }
                 "pickList" => {
                     let items: Vec<String> = app
@@ -814,6 +870,10 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     if ctx.input(|i| i.key_pressed(Key::Escape)) || !win_open {
         open = false;
     }
+    if confirm && d.name == "insertPicture" && d.picture_target != app.view_key() {
+        app.message = Some((d.title.clone(), "Return to the original worksheet to insert this picture, or cancel and choose another cell.".into()));
+        confirm = false;
+    }
     if confirm && let Some(cmd) = d.command {
         let params = build_params(&d);
         match app.run(cmd, params) {
@@ -826,6 +886,71 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     if open {
         app.dialog = Some(d);
     }
+}
+
+/// Paste Special's legacy mnemonics select options; Enter still performs the paste.
+fn paste_special_shortcuts(d: &mut Dialog, ctx: &egui::Context) {
+    if ctx.text_edit_focused() {
+        return;
+    }
+    let right_alt = ctx.input(|i| {
+        i.key_down(Key::AltRight)
+            || i.events.iter().any(|event| {
+                matches!(event, egui::Event::Key { key: Key::AltRight, .. })
+                    || matches!(event, egui::Event::Key { physical_key: Some(Key::AltRight), .. })
+            })
+    });
+    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+    let allowed = |m: egui::Modifiers| !m.ctrl && !m.command && !m.mac_cmd && !(m.alt && (mac || right_alt));
+    let mnemonic = |key| match key {
+        Key::T => Some('t'),
+        Key::V => Some('v'),
+        Key::F => Some('f'),
+        Key::C => Some('c'),
+        Key::E => Some('e'),
+        _ => None,
+    };
+    let mut text_to_consume = Vec::new();
+    for event in ctx.input(|i| i.events.clone()) {
+        let egui::Event::Key { key, pressed: true, repeat, modifiers, .. } = event else { continue };
+        if !allowed(modifiers) {
+            continue;
+        }
+        let Some(letter) = mnemonic(key) else { continue };
+        text_to_consume.push(letter);
+        if repeat {
+            continue;
+        }
+        if key == Key::E {
+            let transpose = d.values.get("transpose").and_then(Json::as_bool).unwrap_or(false);
+            d.values.insert("transpose".into(), json!(!transpose));
+        } else {
+            let what = match key {
+                Key::T => "formats",
+                Key::V => "values",
+                Key::F => "formulas",
+                _ => "comments",
+            };
+            d.values.insert("what".into(), json!(what));
+        }
+    }
+    // Browsers can deliver Text before or after Key. Act only on Key, then remove
+    // its matching text so one physical press cannot toggle Transpose twice.
+    ctx.input_mut(|i| {
+        i.events.retain(|event| match event {
+            egui::Event::Key { key, modifiers, .. } => !(allowed(*modifiers) && mnemonic(*key).is_some()),
+            egui::Event::Text(text) if text.len() == 1 => {
+                let letter = text.chars().next().unwrap_or_default().to_ascii_lowercase();
+                if let Some(index) = text_to_consume.iter().position(|&c| c == letter) {
+                    text_to_consume.remove(index);
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => true,
+        });
+    });
 }
 
 fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
@@ -1087,12 +1212,17 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                         (BorderStyle::Dotted, "dotted"),
                         (BorderStyle::Double, "double"),
                     ] {
-                        if ui.selectable_label(slot.style == s, label).clicked() {
+                        let response = ui.selectable_label(slot.style == s, label);
+                        response
+                            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::SelectableLabel, ui.is_enabled(), format!("{n} {label}")));
+                        if response.clicked() {
                             slot.style = s;
                         }
                     }
                 });
             }
+            let theme = app.session.active().map(|doc| &doc.wb.theme).cloned().unwrap_or_default();
+            crate::border_preview::sample(ui, &st.borders, &theme);
         }
         "Fill" => {
             let colors = app.session.active().map(|doc| doc.wb.theme.colors).unwrap_or_default();
@@ -1135,20 +1265,21 @@ fn insert_function(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
         let r = ui.add(egui::TextEdit::singleline(&mut d.search).desired_width(300.0).hint_text("e.g. lookup, average, date"));
         r.request_focus();
     });
+    let locale = app.ui.language.formula_locale();
     let list = gridcraft_engine::cmd::formulas::function_list();
     let q = d.search.to_ascii_lowercase();
     let hits: Vec<&Json> = list
         .iter()
         .filter(|f| {
             q.is_empty()
-                || f["name"].as_str().is_some_and(|n| n.to_ascii_lowercase().contains(&q))
+                || f["name"].as_str().is_some_and(|n| locale.function_name(n).to_ascii_lowercase().contains(&q))
                 || f["description"].as_str().is_some_and(|n| n.to_ascii_lowercase().contains(&q))
         })
         .take(300)
         .collect();
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (i, f) in hits.iter().enumerate() {
-            let name = f["name"].as_str().unwrap_or("");
+            let name = locale.function_name(f["name"].as_str().unwrap_or(""));
             let r = ui.add(
                 egui::Button::selectable(i == d.list_index, format!("{name:<18} {}", f["category"].as_str().unwrap_or("")))
                     .min_size(vec2(480.0, 20.0)),
@@ -1164,12 +1295,13 @@ fn insert_function(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
     });
     if let Some(f) = hits.get(d.list_index) {
         ui.separator();
-        ui.label(egui::RichText::new(f["signature"].as_str().unwrap_or("")).strong());
-        ui.label(f["description"].as_str().unwrap_or(""));
+        ui.label(egui::RichText::new(crate::formula_locale::signature(f["name"].as_str().unwrap_or(""), locale).unwrap_or_default()).strong());
+        ui.label(crate::formula_locale::description(f["name"].as_str().unwrap_or(""), locale).unwrap_or_default());
     }
     let mut open = true;
     ok_cancel(ui, confirm, &mut open);
     if *confirm && let Some(n) = hits.get(d.list_index).and_then(|f| f["name"].as_str()) {
+        let n = app.session.active().map(|doc| crate::formula_locale::completion_name(n, locale, &doc.wb, doc.wb.active_sheet)).unwrap_or(n);
         let cur = app.editor.as_ref().map(|e| e.text.clone());
         let text = match cur {
             Some(t) if t.starts_with('=') => format!("{t}{n}("),
@@ -1368,7 +1500,7 @@ fn name_manager(app: &mut SheetApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label(n["scope"].as_str().unwrap_or(""));
                 if ui.small_button("Delete").clicked() {
-                    app.run_or_alert("formulas.deleteName", json!({"name": n["name"]}));
+                    app.run_or_alert("formulas.deleteName", json!({"name": n["name"], "scope": n["scope"]}));
                 }
             });
             ui.end_row();

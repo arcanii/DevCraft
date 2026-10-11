@@ -74,6 +74,10 @@ fn delimiter_sniffing() {
     assert_eq!(sniff_delimiter("a\tb\n1\t2\n", '"'), b'\t');
     assert_eq!(sniff_delimiter("a,b\n\"x;y;z\",2\n", '"'), b',');
     assert_eq!(sniff_delimiter("single", '"'), b',');
+    // A delimiter missing from some lines is text, not a separator (single-column export round trip).
+    assert_eq!(sniff_delimiter("alpha;beta\r\ngamma\r\n", '"'), b',');
+    assert_eq!(sniff_delimiter("alpha\tbeta\r\ngamma\r\n", '"'), b',');
+    assert_eq!(sniff_delimiter("a;b\r\n\r\nc;d\r\n", '"'), b';');
     let wb = read_csv(b"x;y\n1,5;2", &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
     assert_eq!(v(&wb, 1, 1), Value::Number(2.0));
     assert!(read_csv(b"a", &CsvOptions { delimiter: b'"', ..Default::default() }).is_err());
@@ -105,6 +109,11 @@ fn writing() {
 fn sniffing_formats() {
     assert_eq!(sniff(b"PK\x03\x04rest"), Format::Xlsx);
     assert_eq!(sniff(b"a,b\n1,2"), Format::Csv);
+    // An Excel password-protected file is a CFB/OLE2 compound file with an EncryptedPackage
+    // stream; any other compound file is a legacy binary (.xls), not an encrypted workbook.
+    assert_eq!(sniff(&crate::cfb::tests::build(&["EncryptionInfo", "EncryptedPackage"])), Format::Encrypted);
+    assert_eq!(sniff(&crate::cfb::tests::build(&["Workbook"])), Format::LegacyBinary);
+    assert_eq!(sniff(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0, 0]), Format::LegacyBinary);
     assert_eq!(sniff(&[0xD0, 0xCF, 0x11, 0xE0, 0, 0, 1, 2]), Format::Unknown);
     assert_eq!(sniff(b""), Format::Unknown);
     assert_eq!(sniff(&[0xFF, 0xFE, b'a', 0]), Format::Csv);

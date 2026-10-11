@@ -43,6 +43,12 @@ impl Rels {
         self.items.push((id.clone(), format!("{NS_REL}/{kind}"), target.to_string(), true));
         id
     }
+    /// Adds a Microsoft extension relationship with its complete namespace URI.
+    pub fn add_uri(&mut self, ty: &str, target: &str) -> String {
+        let id = format!("rId{}", self.items.len() + 1);
+        self.items.push((id.clone(), ty.to_string(), target.to_string(), false));
+        id
+    }
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -91,12 +97,15 @@ pub struct Out {
     pub sst: Sst,
     pub images: u32,
     pub charts: u32,
+    /// References of chartex parts, defined as hidden `_xlchart.v1.N` names.
+    pub chart_names: Vec<String>,
     pub drawings: u32,
     pub tables: u32,
     pub comments: u32,
     pub table_id: u32,
     pub dynamic_arrays: bool,
     pub needs_calc: bool,
+    pub cell_pictures: crate::richdata::PicturesOut,
 }
 
 impl Out {
@@ -130,6 +139,9 @@ pub fn write_xlsx(wb: &Workbook) -> Result<Vec<u8>, IoError> {
     if wb.sheets.is_empty() {
         return Err(IoError::Format("a workbook needs at least one sheet".into()));
     }
+    if wb.sheets.iter().any(|sheet| sheet.cell_pictures.keys().any(|c| sheet.cell(*c).is_some_and(|cell| cell.formula.is_some()))) {
+        return Err(IoError::Format("a static cell picture cannot also contain a formula".into()));
+    }
     let mut out = Out {
         parts: vec![],
         overrides: vec![],
@@ -138,12 +150,14 @@ pub fn write_xlsx(wb: &Workbook) -> Result<Vec<u8>, IoError> {
         sst: Sst::default(),
         images: 0,
         charts: 0,
+        chart_names: vec![],
         drawings: 0,
         tables: 0,
         comments: 0,
         table_id: 0,
         dynamic_arrays: false,
         needs_calc: false,
+        cell_pictures: Default::default(),
     };
     out.default_type("rels", "application/vnd.openxmlformats-package.relationships+xml");
     out.default_type("xml", "application/xml");
@@ -201,6 +215,14 @@ pub fn write_xlsx(wb: &Workbook) -> Result<Vec<u8>, IoError> {
             let _ = write!(names, " comment=\"{}\"", esc_attr(&n.comment));
         }
         let _ = write!(names, ">{}</definedName>", esc(&crate::fmla::text_to_file(&n.formula)));
+    }
+    for (i, f) in out.chart_names.iter().enumerate() {
+        let _ = write!(
+            names,
+            "<definedName name=\"{}{i}\" hidden=\"1\">{}</definedName>",
+            crate::chartex::NAME_PREFIX,
+            esc(&crate::fmla::text_to_file(f))
+        );
     }
     for (i, sheet) in wb.sheets.iter().enumerate() {
         let q = quote_sheet(&sheet.name);
@@ -265,7 +287,9 @@ pub fn write_xlsx(wb: &Workbook) -> Result<Vec<u8>, IoError> {
     sst.push_str("</sst>");
     out.part("xl/sharedStrings.xml", Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"), sst.into_bytes());
     wb_rels.add("sharedStrings", "sharedStrings.xml");
-    if out.dynamic_arrays {
+    if !out.cell_pictures.is_empty() {
+        crate::richdata::write(&mut out, &mut wb_rels)?;
+    } else if out.dynamic_arrays {
         out.part(
             "xl/metadata.xml",
             Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"),

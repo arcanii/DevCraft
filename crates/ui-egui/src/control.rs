@@ -2,7 +2,7 @@
 //!
 //! Methods (JSON lines over the host's transport, see `docs/control-protocol.md`):
 //! - `engine.execute {command, params}` — run any engine or UI command
-//! - `engine.commands` — every command with enablement and params docs
+//! - `engine.commands {search?}` — every command with enablement and params docs
 //! - `document.inspect`, `sheet.read {range?}`, `cell.get {cell?}` — read state
 //! - `ui.inspect` — UI state (ribbon tab, editor, dialog, grid geometry, perf)
 //! - `ui.click {x, y, button?, count?, shift?, cmd?, alt?}`, `ui.drag {x, y, toX, toY}`,
@@ -151,6 +151,17 @@ fn push_drag(app: &mut SheetApp, a: egui::Pos2, b: egui::Pos2, steps: usize, m: 
     app.synthetic.push_back(vec![egui::Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
 }
 
+/// Keeps the commands whose id, label or ribbon path contains `search` (case-insensitive); `None` keeps all.
+fn filter_commands(commands: Vec<Json>, search: Option<&str>) -> Vec<Json> {
+    let Some(q) = search.map(str::to_ascii_lowercase) else { return commands };
+    let has = |c: &Json, k: &str| c.get(k).and_then(Json::as_str).is_some_and(|v| v.to_ascii_lowercase().contains(&q));
+    let in_menu = |c: &Json| {
+        let menu = c.get("menu").and_then(Json::as_array);
+        menu.is_some_and(|m| m.iter().filter_map(Json::as_str).any(|v| v.to_ascii_lowercase().contains(&q)))
+    };
+    commands.into_iter().filter(|c| has(c, "id") || has(c, "label") || in_menu(c)).collect()
+}
+
 pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -> Outcome {
     let s = |k: &str| p.get(k).and_then(Json::as_str);
     let f = |k: &str| p.get(k).and_then(Json::as_f64).unwrap_or(0.0) as f32;
@@ -162,19 +173,23 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
         }
         "engine.commands" => {
             let mut v: Vec<Json> = app.session.commands().into_iter().map(|c| serde_json::to_value(c).unwrap_or_default()).collect();
-            for (id, label) in [
-                ("ui.ribbonTab", "Ribbon Tab"),
-                ("view.formulaBar", "Formula Bar"),
-                ("view.collapseRibbon", "Collapse Ribbon"),
-                ("view.darkMode", "Dark Mode"),
-                ("view.zoom100", "100%"),
-                ("ui.dialog", "Open Dialog"),
+            for (id, label, params) in [
+                ("ui.ribbonTab", "Ribbon Tab", ""),
+                ("view.formulaBar", "Formula Bar", ""),
+                ("view.collapseRibbon", "Collapse Ribbon", ""),
+                ("view.darkMode", "Dark Mode", ""),
+                ("view.theme", "Display Theme", ""),
+                ("view.zoom100", "100%", ""),
+                ("ui.dialog", "Open Dialog", ""),
+                ("app.language.set", "Interface Language", "{language: \"en\"|\"zh\"|\"ja\"|\"ko\"|\"ru\"|\"pt\"} (alias: code)"),
+                ("app.language.english", "Interface Language: English", ""),
+                ("app.language.japanese", "Interface Language: Japanese", ""),
             ] {
-                v.push(json!({"id": id, "label": label, "enabled": true, "ui": true}));
+                v.push(json!({"id": id, "label": label, "params": params, "enabled": true, "ui": true}));
             }
             // The fork's UI commands (aniefork).
             v.extend(crate::aniefork::commands());
-            ok(Json::Array(v))
+            ok(Json::Array(filter_commands(v, s("search"))))
         }
         "engine.journal" => ok(json!(app.session.journal.iter().map(|(id, p)| json!({"command": id, "params": p})).collect::<Vec<_>>())),
         "document.inspect" | "sheet.read" | "cell.get" | "selection.stats" => wrap(app.session.run(method, p.clone())),
@@ -187,6 +202,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
         "ui.set" => {
             if let Some(v) = p.get("dark").and_then(Json::as_bool) {
                 app.ui.dark = v;
+                app.ui.system_theme = false;
             }
             if let Some(v) = p.get("formulaBar").and_then(Json::as_bool) {
                 app.ui.formula_bar = v;
@@ -412,7 +428,7 @@ pub fn collect_screenshots(app: &mut SheetApp, ctx: &egui::Context) {
         if now < *deadline {
             return true;
         }
-        let _ = reply.send(json!({"ok": false, "error": "no frame was presented (screen locked or window hidden); use `gridcraft-cli snapshot`"}));
+        let _ = reply.send(json!({"ok": false, "error": "no frame was presented before the screenshot timeout; make the window visible, use `ui.focus`, then retry `ui.screenshot`"}));
         false
     });
 }
@@ -435,5 +451,32 @@ pub fn save_image(image: &egui::ColorImage, path: Option<&str>) -> Json {
             Err(e) => json!({"ok": false, "error": e.to_string()}),
         },
         None => json!({"ok": true, "result": {"base64": gridcraft_engine::io::base64_encode(&png), "width": w, "height": h}}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Vec<Json> {
+        vec![
+            json!({"id": "home.borders", "label": "Borders", "menu": ["Home", "Font"]}),
+            json!({"id": "home.bold", "label": "Bold", "menu": ["Home", "Font"]}),
+            json!({"id": "ui.ribbonTab", "label": "Ribbon Tab", "enabled": true, "ui": true}),
+        ]
+    }
+
+    fn ids(v: &[Json]) -> Vec<&str> {
+        v.iter().filter_map(|c| c.get("id").and_then(Json::as_str)).collect()
+    }
+
+    #[test]
+    fn search_filters_case_insensitively() {
+        assert_eq!(ids(&filter_commands(sample(), Some("border"))), ["home.borders"]);
+        assert_eq!(filter_commands(sample(), Some("BORDER")), filter_commands(sample(), Some("border")));
+        assert_eq!(ids(&filter_commands(sample(), Some("ribbon"))), ["ui.ribbonTab"]);
+        assert_eq!(ids(&filter_commands(sample(), Some("font"))), ["home.borders", "home.bold"]);
+        assert!(filter_commands(sample(), Some("catalog_no_match_7391")).is_empty());
+        assert_eq!(filter_commands(sample(), None).len(), 3);
     }
 }
