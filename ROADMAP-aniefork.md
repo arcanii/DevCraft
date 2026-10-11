@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-11, upstream `9f896c1` (GridCraft 0.5.0), 222 commits |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 3 changes upstream lacks (below) |
+| Fork carries | 4 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -34,6 +34,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Offered 2026-10-11 as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266), stacked on #265. Branch `selection-glide`, rewritten in upstream's style |
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
 | **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs` and `ribbon.rs` | Not offered |
+| **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 
 ## Selection glide
 
@@ -131,6 +132,22 @@ Upstream's labels in the dialog follow the interface language; the fork's own ar
   preferences for these, but nothing reads them yet.
 - Translations of the fork's labels in the dialog.
 
+## The Developer tab and the Development subsystem
+
+A ribbon tab for people who extend and automate GridCraft, hidden until File ▸ Options ▸ "Show the
+Developer tab" turns it on, as Excel's is. Today it gathers what already exists for that audience:
+the command palette, the action journal, how agents connect, and Options.
+
+It is the entry to the **Development subsystem**: modules a user installs that add web panels and
+Python to GridCraft. That is designed in [`docs/decisions-aniefork.md`](docs/decisions-aniefork.md)
+(ADR-0001), which the owner **accepted on 2026-10-11**: panels in the browser first and docked
+later, the user's own Python, fork-only until it is proven and then offered upstream in phases.
+Whether a workbook can carry a module is left open, and letting agents use modules is on the
+backlog. The record also sets out how the model is exposed to modules and how the user gives or
+refuses trust; those two are still proposals. Nothing of the subsystem itself is built yet, and
+the tab shows nothing that pretends otherwise. Next is phase 1a: modules that can be listed,
+inspected and trusted, with nothing running.
+
 ## Hooks in upstream files
 
 Everything else the fork adds is in files of its own. After merging upstream, check these are
@@ -148,6 +165,8 @@ still there:
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/ribbon.rs`, `view`, in the Display theme column, after the picker | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
 | `crates/ui-egui/src/ribbon.rs`, `file_menu`, after the loop over upstream's items | `crate::aniefork::file_menu(app, ui);` adds Options… |
+| `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
+| `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
 | `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them; every fork dialog comes through here |
 | `crates/ui-egui/src/dialogs.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
 
@@ -205,10 +224,14 @@ meaningful there.
 
 Newest first.
 
-- **2026-10-11 (File ▸ Options):** A settings dialog, opened from the File menu: theme, language,
-  user name, Animations, and whether the ribbon shows the Developer tab (the tab itself comes
-  next). `file.options` is its command, and agents can open, fill in and confirm the dialog.
-  Checked in headless renders and by six tests, one of them through the real File menu.
+- **2026-10-11 (File ▸ Options, the Developer tab, ADR-0001):** A settings dialog, opened from the
+  File menu: theme, language, user name, Animations, and whether the ribbon shows the Developer
+  tab. `file.options` is its command, and agents can open, fill in and confirm the dialog. The
+  Developer tab is hidden by default and holds the developer tools that exist today. The
+  Development subsystem it is the entry to (modules with web panels and Python) is designed in
+  `docs/decisions-aniefork.md`, which the owner accepted the same day with one point left open
+  (modules carried in workbooks); none of the subsystem is built yet.
+  Checked in headless renders and by nine tests, one of them through the real File menu.
 - **2026-10-11 (offered upstream):** Both changes were sent to upstream as pull requests from
   branches cut from `upstream/main` and rewritten in upstream's style (no `aniefork` paths):
   #265, the clear active cell, with the contributor entry for arcanii; and #266, the selection

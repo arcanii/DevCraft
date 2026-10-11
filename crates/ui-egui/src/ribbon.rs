@@ -134,6 +134,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     ui.add_space(8.0);
                     file_menu(app, ui);
                     let mut tabs: Vec<&str> = TABS.to_vec();
+                    // The fork's tabs (aniefork).
+                    crate::aniefork::developer::tabs(app, &mut tabs);
                     let ctx_tabs = contextual_tabs(app);
                     tabs.extend(ctx_tabs.iter());
                     for tab in tabs {
@@ -197,6 +199,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             "Review" => review(app, ui),
                             "View" => view(app, ui),
                             "Automate" => automate(app, ui),
+                            // The fork's tabs (aniefork).
+                            "Developer" => crate::aniefork::developer::ribbon(app, ui),
                             "Table Design" => table_design(app, ui),
                             "Chart Design" => chart_design(app, ui),
                             _ => home(app, ui),
