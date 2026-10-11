@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0: File ▸ Options, and the Developer tab it can show |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab) and phase 1a (modules can be created, inspected and trusted; nothing of a module runs yet) |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -159,9 +159,11 @@ The requirement: the user chooses to trust a module or not. The mechanics:
 - **Trust belongs to the fingerprint, not to where the module is kept.** That is what leaves the
   workbook question open without blocking anything.
 - **Only the user can give trust.** There is no command for it, so the control channel and MCP
-  cannot ask for it. Before the first piece that runs code ships, giving trust also has to pass a
-  confirmation drawn by the operating system, which the control channel's synthetic clicks cannot
-  press.
+  cannot ask for it (`developer.modules` only reports). What gets trusted is the fingerprint the
+  user was shown: if the files change between looking and pressing the button, the decision is
+  refused. Before the first piece that runs code ships (phase 1b), giving trust also has to pass
+  a confirmation drawn by the operating system, which the control channel's synthetic clicks
+  cannot press. Until then nothing a trusted module contains is run or served.
 - **The bridge is closed to everyone else.** Loopback only, a random port, and a secret token made
   for each session and each module, checked on every call along with the request's origin. A panel
   may only run its own module's scripts, by name, from its own folder.
@@ -219,7 +221,7 @@ contents by the user. Directions to weigh when this is taken up:
 | Phase | What | Done when |
 |---|---|---|
 | 0 | File ▸ Options; the Developer tab, hidden by default; this record | **Done**, 2026-10-11 |
-| 1a | The crate's first piece: manifests, the module list, fingerprints, the trust store; Developer ▸ Modules to see modules and trust or stop trusting them; a "New Module" starter. Nothing runs yet | A starter module can be created, inspected, trusted, changed (it becomes untrusted again) and trusted again |
+| 1a | The crate's first piece: manifests, the module list, fingerprints, the trust store; Developer ▸ Modules to see modules and trust or stop trusting them; a "New Module" starter. Nothing runs yet | **Done**, 2026-10-11: a starter module can be created, inspected, trusted, changed (it becomes untrusted again) and trusted again |
 | 1b | The Python host, and the operating-system confirmation for giving trust | A trusted module's script runs on data and returns JSON, with a time limit; an untrusted one is refused |
 | 1c | The bridge, `spreadsheet.js`, the typings; panels open in the browser | A starter module reads the selection, runs a Python script on it and writes the result back as one undo step, from a panel in the browser |
 | 2 | Panels docked in the window; events; a Developer console; per-module Python environments; Python calling back into the spreadsheet | The same starter module runs docked, reacts to the selection changing, and shows its script's output in the console |

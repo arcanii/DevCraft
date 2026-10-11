@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 gridcraft-engine = { workspace = true }
 gridcraft-chart = { workspace = true }
+# The fork's Development subsystem (aniefork).
+gridcraft-aniefork-dev = { path = "../aniefork-dev" }
 egui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

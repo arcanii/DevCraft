@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-11, upstream `9f896c1` (GridCraft 0.5.0), 222 commits |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 4 changes upstream lacks (below) |
+| Fork carries | 5 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -35,6 +35,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
 | **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs` and `ribbon.rs` | Not offered |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
+| **Modules and trust** (the Development subsystem, phase 1a): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules. Nothing of a module runs yet. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs` and `crates/ui-egui/Cargo.toml` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
 
 ## Selection glide
 
@@ -144,9 +145,34 @@ Python to GridCraft. That is designed in [`docs/decisions-aniefork.md`](docs/dec
 later, the user's own Python, fork-only until it is proven and then offered upstream in phases.
 Whether a workbook can carry a module is left open, and letting agents use modules is on the
 backlog. The record also sets out how the model is exposed to modules and how the user gives or
-refuses trust; those two are still proposals. Nothing of the subsystem itself is built yet, and
-the tab shows nothing that pretends otherwise. Next is phase 1a: modules that can be listed,
-inspected and trusted, with nothing running.
+refuses trust; those two are still proposals.
+
+**Phase 1a is built: modules and trust, with nothing running.**
+
+- **A module is a folder** in `modules`, beside the user's settings, holding a `module.toml` (id,
+  name, version, what it asks to be allowed), a panel and scripts. Developer ▸ Modules lists what
+  is there; "New module" writes a starter from templates compiled into the app.
+- **Every module starts untrusted, and an untrusted module is inert.** Review… shows what it asks
+  for in plain words (running Python is marked as the one that cannot be limited), its files and
+  its fingerprint; then the user trusts it or doesn't.
+- **Trust is given to a fingerprint**, a SHA-256 over every file in the module. A changed file
+  makes it untrusted again. For a module they are writing, the user can choose to keep trusting it
+  as it changes; that never grants more than was granted.
+- **Only the user gives trust.** There is no command for it. `developer.modules` reports the list
+  to agents and nothing else; the dialog has no OK command for an agent to confirm; and what is
+  trusted is the fingerprint that was on screen, so files swapped during the review are refused.
+- **It fails closed.** A module that can't be read whole (no manifest, a path that leaves it, a
+  link, an unknown permission, too large) can't be trusted. A damaged trust file trusts nothing.
+- The decisions are in `trusted-modules.json` beside the settings, and a run without settings
+  (the web build, `GRIDCRAFT_NO_PREFS`) has no modules.
+
+The crate depends on nothing else in GridCraft, so it can be offered upstream as a piece of its
+own. Next is phase 1b: running a trusted module's Python, behind an operating-system confirmation
+for giving trust.
+
+### Open
+- "Open Folder" in the dialog: the UI crate can't open a folder in the file manager yet.
+- Wording of the fork's dialogs in other languages.
 
 ## Hooks in upstream files
 
@@ -169,6 +195,9 @@ still there:
 | `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
 | `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them; every fork dialog comes through here |
 | `crates/ui-egui/src/dialogs.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
+| `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
+| `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
+| `Cargo.lock` | the new crate's entry. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
 
@@ -224,6 +253,14 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (Development subsystem, phase 1a: modules and trust):** The subsystem's first
+  piece, a crate of its own (`crates/aniefork-dev`) that runs no code: module manifests,
+  fingerprints over a module's whole contents, and the user's decisions to trust, kept by
+  fingerprint. Developer ▸ Modules lists the user's modules, creates a starter, and is the only
+  place trust is given or taken back; `developer.modules` reports the list. A changed file ends
+  the trust; a module swapped during review is refused; broken modules and a damaged trust file
+  fail closed. Checked in headless renders and by 26 tests (20 in the crate, 6 through the real
+  dialog).
 - **2026-10-11 (File ▸ Options, the Developer tab, ADR-0001):** A settings dialog, opened from the
   File menu: theme, language, user name, Animations, and whether the ribbon shows the Developer
   tab. `file.options` is its command, and agents can open, fill in and confirm the dialog. The

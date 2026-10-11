@@ -2,9 +2,9 @@
 //!
 //! It is hidden until File ▸ Options ▸ "Show the Developer tab" turns it on, as Excel's is. Today
 //! it gathers the tools that already exist for that audience (the command palette, the action
-//! journal, how agents connect). It is where the Development subsystem will live: modules a user
-//! installs that add panels and code. That subsystem is designed in `docs/decisions-aniefork.md`
-//! (ADR-0001) and not built yet, so nothing here pretends to be it.
+//! journal, how agents connect), and Modules: the first piece of the Development subsystem
+//! designed in `docs/decisions-aniefork.md` (ADR-0001). Modules can be created, inspected and
+//! trusted there; nothing of a module runs yet.
 
 use egui::{Sense, Stroke, pos2, vec2};
 use serde_json::json;
@@ -46,6 +46,10 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
     if big_button(ui, Icon::Script, "Agent\nControl", "How agents drive GridCraft (MCP / control channel)", false).clicked() {
         app.open_dialog("agents", json!({}));
+    }
+    separator(ui);
+    if big_button(ui, Icon::Folder, "Modules", "The modules you have installed, and whether you trust them", false).clicked() {
+        app.open_dialog(super::modules::NAME, json!({}));
     }
     separator(ui);
     if big_button(ui, Icon::Settings, "Options", "Settings, and whether this tab is shown", false).clicked() {

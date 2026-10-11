@@ -1433,6 +1433,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gridcraft-aniefork-dev"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "gridcraft-calc"
 version = "0.5.0"
 dependencies = [
@@ -1549,6 +1558,7 @@ version = "0.5.0"
 dependencies = [
  "egui",
  "egui_kittest",
+ "gridcraft-aniefork-dev",
  "gridcraft-chart",
  "gridcraft-engine",
  "image",

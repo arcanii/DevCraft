@@ -5,6 +5,7 @@
 //! `AGENTS-aniefork.md` at the repository root.
 
 pub mod developer;
+pub mod modules;
 pub mod options;
 pub mod selection;
 
@@ -22,6 +23,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "Options",
         "{theme?: \"system\"|\"light\"|\"dark\", language?: \"en\"…, userName?, animations?: bool, developerTab?: bool} changes the settings named and returns all of them; with no params it only reports them",
     ),
+    (
+        "developer.modules",
+        "Modules",
+        "→ {available, folder, modules: [{id, name, version, status: \"trusted\"|\"untrusted\"|\"changed\"|\"problem\", asks, granted, files, fingerprint…}]}. It only reports: trust is given by the user alone, in Developer ▸ Modules",
+    ),
 ];
 
 /// Hook of `SheetApp::run_ui_command`: runs `id` when it is one of the fork's commands.
@@ -29,6 +35,8 @@ const COMMANDS: &[(&str, &str, &str)] = &[
 /// - `view.animations {on?: bool}` turns motion in the UI on or off (today: the selection
 ///   outline's glide); without `on` it toggles. Returns `{on}`. Saved with the UI preferences.
 /// - `file.options {…}` is the settings dialog's command: see [`options`].
+/// - `developer.modules` reports the user's modules and whether each is trusted: see [`modules`].
+///   There is no command that gives trust.
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     match id {
         "view.animations" => {
@@ -36,6 +44,7 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
             Some(Ok(json!({"on": app.ui.animations})))
         }
         "file.options" => Some(options::run(app, p)),
+        "developer.modules" => Some(Ok(modules::list())),
         _ => None,
     }
 }
@@ -73,19 +82,23 @@ fn tr(lang: Language, text: &'static str) -> &'static str {
 pub fn dialog(app: &SheetApp, name: &str, _params: &Json) -> Option<(&'static str, Json, Option<&'static str>)> {
     match name {
         options::NAME => Some(("Options", options::values(app), Some("file.options"))),
+        // No command: nothing an agent can confirm gives a module trust.
+        modules::NAME => Some(("Modules", modules::values(), None)),
         _ => None,
     }
 }
 
 /// Hook of `dialogs::show`: whether the fork draws the dialog of this name.
 pub fn draws_dialog(name: &str) -> bool {
-    matches!(name, options::NAME)
+    matches!(name, options::NAME | modules::NAME)
 }
 
 /// Hook of `dialogs::show`: draws one of the fork's dialogs.
 pub fn dialog_ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut crate::dialogs::Dialog, confirm: &mut bool, open: &mut bool) {
-    if d.name == options::NAME {
-        options::ui(app, ui, d, confirm, open);
+    match d.name.as_str() {
+        options::NAME => options::ui(app, ui, d, confirm, open),
+        modules::NAME => modules::ui(app, ui, d, open),
+        _ => {}
     }
 }
 

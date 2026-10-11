@@ -1,0 +1,14 @@
+[package]
+name = "gridcraft-aniefork-dev"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GridCraft Development subsystem (aniefork): modules, their fingerprints and the user's trust in them"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "1"
