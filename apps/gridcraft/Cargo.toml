@@ -35,6 +35,8 @@ arboard = { workspace = true, features = ["wayland-data-control"] }
 pollster = "1"
 # The system web view (WebView2), which shows a module's panel docked in the window (aniefork).
 wry = { version = "0.57", default-features = false }
+# A second window, with a message loop of its own, for the Development window shown as a page (aniefork).
+tao = { version = "0.37", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }

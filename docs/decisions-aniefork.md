@@ -337,7 +337,7 @@ contents by the user. Directions to weigh when this is taken up:
 | 2a | Events, and the Developer console | **Done**, 2026-10-12: the starter module's panel, open in a browser, shows the selection as it moves, and what its script prints and its panel logs shows in Developer ▸ Console |
 | 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | **Done**, 2026-10-12: a script changes the sheet itself through `import spreadsheet`, with what its module was granted, from a panel and from Developer ▸ Modules; a panel and a script work with the same `sheet`, `range` and `workbook` |
 | 2c | Per-module Python environments: the packages of `requirements.txt` in an environment of the module's own, installed only when the user asks | The starter module's script uses pandas without the user installing anything by hand |
-| 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | **First slice done**, 2026-10-12, on Windows: a trusted module's panel is docked beside the sheet over the same bridge, kept to its own address without `network`, and the Svelte showcase runs there. macOS and Linux are open |
+| 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | **First slice done**, 2026-10-12, on Windows: a trusted module's panel is docked beside the sheet over the same bridge, kept to its own address without `network`, and the Svelte showcase runs there. **Second slice done** the same day: the Development window as a Svelte page in a window of its own. macOS and Linux are open |
 | 2e | Agents and the development tools: the Development server, a second MCP server, and the Development window (below) | **First slice done**, 2026-10-12: an agent asks to write a module's file or run its script, the user reads the request on a card and answers, and it is carried out only on their yes, at a level they set. **Second slice done** the same day: approved plans, answered once and carried out step by step (below) |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |
 
@@ -578,7 +578,9 @@ before the step, as with any single request.
 - **How the window is built** was settled the same day: the Development window stays drawn
   with the app's own toolkit, like every other dialog (the place where a request is answered
   should not be a page a script could drive), and Svelte is showcased in a module's panel,
-  docked in the window (phase 2d, below).
+  docked in the window (phase 2d, below). **Changed later that day**, when the owner asked
+  for the window itself in Svelte: see "The Development window as a page", which says how
+  the reason is kept to.
 - The token is on the clipboard after the user copies the setup: whatever can paste can
   read it.
 - The Trust card shows what the module asks and holds, not what changed since it was last
@@ -646,6 +648,91 @@ is shown where it belongs: in a module's panel, docked in the window.
   output copied in.
 - Checked in the real window on Windows 11 with the showcase. The starter module's panel,
   which runs Python, was not tried docked.
+
+### The Development window as a page (phase 2d, second slice)
+
+**What the owner asked (2026-10-12).** With a picture of the Development window: can it
+appear as a new window, in Svelte, contained in Electron?
+
+**What was decided.**
+
+- **A window of its own, in Svelte: yes.** On Windows the Development window is now a second
+  window of the app that stays open beside the sheet, showing a page written in Svelte. It
+  is GridCraft's own dialog elsewhere, and wherever the page can't be shown; the user can
+  also choose the dialog ("Use GridCraft's built-in window").
+- **Electron: no. The system's web view instead** (WebView2, through `wry`, in a window
+  made by `tao`). It is what the owner's Anie_Maint console already runs on, under Tauri,
+  and on Windows it is the same engine Electron carries. Electron would be a second program
+  with its own copy of that engine (some hundred megabytes), written in JavaScript on its
+  own side too, and the window where requests are answered would then be a client of
+  GridCraft over a channel between two programs: a way to answer a request that anything
+  holding the channel could use, which is what this design keeps from existing. The page
+  does not depend on the choice: one file of it (`host.js`) knows how it speaks to its host.
+
+**This changes what was recorded earlier the same day**, that the Development window stays
+drawn with the app's own toolkit because the place where a request is answered should not be
+a page a script could drive. The reason stands; the page is built so that no script but its
+own drives it:
+
+- it is loaded from files compiled into the app, and nothing else is served to it;
+- its address ends in `.invalid`, which no network resolves: were it ever not served from
+  the app, nothing would load in its place;
+- every answer carries a policy that allows the page's own script and stylesheet and nothing
+  else (no script written into the page, no `eval`, nothing from the network);
+- it can go to no other address, open no window, download nothing; the developer tools, the
+  browser's keys and its menu are off;
+- a message is taken only from the page's own address, and only a known message: anything
+  else is dropped;
+- everything a request holds is drawn as text, never as markup (the page's rules say so,
+  and a test checks the built script for what would break them);
+- the control channel can't reach it: what it clicks and types goes into GridCraft's first
+  window, never into the web view.
+
+What does not depend on the page at all: the token is never part of what the page is told;
+raising the level, and a yes while the control channel is open, end in the operating
+system's own question; a yes in a card's first moment on screen, or to another card than the
+one on screen, answers nothing (GridCraft keeps the time and the card).
+
+**How it is built.**
+
+- **What a card says is said once** (`card.rs`), as blocks: words, a file's lines, the lines
+  a change takes out and puts in, a plan's steps. GridCraft's own window draws the blocks
+  with the app's toolkit; the page is handed them as JSON and draws them. Neither words a
+  request for itself, so the two can't come to say different things.
+- **A click in the page goes the way a click in the dialog goes** (`devpage.rs`, into the
+  same `act`): the same checks, the same questions.
+- **The shell has the window** (`apps/gridcraft/src/aniefork/window.rs`): a thread of its
+  own with its own message loop, since the app's main loop belongs to its first window. Once
+  a frame the UI thread takes what the page said and tells it what to show when that
+  changed.
+- **The page's built files are text in a generated Rust file** (`page.rs`), with the Svelte
+  project they are built from kept beside them (for tests and tools only: the app doesn't
+  hold the source). Two tools among the app's tests write the project out and take the built
+  page back in; a test checks that the file is what the tool writes, and that the built
+  script is of that source.
+- `GRIDCRAFT_DEVELOPMENT=1` opens the window as GridCraft starts.
+
+**What it costs.**
+
+- A dependency, on Windows only: `tao`, with what it brings.
+- **The fork's third exception to "Rust only"**: 58 KB of built script and stylesheet, and
+  the Svelte source, as text in a Rust file. Fork-only.
+- **Two windows to keep alike.** What they say is shared; how they are laid out is not, and
+  a part added to one has to be added to the other.
+
+**Said plainly.**
+
+- A flaw in the web view's engine, or in how Svelte writes text into a page, could let what
+  a request holds act in the page, and so click for the person. The policy is there for
+  that case; it is still a larger surface than a window that only draws text.
+- Another program running as the user can put clicks into this window, as into any window.
+- It was checked in the real window with clicks posted to the web view by a program, not by
+  hand; and on Windows 11 only.
+
+**Open.** macOS and Linux (the same two crates reach them). The window's place and size are
+not remembered. The keyboard alone reaches everything in it as a web page does, with no
+shortcuts of its own. The bar under the ribbon still says a request is waiting while its card
+is open in the page.
 
 ### Backlog
 

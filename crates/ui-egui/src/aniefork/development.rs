@@ -35,7 +35,9 @@
 //! sheet in the system's web view ([`super::dock`]).
 //!
 //! **What a card says is not worded here.** `card.rs` says it, as blocks, and this window
-//! draws them.
+//! draws them; where the shell can show a web page in a window of its own, the same blocks
+//! are drawn there instead (`devpage.rs`), and what is clicked there comes through [`act`]
+//! like a click here.
 //!
 //! The control channel can click and type in this window as a person does, and rewrite a
 //! dialog's values. So the window works from a state of its own that the channel can't reach,
@@ -758,6 +760,7 @@ mod tests {
     use gridcraft_aniefork_dev::python::PythonHost;
 
     use super::*;
+    use crate::aniefork::devpage;
     use crate::aniefork::modules::tests::{Asked as Answers, Sandbox, app_with, drive, quiet, sandbox, yes};
     use crate::aniefork::modules::{create, list, trust};
 
@@ -2062,6 +2065,142 @@ mod tests {
         assert!(failed && !s.0.join("modules/clean-data/notes.txt").exists(), "{said}");
         let report = h.state_mut().run("developer.agents", json!({})).unwrap();
         assert_eq!(report["plans"][0]["ended"], "agent access was lowered");
+    }
+
+    /// What the page is told to show now, as the shell would be handed it.
+    fn told(h: &mut Harness) -> Json {
+        let ctx = h.ctx.clone();
+        // It is worked out again when something was clicked there, or after a moment.
+        std::thread::sleep(Duration::from_millis(320));
+        let text = devpage::state(h.state_mut(), &ctx).expect("the page is wanted, and a moment has passed");
+        let token = std::fs::read_to_string(sandbox().unwrap().join("agent-token")).unwrap_or_else(|_| "no token yet".into());
+        assert!(!text.contains(&token), "never the token");
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// The person clicks something in the page.
+    fn page(h: &mut Harness, message: Json) -> bool {
+        let ctx = h.ctx.clone();
+        let again = devpage::handle(h.state_mut(), &ctx, &message.to_string());
+        h.run_steps(2);
+        again
+    }
+
+    #[test]
+    fn where_the_shell_can_show_it_the_window_is_a_page_and_a_click_there_goes_the_same_way() {
+        let s = Sandbox::new("devpage");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        // Without a shell that can show a page, the window is GridCraft's own.
+        assert!(!devpage::takes_over(&ctx) && devpage::state(h.state_mut(), &ctx).is_none());
+        open(&mut h);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(NAME));
+        assert!(!page(&mut h, json!({"act": "level", "level": "read"})), "and a message from no page does nothing");
+        assert_eq!(agents::snapshot().level, Level::Off);
+        h.state_mut().dialog = None;
+        h.run_steps(2);
+        // With one, asking for the window opens the page instead.
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(NAME, json!({}));
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none() && devpage::wanted(&ctx));
+        assert!(devpage::take_raise(&ctx) && !devpage::take_raise(&ctx), "it comes to the front, once");
+        let first = told(&mut h);
+        assert_eq!((&first["intro"], &first["agents"]["level"], &first["looking"]), (&json!(card::INTRO), &json!("off"), &Json::Null));
+        assert_eq!(first["agents"]["status"], json!({"kind": "off", "text": "Not serving: agent access is off."}));
+        assert_eq!(first["agents"]["levels"].as_array().unwrap().len(), 5);
+        assert_eq!(first["tools"]["modules"], "1 installed, 0 trusted");
+        assert!(first["theme"]["window"].as_str().unwrap().starts_with('#'));
+        assert!(devpage::state(h.state_mut(), &ctx).is_none(), "it is not told again at once");
+        // A click there goes the way a click in GridCraft's own window goes: raising the level
+        // ends in the operating system's question.
+        page(&mut h, json!({"act": "level", "level": "ask"}));
+        assert_eq!((asked.questions().len(), agents::snapshot().level, kept_level(&s)), (1, Level::Ask, Level::Ask));
+        let now = told(&mut h);
+        assert_eq!(
+            (&now["agents"]["level"], &now["agents"]["serving"], &now["said"]),
+            (&json!("ask"), &json!(true), &json!("Agent access: Ask me each time."))
+        );
+        // The setup goes to the clipboard by GridCraft: the page is never handed the token.
+        page(&mut h, json!({"act": "copySetup", "json": false}));
+        assert!(told(&mut h)["said"].as_str().unwrap().starts_with("The setup was copied."));
+        assert!(page(&mut h, json!({"act": "ready"})), "a page that has just loaded is told everything again");
+        // An agent asks. The window is open: it never turns to a card by itself.
+        let text = "def main(data):\n    return 'from the agent'\n";
+        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/extra.py", "text": text}));
+        let now = told(&mut h);
+        assert_eq!(now["looking"], Json::Null);
+        let waiting = &now["agents"]["waiting"][0];
+        assert_eq!((&waiting["id"], &waiting["kind"], &waiting["target"]), (&json!(id), &json!("Create file"), &json!("clean-data/python/extra.py")));
+        // The person looks: the card, in the words GridCraft's own window uses.
+        page(&mut h, json!({"act": "look", "id": id}));
+        let shown = told(&mut h)["looking"].clone();
+        assert_eq!((&shown["id"], &shown["kind"], &shown["target"]), (&json!(id), &json!("Create file"), &json!("clean-data/python/extra.py")));
+        assert_eq!(shown["question"], "Do you want to let the agent create \"python/extra.py\"?");
+        assert_eq!(shown["content"][0], json!({"t": "small", "text": "The file is new:"}));
+        assert_eq!(shown["content"][1]["lines"], json!(["def main(data):", "    return 'from the agent'"]));
+        assert_eq!((&shown["yes"], &shown["no"], &shown["blocked"]), (&json!(YES), &json!(NO_OF_THREE), &json!(false)));
+        assert!(shown["yesAnd"].as_str().unwrap().starts_with("2. Yes, and don't ask again for changes to clean-data's files"));
+        assert_eq!(shown["asker"], "The agent gave no name.");
+        // A yes for another card than the one on screen answers nothing.
+        let file = s.0.join("modules/clean-data/python/extra.py");
+        std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
+        page(&mut h, json!({"act": "allow", "id": id + 1}));
+        assert!(!file.exists() && stands(id).1.contains("is waiting for the person"));
+        // Nor one in the card's first moment on screen: GridCraft keeps the time, not the page.
+        page(&mut h, json!({"act": "notNow"}));
+        page(&mut h, json!({"act": "look", "id": id}));
+        page(&mut h, json!({"act": "allow", "id": id}));
+        assert!(!file.exists(), "too soon");
+        std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
+        page(&mut h, json!({"act": "allow", "id": id}));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        assert_eq!(asked.questions().len(), 1, "without the control channel a yes on the card is enough, here as there");
+        let now = told(&mut h);
+        assert!(now["looking"].is_null() && now["said"].as_str().unwrap().contains("python/extra.py was created in clean-data"), "{now}");
+        // What is too long to show is not said yes to, whatever the page sends; a no carries
+        // the person's word.
+        let long = "x = 1\n".repeat(card::SHOWN / 6 + 1);
+        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/long.py", "text": long}));
+        page(&mut h, json!({"act": "look", "id": id}));
+        let shown = told(&mut h)["looking"].clone();
+        assert_eq!((&shown["blocked"], &shown["blockedWhy"]), (&json!(true), &json!(card::TOO_LONG)));
+        std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
+        page(&mut h, json!({"act": "allow", "id": id}));
+        assert_eq!(told(&mut h)["error"], card::TOO_LONG);
+        assert!(!s.0.join("modules/clean-data/python/long.py").exists());
+        page(&mut h, json!({"act": "refuse", "id": id, "reason": "smaller pieces, please"}));
+        let (failed, said) = stands(id);
+        assert!(failed && said.contains("They tell you: \"smaller pieces, please\""), "{said}");
+        // What is not one of the page's messages is nothing.
+        let before = agents::snapshot().level;
+        let wordy = json!({"act": "refuse", "id": 1, "reason": "x".repeat(5000)}).to_string();
+        for bad in [
+            "",
+            "{",
+            "[]",
+            "{\"act\":\"format_disk\"}",
+            "{\"act\":\"allow\"}",
+            "{\"act\":\"level\",\"level\":\"root\"}",
+            "{\"act\":\"open\",\"name\":\"development\"}",
+            wordy.as_str(),
+        ] {
+            assert!(!devpage::handle(h.state_mut(), &ctx, bad), "{bad:.40}");
+        }
+        assert_eq!(agents::snapshot().level, before);
+        assert!(h.state().dialog.is_none());
+        // Its other windows open in GridCraft's own.
+        page(&mut h, json!({"act": "open", "name": "modules"}));
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(modules::NAME));
+        h.state_mut().dialog = None;
+        // The person can have GridCraft's own window instead, until GridCraft closes.
+        page(&mut h, json!({"act": "builtin"}));
+        assert!(!devpage::wanted(&ctx) && !devpage::takes_over(&ctx));
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(NAME));
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(NAME), "and it stays");
     }
 
     #[test]

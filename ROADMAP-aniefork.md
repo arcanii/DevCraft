@@ -37,6 +37,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
+| **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
 | **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted module's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a module without `network` is kept to its own address there. Developer ▸ Development creates a showcase module whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Modules, trust, Python, panels, events, a console and the workbook as objects** (the Development subsystem, phases 1a to 2b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what modules print and log; a script can work on the sheet itself, and panels and scripts share one set of objects for the workbook. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
@@ -377,6 +378,22 @@ section.
   at most), when the level is lowered and when GridCraft closes. One plan at a time.
 - Four tools more (eighteen): `propose_plan`, `run_plan_step`, `plan_status`, `stop_plan`.
 
+**Phase 2d, second slice, is built: the Development window as a Svelte page.** The owner
+asked for it as a new window in Svelte, and whether in Electron (2026-10-12).
+
+- **Developer ▸ Development** opens a window of its own, on Windows, that stays open beside
+  the sheet: the level, the setup, what waits, the plan, the tools, and a request's card
+  with its changes and its numbered choices. It keeps up by itself as agents ask.
+- **Not Electron: the system's web view** (WebView2, through `wry` and `tao`), which is what
+  Anie_Maint's console runs on. Electron would add a second program and a channel to it
+  that could answer requests. ADR-0001 says more.
+- **The page decides nothing.** GridCraft says what it shows, in the same words as its own
+  window (`card.rs`), and takes its clicks through the same code. The page is served from
+  the app's own files under a policy that allows nothing else; the token never reaches it.
+- **GridCraft's own window is still there**: on other systems, when the page can't be shown,
+  and by the link at the foot of the page.
+- `GRIDCRAFT_DEVELOPMENT=1` opens it as GridCraft starts.
+
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
 per-module Python environments, and the rest of **2d**: macOS and Linux.
 
@@ -417,7 +434,15 @@ own.
   is where that is read. Any client holding the token can run or stop an approved plan.
 - The Development server reaches modules and the console. The command palette, the action
   journal and recorded scripts are not on it.
-- The Development window keeps the height of its tallest card until it is closed.
+- The Development window keeps the height of its tallest card until it is closed (GridCraft's
+  own; the page scrolls).
+- **The Development window as a page is Windows only**, and a second thing to keep alike:
+  what the two windows say is shared, how they are laid out is not. Its place and size are
+  not remembered. To change the page: `cargo test -p gridcraft -- --ignored
+  write_the_pages_source`, change and build it with npm in `target/development-page`, then
+  `cargo test -p gridcraft -- --ignored take_the_built_page`.
+- A flaw in the web view's engine could let what a request holds act in the page. The
+  page's policy is there for that; it is still more surface than a window that draws text.
 - The server was used over real connections by a test client, not yet by Claude Code itself.
 - The panel's script (`spreadsheet.js`) is run by no test of the repository: it was exercised
   by hand in a browser, against a copy of the app with settings of its own. The Python side
@@ -451,6 +476,7 @@ still there:
 | `apps/gridcraft/src/main.rs`, the `mod` lines | `mod aniefork;`: the fork's part of the shell |
 | `apps/gridcraft/src/main.rs`, `App::ui`, after `self.0.ui(ui);` | `aniefork::frame(&mut self.0, ui.ctx(), _frame);` puts the docked panel's web view in its place |
 | `apps/gridcraft/Cargo.toml`, the Windows dependencies | `wry = { version = "0.57", default-features = false }`: the system web view |
+| `apps/gridcraft/Cargo.toml`, the Windows dependencies | `tao = { version = "0.37", default-features = false, features = ["rwh_06"] }`: a second window with a message loop of its own, for the Development window as a page |
 | `crates/ui-egui/src/control.rs`, `handle`, first thing | `if let Some(why) = crate::aniefork::control_refuses(p) { return err(why); }`: GridCraft's own settings folder is out of the control channel's reach |
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
@@ -461,7 +487,7 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
-| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` with what it brings (`webview2-com`, `dpi` and others). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
+| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
 
@@ -525,6 +551,20 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (Development subsystem, phase 2d, second slice: the Development window as a
+  Svelte page):** The owner asked for the window as a new window in Svelte, and whether in
+  Electron. Built in the system's web view instead (ADR-0001 says why): a second window with
+  its own thread and message loop (`tao`), a page compiled into the app and served under a
+  policy that allows only itself, state handed to it as JSON and its clicks taken through
+  the dialog's own `act`. To keep the two windows saying one thing, what a card says moved
+  out of the dialog into `card.rs`, which both draw from; the dialog's 97 tests passed
+  unchanged through that. One hook: a line in the app's `Cargo.toml`. Checked by 7 more
+  tests (2 in the UI: the card's blocks as the page is given them, and the page's half; 5 in
+  the app: what is served, the policy, the page's own address, how it is told things, the
+  generated file), and in the real window on
+  Windows 11 with settings of its own: the page showed the app's colours, kept up as an
+  agent asked, and with clicks posted to the web view a plan was looked at, approved in one
+  click and carried out (create, write, trust, run).
 - **2026-10-12 (plans, after an adversarial review):** One finding of weight, closed: a plan
   now holds how its modules stood when it was proposed and is approved only for that.
   Also closed: one spelling for a file; Python writes no compiled files into a module; what

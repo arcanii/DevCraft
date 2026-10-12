@@ -9,6 +9,7 @@ mod card;
 pub mod console;
 pub mod developer;
 pub mod development;
+pub mod devpage;
 pub mod diff;
 pub mod dock;
 pub mod modules;
@@ -89,6 +90,7 @@ pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     panels::poll(app, ctx);
     agents::poll(app, ctx);
     dock::watch(app, ctx);
+    devpage::route(app, ctx);
 }
 
 /// Hook of the control channel, before it does anything: what it may not reach.

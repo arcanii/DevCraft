@@ -1,8 +1,10 @@
 //! What the Development window says, apart from how it is drawn.
 //!
-//! What a request's card says is security: the person decides on it. So it is worded in one
-//! place, here, as [`Block`]s, and the window (`development.rs`) only draws what it is given.
-//! Whatever else comes to show a card is given the same blocks.
+//! Two windows show the same things: GridCraft's own (`development.rs`, drawn with the app's
+//! toolkit) and, where the shell can show one, the Development window as a page
+//! (`devpage.rs`). What a request's card says is security: the person decides on it. So
+//! neither window words it for itself. Both are given it from here, as [`Block`]s, and only
+//! draw what they are given.
 
 use std::borrow::Cow;
 
@@ -10,7 +12,7 @@ use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Before, Sight, 
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::trust::TrustStore;
 use gridcraft_aniefork_dev::{module, settings, showcase, starter};
-use serde_json::json;
+use serde_json::{Value as Json, json};
 
 use super::diff::{self, Line, Row};
 use super::{agents, modules};
@@ -481,6 +483,39 @@ pub(super) fn shown_rows<'a>(compared: &[Line<'a>]) -> (Vec<Row<'a>>, Option<Str
     (rows, Some(format!("Only the first {ROWS} lines of the changes are shown. Show the whole file to read the rest.")))
 }
 
+/// The blocks as the page is given them. Text only: the page draws every string as text.
+pub(super) fn json(blocks: &[Block<'_>]) -> Json {
+    let one = |block: &Block<'_>| match block {
+        Block::Note(text) => json!({"t": "note", "text": text}),
+        Block::Warn(text) => json!({"t": "warn", "text": text}),
+        Block::Small(text) => json!({"t": "small", "text": text}),
+        Block::Strong(text) => json!({"t": "strong", "text": text}),
+        Block::Bullet { text, warn } => json!({"t": "bullet", "text": text, "warn": warn}),
+        Block::Toggle { text, button } => {
+            json!({"t": "toggle", "text": text, "button": button.map(|(label, _)| label), "whole": button.is_some_and(|(_, whole)| whole)})
+        }
+        Block::Text { text, numbered } => {
+            let (shown, cut) = shown_text(text);
+            json!({"t": "text", "lines": shown.lines().map(visible).collect::<Vec<_>>(), "numbered": numbered, "cut": cut})
+        }
+        Block::Diff(compared) => {
+            let (rows, cut) = shown_rows(compared);
+            let rows: Vec<Json> = rows
+                .iter()
+                .map(|row| match row {
+                    Row::Skipped(count) => json!({"k": "skip", "text": format!("{count} line{} the same", plural(*count))}),
+                    Row::Line(Line::Same(_, number, text)) => json!({"k": "same", "n": number, "text": visible(text)}),
+                    Row::Line(Line::Gone(number, text)) => json!({"k": "gone", "n": number, "text": visible(text)}),
+                    Row::Line(Line::New(number, text)) => json!({"k": "new", "n": number, "text": visible(text)}),
+                })
+                .collect();
+            json!({"t": "diff", "rows": rows, "cut": cut})
+        }
+        Block::Step { heading, target, blocks } => json!({"t": "step", "heading": heading, "target": target, "blocks": json(blocks)}),
+    };
+    Json::Array(blocks.iter().map(one).collect())
+}
+
 // --- the rest of the window ------------------------------------------------------------------
 
 /// Whether the server is serving, in a line: how it is to be drawn (`ok`, `error`, `off`), and
@@ -644,6 +679,8 @@ mod tests {
         let blocks = content(&at, &write, &new, false, false);
         let [Block::Warn(said), Block::Small(_), Block::Text { .. }] = &blocks[..] else { panic!("{blocks:?}") };
         assert!(said.starts_with("It holds 1 character that would not show by itself"), "{said}");
+        let told = json(&blocks);
+        assert_eq!(told[2]["lines"], json!(["# fine⟨U+000D⟩import os"]));
         // A file without any is not remarked on.
         let plain = Action::WriteFile { module: "m".into(), path: "a.py".into(), text: "x = 1\r\ny = 2\n".into() };
         assert!(matches!(&content(&at, &plain, &new, false, false)[..], [Block::Small(_), Block::Text { .. }]));
@@ -660,5 +697,30 @@ mod tests {
         assert_eq!(heading, "Step 1 of 1  ·  Trust module");
         let said: Vec<&str> = step.iter().filter_map(|block| if let Block::Small(text) = block { Some(text.as_str()) } else { None }).collect();
         assert!(said.iter().any(|text| text.starts_with("Its files that this plan doesn't write are trusted as they are now.")), "{said:?}");
+    }
+
+    #[test]
+    fn the_page_is_given_every_block_as_text() {
+        let compared = diff::lines("a\nb\nc\n", "a\nB\nc\n").unwrap();
+        let blocks = vec![
+            Block::Note("<b>note</b>".into()),
+            Block::Warn("warn".into()),
+            Block::Bullet { text: "one".into(), warn: true },
+            Block::Toggle { text: "It changes".into(), button: Some(("Show whole file", true)) },
+            Block::Toggle { text: "It replaces".into(), button: None },
+            Block::Text { text: "x = 1\ny = 2\n".into(), numbered: true },
+            Block::Diff(compared),
+            Block::Step { heading: "Step 1 of 1  ·  Edit file".into(), target: "m/a.py".into(), blocks: vec![Block::Small("small".into())] },
+        ];
+        let told = json(&blocks);
+        assert_eq!(told[0], json!({"t": "note", "text": "<b>note</b>"}), "markup is words like any other");
+        assert_eq!(told[2], json!({"t": "bullet", "text": "one", "warn": true}));
+        assert_eq!(told[3], json!({"t": "toggle", "text": "It changes", "button": "Show whole file", "whole": true}));
+        assert_eq!(told[4], json!({"t": "toggle", "text": "It replaces", "button": null, "whole": false}));
+        assert_eq!(told[5], json!({"t": "text", "lines": ["x = 1", "y = 2"], "numbered": true, "cut": null}));
+        let rows = told[6]["rows"].as_array().unwrap();
+        assert_eq!(rows.iter().map(|row| row["k"].as_str().unwrap()).collect::<Vec<_>>(), ["same", "gone", "new", "same"]);
+        assert_eq!((&rows[1]["n"], &rows[1]["text"], &rows[2]["text"]), (&json!(2), &json!("b"), &json!("B")));
+        assert_eq!(told[7]["blocks"][0], json!({"t": "small", "text": "small"}));
     }
 }

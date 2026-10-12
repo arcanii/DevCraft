@@ -1,5 +1,7 @@
-//! The fork's part of the desktop shell: the system web view that shows a module's panel
-//! docked in the window (ADR-0001 in `docs/decisions-aniefork.md`, phase 2d).
+//! The fork's part of the desktop shell: the system web view (ADR-0001 in
+//! `docs/decisions-aniefork.md`, phase 2d). It shows two things: a module's panel docked in
+//! the window (this file), and the Development window as a page in a window of its own
+//! ([`window`]).
 //!
 //! The UI says which panel is docked and where its place is
 //! (`gridcraft_ui_egui::aniefork::dock`); this file has the window, and so the web view. Once a
@@ -14,12 +16,23 @@
 //! Windows only so far (WebView2, through `wry`). Elsewhere there is no host: the UI is never
 //! told there is one, and panels open in the browser as before.
 
-/// Hook of the shell's `ui`, after the app has drawn: the docked panel's web view.
+#[cfg(target_os = "windows")]
+mod page;
+#[cfg(target_os = "windows")]
+mod window;
+
+/// Hook of the shell's `ui`, after the app has drawn: the docked panel's web view, and the
+/// Development window when it is shown as a page.
 #[cfg(not(target_os = "windows"))]
 pub fn frame(_app: &mut gridcraft_ui_egui::SheetApp, _ctx: &egui::Context, _window: &eframe::Frame) {}
 
+/// Hook of the shell's `ui`, after the app has drawn: the docked panel's web view, and the
+/// Development window when it is shown as a page.
 #[cfg(target_os = "windows")]
-pub use host::frame;
+pub fn frame(app: &mut gridcraft_ui_egui::SheetApp, ctx: &egui::Context, window: &eframe::Frame) {
+    host::frame(app, ctx, window);
+    self::window::keep_up(app, ctx);
+}
 
 #[cfg(target_os = "windows")]
 mod host {
