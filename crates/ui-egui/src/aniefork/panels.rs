@@ -84,6 +84,13 @@ pub fn open(app: &SheetApp, ctx: &egui::Context, id: &str) -> Result<String, Str
     Ok("The panel is opening in your browser.".into())
 }
 
+/// What answers the calls a script of the module `id` makes to the spreadsheet while it runs,
+/// for a script started from this window rather than by a panel (Developer ▸ Modules ▸ Run).
+/// The calls are carried out on the UI thread by [`poll`], like a panel's.
+pub fn script_calls(ctx: &egui::Context, at: &bridge::Places, id: &str) -> impl Fn(&Json) -> Result<Json, String> + Send + Sync + use<> {
+    the_bridge(ctx).script_calls(at, id)
+}
+
 /// Stops serving the module `id` (its trust was taken back).
 pub fn stop(ctx: &egui::Context, id: &str) {
     if let Some(bridge) = running(ctx) {
@@ -405,6 +412,68 @@ mod tests {
     fn history(h: &Harness) -> (usize, usize) {
         let doc = h.state().session.active().unwrap();
         (doc.undo.len(), doc.redo.len())
+    }
+
+    /// Adds a script to an installed module, and trusts the module again as a user who looked
+    /// at the change and said yes would have.
+    fn add_script(s: &Sandbox, id: &str, name: &str, source: &str) {
+        let dir = s.0.join("modules").join(id);
+        std::fs::write(dir.join("python").join(name), source).unwrap();
+        TrustStore::load(&s.0.join("trusted-modules.json")).trust(&module::load(&dir), false).unwrap();
+    }
+
+    /// In the real window: a module's script changes the sheet itself, through the `spreadsheet`
+    /// it imports, and gets only what its module was granted.
+    #[test]
+    fn a_script_changes_the_workbook_itself_with_what_its_module_was_granted() {
+        use gridcraft_aniefork_dev::console::{Console, Kind};
+        let s = Sandbox::new("script-writes");
+        if let Err(why) = PythonHost::global().interpreter("") {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let script = "import spreadsheet\n\ndef main(data):\n    cells = spreadsheet.sheet('Sheet1').range('B2:C2')\n    cells.write([[data, '=LEN(B2)']])\n    spreadsheet.batch([['home.bold', {'range': 'B2'}], ['home.italic', {'range': 'B2'}]], label='Emphasis')\n    book = spreadsheet.workbook()\n    return {'read': cells.read(), 'formulas': cells.formulas(), 'book': book.name, 'sheets': [sheet.name for sheet in book.sheets], 'chosen': spreadsheet.selection()['range']}\n";
+        install(&s, "script-writer", &["read", "write", "python"]);
+        install(&s, "script-reader", &["read", "python"]);
+        add_script(&s, "script-writer", "write.py", script);
+        add_script(&s, "script-reader", "write.py", script);
+        let (a, opened) = app();
+        let mut h = harness(a);
+        let title = h.state().session.active().unwrap().title.clone();
+        let writer = open_panel(&mut h, &opened, "script-writer");
+        let (undo, _) = history(&h);
+        let answer = call(&mut h, &writer, json!({"call": "runPython", "script": "write.py", "data": "hello", "timeout": 60}));
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(
+            answer["result"],
+            json!({"read": [["hello", 5.0]], "formulas": [["hello", "=LEN(B2)"]], "book": title, "sheets": ["Sheet1"], "chosen": "A1"}),
+            "{answer}"
+        );
+        // The sheet was changed by the script, not by the panel.
+        assert_eq!(cell(&mut h, "B2"), json!("hello"));
+        assert_eq!(cell(&mut h, "C2"), json!(5.0));
+        // The write is one undo step, and the batch another, under the label the script gave it.
+        assert_eq!(history(&h).0, undo + 2);
+        assert_eq!(h.state().session.active().unwrap().undo.last().unwrap().label, "Emphasis");
+        h.state_mut().session.run("edit.undo", json!({})).unwrap();
+        h.state_mut().session.run("edit.undo", json!({})).unwrap();
+        assert_eq!(cell(&mut h, "B2"), Json::Null);
+
+        // A module that was not granted `write`: its script is told so, and nothing changes.
+        let reader = open_panel(&mut h, &opened, "script-reader");
+        let refused = call(&mut h, &reader, json!({"call": "runPython", "script": "write.py", "data": "nope", "timeout": 60}));
+        assert_eq!(refused["ok"], false, "{refused}");
+        let why = refused["error"].as_str().unwrap();
+        assert!(why.contains("SpreadsheetError") && why.contains("wasn't granted `write`, which range.setValues needs"), "{why}");
+        assert_eq!(cell(&mut h, "B2"), Json::Null);
+        assert_eq!(history(&h).0, undo);
+        // Both are in the Developer console: the refusal, and the script that failed for it.
+        let entries = Console::global().entries();
+        assert!(entries.iter().any(|e| e.module == "script-reader" && e.kind == Kind::Refused && e.text.contains("range.setValues")));
+        assert!(entries.iter().any(|e| e.module == "script-reader" && e.source == "write.py" && e.kind == Kind::Error));
+        let modules = s.0.join("modules");
+        PythonHost::global().stop(&modules, "script-writer");
+        PythonHost::global().stop(&modules, "script-reader");
     }
 
     /// What the panel is told after the place `next`, which is moved on. The names, in order.

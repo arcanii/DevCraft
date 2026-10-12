@@ -135,6 +135,12 @@ const SCRIPT: &str = r#""""A script this module's panel can run:
 
 GridCraft calls main() with the data the panel sent (whatever JSON can hold)
 and sends back what it returns.
+
+A script can also work on the sheet itself, with what the module was granted:
+
+    import spreadsheet
+    spreadsheet.write(data["range"], cleaned)          # or spreadsheet.run(id, params)
+    spreadsheet.sheet("Data").range("A1:C3").read()    # the workbook as objects
 """
 
 

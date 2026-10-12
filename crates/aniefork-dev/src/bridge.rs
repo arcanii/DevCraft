@@ -17,6 +17,9 @@
 //! What a panel may call:
 //!
 //! - `runPython` is answered here, by [`crate::python`], which checks trust again for itself.
+//!   What the script asks of the spreadsheet while it runs (`import spreadsheet`) is carried to
+//!   the app like a panel's own calls: the module is read from disk again for each, and the
+//!   script gets only what the module was granted ([`Bridge::script_calls`]).
 //! - `run`, `batch` and `selection` need the workbook, which only the app has. They are put in a
 //!   queue as [`Call`]s, with what the module was granted, for the app to carry out on its own
 //!   thread ([`Bridge::take_calls`]). The app decides what each command needs ([`needs`]).
@@ -269,8 +272,61 @@ pub const CLIENT: &str = r#"// GridCraft: the `spreadsheet` object of a module's
     }
   };
 
+  // The workbook as objects: handles that name a sheet or a range and run commands on it.
+  const run = async (command, params) => (await call({ call: "run", command, params: params || {} })).result;
+  const quoted = (sheet) => (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(sheet) ? sheet : "'" + String(sheet).replace(/'/g, "''") + "'");
+
+  function range(address, sheet) {
+    const at = String(address);
+    const full = sheet && !at.includes("!") ? quoted(sheet) + "!" + at : at;
+    return Object.freeze({
+      address: full,
+      run: (command, params) => run(command, Object.assign({}, params, { range: full })),
+      read: async (options) => (await run("sheet.read", Object.assign({}, options, { range: full }))).values,
+      formulas: async () => (await run("sheet.read", { range: full, formulas: true })).values,
+      write: (rows) => run("range.setValues", { range: full, values: rows }),
+      clear: () => run("edit.clearContents", { range: full }),
+      select: () => run("selection.set", { range: full }),
+    });
+  }
+
+  function sheet(name, used, tables) {
+    return Object.freeze({
+      name,
+      used: used ? range(used, name) : null,
+      tables: tables || [],
+      range: (address) => range(address, name),
+      read: async (options) => (await run("sheet.read", Object.assign({}, options, name ? { sheet: name } : {}))).values,
+      activate: async () => {
+        if (!name) throw new SpreadsheetError("The active sheet is already the active one: name a sheet to activate it.");
+        return run("sheet.activate", { sheet: name });
+      },
+    });
+  }
+
+  async function workbook() {
+    const found = await run("document.inspect");
+    const sheets = (found.sheets || []).map((s) => sheet(s.name, s.usedRange, s.tables));
+    return Object.freeze({
+      name: found.title,
+      sheets,
+      active: sheets[found.activeSheet] || null,
+      selection: found.selection,
+      names: found.names || [],
+      tables: sheets.flatMap((s) => s.tables),
+      sheet: (name) => {
+        const named = sheets.find((s) => s.name === name);
+        if (!named) throw new SpreadsheetError("There is no sheet named " + JSON.stringify(name) + ".");
+        return named;
+      },
+    });
+  }
+
   window.spreadsheet = Object.freeze({
     Error: SpreadsheetError,
+    sheet: (name) => sheet(name),
+    range,
+    workbook,
     on,
     off,
     log: (...values) => call({ call: "log", text: values.map(words).join(" ") }).then(
@@ -314,6 +370,50 @@ interface SpreadsheetInfo {
   granted: string[];
 }
 
+/** Cells, by address. On a sheet that isn't the active one the address names the sheet: "Data!A1:C3". */
+interface SpreadsheetRange {
+  readonly address: string;
+  /** Runs a command on these cells: its `range` is filled in. */
+  run<K extends keyof SpreadsheetCommands>(command: K, params?: SpreadsheetParams): Promise<any>;
+  /** Their values, row by row. */
+  read(options?: { formulas?: boolean; formatted?: boolean }): Promise<unknown[][]>;
+  /** What was typed into them: formulas as text. */
+  formulas(): Promise<unknown[][]>;
+  /** Writes rows of values from the first cell. Text that starts with = is a formula. */
+  write(rows: unknown[][]): Promise<any>;
+  /** Clears what is in them, keeping their formats. */
+  clear(): Promise<any>;
+  /** Makes them the selection. */
+  select(): Promise<any>;
+}
+
+/** A sheet, by name. Without a name it is whichever sheet is the active one. */
+interface SpreadsheetSheet {
+  readonly name: string | undefined;
+  /** The cells in use, for a sheet that came from `workbook()` and has any. */
+  readonly used: SpreadsheetRange | null;
+  /** Its tables, for a sheet that came from `workbook()`. */
+  readonly tables: unknown[];
+  range(address: string): SpreadsheetRange;
+  /** The values of the cells in use, row by row. */
+  read(options?: { formulas?: boolean; formatted?: boolean }): Promise<unknown[][]>;
+  /** Makes it the active sheet. */
+  activate(): Promise<any>;
+}
+
+/** The workbook being worked on, as it was when it was asked for. */
+interface SpreadsheetWorkbook {
+  readonly name: string;
+  readonly sheets: SpreadsheetSheet[];
+  readonly active: SpreadsheetSheet | null;
+  /** The address of the selection, on the active sheet. */
+  readonly selection: string;
+  readonly names: unknown[];
+  readonly tables: unknown[];
+  /** The sheet of that name. Throws when there is none. */
+  sheet(name: string): SpreadsheetSheet;
+}
+
 /** What a function given to `spreadsheet.on` is handed, for each event. */
 interface SpreadsheetEvents {
   /** The selection moved, or another sheet was chosen. */
@@ -349,6 +449,12 @@ interface Spreadsheet {
   write(range: string, rows: unknown[][], options?: { sheet?: string }): Promise<any>;
   /** The module, and what the user granted it. */
   info(): Promise<SpreadsheetInfo>;
+  /** A sheet, by name; without one, whichever sheet is active. Nothing is asked of GridCraft until it is used. */
+  sheet(name?: string): SpreadsheetSheet;
+  /** Cells, by address: "A1:C3", or "Data!A1:C3" (or a second argument) for another sheet. */
+  range(address: string, sheet?: string): SpreadsheetRange;
+  /** The workbook being worked on: its sheets, names and tables, as they are now. */
+  workbook(): Promise<SpreadsheetWorkbook>;
   /**
    * Calls `handler` each time the event happens, until the function this resolves to is called.
    * Needs `read`. Events that pile up are thinned: a handler is told where the selection is now,
@@ -427,6 +533,10 @@ mod web {
 
         pub fn listeners(&self, _id: &str) -> usize {
             0
+        }
+
+        pub fn script_calls(&self, _places: &Places, _id: &str) -> impl Fn(&Json) -> Result<Json, String> + Send + Sync + use<> {
+            |_call: &Json| Err("The spreadsheet can't be called from this copy of GridCraft.".to_string())
         }
     }
 }
@@ -626,6 +736,15 @@ mod server {
         /// How many panels of the module `id` are being kept waiting for events right now.
         pub fn listeners(&self, id: &str) -> usize {
             lock(&self.0.sites).get(id).map_or(0, |site| site.listening.load(Ordering::SeqCst))
+        }
+
+        /// What answers the calls a script of the module `id` makes to the spreadsheet while it
+        /// runs ([`crate::python::Calls`]), for a script that was not started by a panel. Each
+        /// call is put in the queue for the app, as a panel's is, after the module has been read
+        /// from disk again: a script gets what its module is granted at that moment.
+        pub fn script_calls(&self, places: &Places, id: &str) -> impl Fn(&Json) -> Result<Json, String> + Send + Sync + use<> {
+            let (shared, places, id) = (self.0.shared.clone(), places.clone(), id.to_string());
+            move |call: &Json| script_call(&shared, &places, &id, call)
         }
     }
 
@@ -1004,24 +1123,52 @@ mod server {
                 Console::global().push(&site.id, "panel", console::Kind::Log, text);
                 Ok(json!({}))
             }
-            Some("selection") => ask(site, found, granted, Request::Selection).map(|result| json!({"result": result})),
-            Some("run") => {
-                let (command, params) = step(body)?;
-                ask(site, found, granted, Request::Run { command, params }).map(|result| json!({"result": result}))
-            }
-            Some("batch") => {
-                let Some(steps) = body.get("commands").and_then(Json::as_array) else { return Err(fail("A batch needs `commands`: a list.")) };
-                if steps.len() > MAX_BATCH {
-                    return Err(fail(format!("A batch can hold at most {MAX_BATCH} commands.")));
+            _ => match workbook_request(found.name(), body) {
+                Some(asked) => {
+                    let (request, key) = asked?;
+                    ask(&site.shared, &site.id, found.name(), granted, request).map(|result| json!({key: result}))
                 }
-                let commands = steps.iter().map(step).collect::<Result<Vec<_>, _>>()?;
-                // The label of the undo step: the module's name unless the panel gave a plain one.
-                let given = body.get("label").and_then(Json::as_str).unwrap_or("");
-                let label: String = given.chars().filter(|c| !c.is_control()).take(60).collect();
-                let label = if label.trim().is_empty() { found.name().to_string() } else { label.trim().to_string() };
-                ask(site, found, granted, Request::Batch { label, commands }).map(|results| json!({"results": results}))
+                None => Err(fail("That is not a call GridCraft knows.")),
+            },
+        }
+    }
+
+    /// What a call asks of the workbook, and the name its answer goes under: `None` when it is
+    /// not one of the calls that need the workbook. A panel's calls and a script's are read here.
+    fn workbook_request(name: &str, body: &Json) -> Option<Result<(Request, &'static str), Json>> {
+        match body.get("call").and_then(Json::as_str) {
+            Some("selection") => Some(Ok((Request::Selection, "result"))),
+            Some("run") => Some(step(body).map(|(command, params)| (Request::Run { command, params }, "result"))),
+            Some("batch") => Some(batch_request(name, body).map(|request| (request, "results"))),
+            _ => None,
+        }
+    }
+
+    fn batch_request(name: &str, body: &Json) -> Result<Request, Json> {
+        let Some(steps) = body.get("commands").and_then(Json::as_array) else { return Err(fail("A batch needs `commands`: a list.")) };
+        if steps.len() > MAX_BATCH {
+            return Err(fail(format!("A batch can hold at most {MAX_BATCH} commands.")));
+        }
+        let commands = steps.iter().map(step).collect::<Result<Vec<_>, _>>()?;
+        // The label of the undo step: the module's name unless a plain one was given.
+        let given = body.get("label").and_then(Json::as_str).unwrap_or("");
+        let label: String = given.chars().filter(|c| !c.is_control()).take(60).collect();
+        let label = if label.trim().is_empty() { name.to_string() } else { label.trim().to_string() };
+        Ok(Request::Batch { label, commands })
+    }
+
+    /// Answers what a module's script asks of the spreadsheet while it runs. The module is read
+    /// from disk, and the user's decisions with it, for every call, as for a panel's request: a
+    /// script whose module changed or lost its trust while it ran is answered nothing more.
+    fn script_call(shared: &Shared, places: &Places, id: &str, body: &Json) -> Result<Json, String> {
+        let said = |answer: Json| answer["error"].as_str().unwrap_or("The call failed.").to_string();
+        let (found, granted) = trusted(places, id)?;
+        match workbook_request(found.name(), body) {
+            Some(asked) => {
+                let (request, key) = asked.map_err(said)?;
+                ask(shared, id, found.name(), &granted, request).map(|result| json!({key: result})).map_err(said)
             }
-            _ => Err(fail("That is not a call GridCraft knows.")),
+            None => Err("That is not something a script can ask of the spreadsheet.".into()),
         }
     }
 
@@ -1094,33 +1241,36 @@ mod server {
         let asked = body.get("timeout").and_then(Json::as_f64).filter(|seconds| seconds.is_finite() && *seconds >= 0.001);
         let timeout = asked.map_or(python::DEFAULT_TIMEOUT, |seconds| Duration::from_secs_f64(seconds.min(longest)));
         let interpreter = settings::load(&site.places.settings).python;
-        match PythonHost::global().run(&site.places.modules, &site.places.trust, &interpreter, &site.id, script, &data, timeout) {
+        let calls = |call: &Json| script_call(&site.shared, &site.places, &site.id, call);
+        let at = &site.places;
+        match PythonHost::global().run_with(&at.modules, &at.trust, &interpreter, &site.id, script, &data, timeout, Some(&calls)) {
             Ok(output) => Ok(json!({"result": output.result, "printed": output.printed})),
             Err(RunError::Script { error, trace }) => Err(json!({"ok": false, "error": error, "trace": trace})),
             Err(other) => Err(fail(other.to_string())),
         }
     }
 
-    /// Puts a call in the queue for the app and waits for its answer.
-    fn ask(site: &Site, found: &module::Module, granted: &[Permission], request: Request) -> Result<Json, Json> {
+    /// Puts a call of the module `id` (named `name`) in the queue for the app and waits for its
+    /// answer.
+    fn ask(shared: &Shared, id: &str, name: &str, granted: &[Permission], request: Request) -> Result<Json, Json> {
         let (reply, answer) = mpsc::channel();
         let abandoned = Arc::new(AtomicBool::new(false));
         {
-            let mut waiting = lock(&site.shared.calls);
+            let mut waiting = lock(&shared.calls);
             if waiting.len() >= MAX_WAITING {
                 return Err(fail("GridCraft has too many calls waiting. Try again in a moment."));
             }
             waiting.push_back(Call {
-                module: site.id.clone(),
-                name: found.name().to_string(),
+                module: id.to_string(),
+                name: name.to_string(),
                 granted: granted.to_vec(),
                 request,
                 reply,
                 abandoned: abandoned.clone(),
             });
         }
-        (site.shared.wake)();
-        match answer.recv_timeout(site.shared.limits.answer) {
+        (shared.wake)();
+        match answer.recv_timeout(shared.limits.answer) {
             Ok(result) => result.map_err(fail),
             Err(_) => {
                 abandoned.store(true, Ordering::SeqCst);
@@ -1180,6 +1330,21 @@ mod tests {
             assert!(CLIENT.contains(call), "{call}");
         }
         assert!(!CLIENT.contains("127.0.0.1") && !CLIENT.contains("token"));
+        // The workbook as objects: the handles, and their types.
+        for part in ["sheet: (name) => sheet(name),", "range,", "workbook,", "\"edit.clearContents\"", "\"document.inspect\""] {
+            assert!(CLIENT.contains(part), "{part}");
+        }
+        let declared = typings(&[]);
+        for part in [
+            "interface SpreadsheetRange {",
+            "interface SpreadsheetSheet {",
+            "interface SpreadsheetWorkbook {",
+            "sheet(name?: string): SpreadsheetSheet;",
+            "range(address: string, sheet?: string): SpreadsheetRange;",
+            "workbook(): Promise<SpreadsheetWorkbook>;",
+        ] {
+            assert!(declared.contains(part), "{part}");
+        }
         // Events and the console: the client's calls, and every event typed.
         for call in ["call: \"events\"", "call: \"log\"", "on,", "off,"] {
             assert!(CLIENT.contains(call), "{call}");
@@ -1911,6 +2076,80 @@ mod served {
         let failed = entries.iter().rev().find(|e| e.kind == Kind::Error && e.source == "broken.py").expect("why it failed");
         assert!(failed.text.contains("no good") && failed.text.contains("ValueError"), "{}", failed.text);
         PythonHost::global().stop(&s.places.modules, "clean-data");
+    }
+
+    #[test]
+    fn what_a_script_asks_of_the_spreadsheet_waits_for_the_app_like_a_panels_call() {
+        let s = Arc::new(Served::new("script-calls", "\"read\", \"write\", \"python\"", Limits::default()));
+        if PythonHost::global().interpreter("").is_err() {
+            eprintln!("skipped: there is no Python on this machine");
+            return;
+        }
+        s.t.write(
+            "modules/clean-data/python/writer.py",
+            "import spreadsheet\n\ndef main(data):\n    first = spreadsheet.run('cell.set', {'cell': 'B2', 'input': data})\n    try:\n        spreadsheet.selection()\n    except spreadsheet.Error as error:\n        return [first, str(error)]\n    return [first, 'answered']\n",
+        );
+        s.trust(false);
+        // The app: it answers the first call, and before that changes one of the module's files,
+        // as an update or tampering would.
+        let app = s.clone();
+        let acting = thread::spawn(move || {
+            let mut seen = Vec::new();
+            app.app_answers(|call| {
+                seen.push((call.module.clone(), call.name.clone(), call.granted.clone(), call.request.clone()));
+                app.t.write("modules/clean-data/panel/app.js", "console.log('changed while a script ran');");
+                Ok(json!({"cells": 1}))
+            });
+            seen
+        });
+        let answer = s.call(json!({"call": "runPython", "script": "writer.py", "data": "from python", "timeout": 60}));
+        let seen = acting.join().unwrap();
+        assert_eq!(seen.len(), 1);
+        let (module, name, granted, request) = &seen[0];
+        assert_eq!((module.as_str(), name.as_str()), ("clean-data", "Clean Data"));
+        assert_eq!(granted, &[Permission::Read, Permission::Write, Permission::Python], "the call carries what the module was granted");
+        assert_eq!(request, &Request::Run { command: "cell.set".into(), params: json!({"cell": "B2", "input": "from python"}) });
+        // The second call found the module changed: it was refused, and never reached the app.
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(answer["result"][0], json!({"cells": 1}));
+        assert!(answer["result"][1].as_str().unwrap().contains("has changed since you trusted it"), "{answer}");
+        assert!(s.bridge.take_calls(10).is_empty());
+        PythonHost::global().stop(&s.places.modules, "clean-data");
+    }
+
+    #[test]
+    fn a_script_started_outside_a_panel_is_answered_through_the_same_queue() {
+        let s = Arc::new(Served::new("script-calls-outside", "\"read\"", quick()));
+        // What the window uses for Developer ▸ Modules ▸ Run: no panel is involved.
+        let calls = s.bridge.script_calls(&s.places, "clean-data");
+        let app = s.clone();
+        let acting = thread::spawn(move || {
+            let mut granted = Vec::new();
+            app.app_answers(|call| {
+                granted = call.granted.clone();
+                Ok(json!({"sheet": "Sheet1", "range": "A1", "rows": [[1]]}))
+            });
+            granted
+        });
+        let answer = calls(&json!({"call": "selection", "calling": 4, "n": 1})).unwrap();
+        assert_eq!(answer, json!({"result": {"sheet": "Sheet1", "range": "A1", "rows": [[1]]}}));
+        assert_eq!(acting.join().unwrap(), [Permission::Read]);
+        // Only what needs the workbook: a script can't reach the bridge's other calls this way.
+        for call in [json!({"call": "runPython", "script": "clean.py"}), json!({"call": "events"}), json!({"call": "info"}), json!({}), json!(null)] {
+            let refused = calls(&call).unwrap_err();
+            assert!(refused.contains("not something a script can ask"), "{call}: {refused}");
+        }
+        assert!(calls(&json!({"call": "run"})).unwrap_err().contains("needs a `command`"));
+        assert!(calls(&json!({"call": "batch", "commands": 3})).unwrap_err().contains("a list"));
+        // The app never answers: the script is told, and the call is not carried out late.
+        assert!(calls(&json!({"call": "selection"})).unwrap_err().contains("did not answer in time"));
+        assert!(s.bridge.take_calls(10).is_empty());
+        // A module that is not trusted, or is not a module at all, is answered nothing.
+        s.t.write("modules/clean-data/panel/app.js", "console.log('changed');");
+        assert!(calls(&json!({"call": "selection"})).unwrap_err().contains("has changed since you trusted it"));
+        let stranger = s.bridge.script_calls(&s.places, "../elsewhere");
+        assert!(stranger(&json!({"call": "selection"})).is_err());
+        assert!(s.bridge.take_calls(10).is_empty());
     }
 
     #[test]

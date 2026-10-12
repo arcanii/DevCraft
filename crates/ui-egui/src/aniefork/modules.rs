@@ -161,17 +161,19 @@ pub(super) fn selection_data(app: &mut SheetApp) -> Result<Json, String> {
 }
 
 /// Starts `script` of module `id` on the selection. The trust check is the host's own, on the
-/// thread that runs it.
+/// thread that runs it. What the script asks of the spreadsheet while it runs is carried out by
+/// this window, as a panel's calls are, with what the module was granted.
 fn start(app: &mut SheetApp, ctx: &egui::Context, id: &str, script: &str) -> Result<(), String> {
     let at = places().ok_or(UNAVAILABLE)?;
     let data = selection_data(app)?;
     let python = settings::load(&at.settings).python;
     let job = Job { slot: Arc::new(Mutex::new(None)) };
+    let calls = super::panels::script_calls(ctx, &at, id);
     let (slot, repaint, id, script) = (job.slot.clone(), ctx.clone(), id.to_string(), script.to_string());
     std::thread::Builder::new()
         .name("gridcraft-module-run".into())
         .spawn(move || {
-            let result = PythonHost::global().run(&at.modules, &at.trust, &python, &id, &script, &data, DEFAULT_TIMEOUT);
+            let result = PythonHost::global().run_with(&at.modules, &at.trust, &python, &id, &script, &data, DEFAULT_TIMEOUT, Some(&calls));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
             repaint.request_repaint();
         })
@@ -882,6 +884,36 @@ pub(crate) mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("the script did not finish");
+    }
+
+    /// Developer ▸ Modules ▸ a script's name: a script that calls the spreadsheet changes the
+    /// sheet from there too, without a panel being open.
+    #[test]
+    fn a_script_run_from_the_dialog_can_change_the_sheet_itself() {
+        let _s = Sandbox::new("run-writes");
+        if let Err(why) = PythonHost::global().interpreter("") {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        create("Stamp").unwrap();
+        let s = sandbox().unwrap();
+        std::fs::write(
+            s.join("modules/stamp/python/stamp.py"),
+            "import spreadsheet\n\ndef main(data):\n    spreadsheet.write('D4', [['stamped ' + data['range']]])\n    return spreadsheet.read('D4')\n",
+        )
+        .unwrap();
+        let mut a = app_with(Some(&yes()));
+        a.session.run("selection.set", json!({"range": "A1:B2"})).unwrap();
+        trust(&a, "stamp", &fingerprint(), false).unwrap();
+        let mut h = harness(a);
+        click(&mut h, "stamp.py");
+        let run = wait_for_run(&mut h);
+        assert_eq!((run["ok"].as_bool(), run["script"].as_str()), (Some(true), Some("stamp.py")), "{run}");
+        assert_eq!(serde_json::from_str::<Json>(run["text"].as_str().unwrap()).unwrap(), json!([["stamped A1:B2"]]));
+        let sheet = h.state_mut().session.run("sheet.read", json!({"range": "D4"})).unwrap();
+        assert_eq!(sheet["values"], json!([["stamped A1:B2"]]), "the script wrote to the sheet itself");
+        assert_eq!(h.state().session.active().unwrap().undo.len(), 1, "as one undo step");
+        PythonHost::global().stop(&s.join("modules"), "stamp");
     }
 
     /// The whole path in the real window: a trusted module's script runs on the selection, in a

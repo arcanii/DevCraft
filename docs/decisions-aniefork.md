@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge) and phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log) |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge), phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log) and phase 2b (the workbook as objects, for panels and scripts alike; a script calls the spreadsheet while it runs) |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -129,8 +129,30 @@ The requirement: a module can do what a user could do, **and more**. Read here a
 | **The workbook as objects** | `spreadsheet.workbook`, sheets, ranges, cells, tables, names, charts and styles to read and change as objects, built on the commands. Whatever the model holds and no command returns yet gets a read command, so nothing in a workbook is out of a module's reach | Phase 1 for values, formulas, formats and structure; the rest as needed |
 | **More than a user can do** | Several changes as **one undo step**. **Events**: the selection moved, cells changed, a workbook opened or is about to be saved. **Additions to GridCraft itself**: worksheet functions written in a module, commands and ribbon buttons a module adds, its own panels | One undo step in phase 1; events in phase 2; additions in phase 3 |
 
-Python gets the same model as the panel does: in phase 2 a script can call back into the
-spreadsheet through an object of the same shape, instead of only receiving data and returning it.
+Python gets the same model as the panel does: a script can call back into the spreadsheet
+through an object of the same shape, instead of only receiving data and returning it.
+
+**What phase 2b built of this: the workbook as objects, and Python calling back.**
+
+- **A script imports `spreadsheet`** and has what a panel has: `run`, `batch`, `selection`,
+  `read`, `write`. It is a module GridCraft gives the script's process, not a file. A call
+  through it travels on the line the script's result will come back on, and the script waits
+  for its answer.
+- **The workbook as objects**, the same in a panel and in a script:
+  `spreadsheet.sheet("Data").range("A1:C3")` is a handle that names cells and runs commands on
+  them: `read`, `formulas`, `write`, `clear`, `select`, and `run(command, params)` for every
+  other command, with the range filled in. `spreadsheet.workbook()` gives the workbook as it
+  is now: its name, its sheets (each with its used range and its tables), the active sheet,
+  the selection, the names. A handle costs nothing until it is used.
+- **Built on the commands, with nothing added to the engine.** Every command already takes a
+  range that names its sheet (`'My Data'!B2:C3`), so a range on another sheet is an address,
+  and an object is a command with the address filled in. Whatever the objects don't name
+  (charts, styles, tables as things to change) is still reached by `run`.
+- **A script's calls are checked like a panel's.** The module is read from disk, and the
+  user's decisions with it, for every call; the call goes into the same queue to the window,
+  with what the module is granted at that moment. `python` cannot be limited, but what a
+  script does through `spreadsheet` is: a module without `write` has a script that cannot
+  write this way, and is told so in an error it can catch.
 
 **What phase 2a built of this: events.** `spreadsheet.on(name, handler)` tells a panel when
 something happens, until the function it resolves to is called:
@@ -253,8 +275,10 @@ contents by the user. Directions to weigh when this is taken up:
 
 - The fork gains its first non-Rust runtime code: `spreadsheet.js`, the small client a panel loads.
   Upstream's rule is "Rust only (no handwritten JS/TS)". The exception is kept as small as it can
-  be: the client is about a hundred and ten lines of text inside the bridge's Rust source (fifty
-  before events and the console's `log` were added in phase 2a), the typings are
+  be: the client is about a hundred and seventy lines of text inside the bridge's Rust source
+  (fifty in phase 1; events, the console's `log` and the workbook as objects came in phase 2),
+  and the Python that gives a script its `spreadsheet` module is about a hundred and twenty
+  lines of text inside the Python host's; the typings are
   made by Rust code from the command list, both live only in the new crate, and the repository
   holds no JavaScript or TypeScript file. Starter modules are created by "New Module" from
   templates compiled into the app, so no sample panel or script is checked in. This exception
@@ -294,7 +318,7 @@ contents by the user. Directions to weigh when this is taken up:
 | 1b | The Python host, and the operating-system confirmation for giving trust | **Done**, 2026-10-11: a trusted module's script runs on data and returns JSON, with a time limit; an untrusted one is refused. Developer ▸ Modules can run a script on the selection and show what it returned |
 | 1c | The bridge, `spreadsheet.js`, the typings; panels open in the browser | **Done**, 2026-10-11: the starter module's panel, open in a browser, reads the selection, runs its Python script on it and writes the result back as one undo step. The workbook as objects (the second layer of "Exposing the model") moved to phase 2 |
 | 2a | Events, and the Developer console | **Done**, 2026-10-12: the starter module's panel, open in a browser, shows the selection as it moves, and what its script prints and its panel logs shows in Developer ▸ Console |
-| 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | A script changes the sheet itself, instead of only returning data for the panel to write |
+| 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | **Done**, 2026-10-12: a script changes the sheet itself through `import spreadsheet`, with what its module was granted, from a panel and from Developer ▸ Modules; a panel and a script work with the same `sheet`, `range` and `workbook` |
 | 2c | Per-module Python environments: the packages of `requirements.txt` in an environment of the module's own, installed only when the user asks | The starter module's script uses pandas without the user installing anything by hand |
 | 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | The same starter module runs docked, unchanged |
 | 2e | Agents and modules over MCP (below). **Decided 2026-10-12, to follow 2b**; its mechanics are still a proposal | An agent asks to run a trusted module's script, and it runs only on the user's yes |
