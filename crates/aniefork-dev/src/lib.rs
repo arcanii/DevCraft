@@ -19,6 +19,7 @@
 //! - [`starter`]: "New Module".
 //! - [`showcase`]: a module whose panel is a Svelte app, to show a web toolkit at work.
 //! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
+//! - [`vba`]: looking inside a workbook's VBA project, to read it. Nothing of it is ever run.
 //!
 //! It has no dependency on the UI toolkit or on the rest of GridCraft, so that it can be offered
 //! upstream as a piece of its own.
@@ -40,6 +41,7 @@ pub mod showcase;
 mod showcase_files;
 pub mod starter;
 pub mod trust;
+pub mod vba;
 
 use serde_json::{Value as Json, json};
 

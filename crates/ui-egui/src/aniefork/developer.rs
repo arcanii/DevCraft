@@ -56,6 +56,9 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
     if big_button(ui, Icon::Script, "Console", "What your modules print and log, and what failed", false).clicked() {
         app.open_dialog(super::console::NAME, json!({}));
     }
+    if big_button(ui, Icon::Script, "Macros", "The macros (VBA) this workbook carries, to read. GridCraft does not run them", false).clicked() {
+        app.open_dialog(super::macros::NAME, json!({}));
+    }
     separator(ui);
     if big_button(ui, Icon::Settings, "Options", "Settings, and whether this tab is shown", false).clicked() {
         // Upstream's command: it opens the Options page, where the fork's settings are too.

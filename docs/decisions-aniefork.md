@@ -734,6 +734,111 @@ not remembered. The keyboard alone reaches everything in it as a web page does, 
 shortcuts of its own. The bar under the ribbon still says a request is waiting while its card
 is open in the page.
 
+### Macros (VBA): reading them, and bringing what they do into GridCraft
+
+**What the owner asked (2026-10-12 and 13).** A viewer for the VBA a workbook carries, as the
+next slice: "we need to look inside the vbaProject.bin for a conversion strategy". And with
+it: can information be written into `vbaProject.bin` so that Excel ignores it but keeps it;
+should what GridCraft adds go into a file format of its own, breaking with Excel; a phased
+way of bringing VBA into a GridCraft sheet, of which the first phase would be an agent
+rebuilding the VBA project as a module (Python and a Svelte panel); and whether there are
+frameworks for parsing VBA.
+
+**What does not change.** GridCraft does not run macros, and opening a file never runs
+anything. A workbook's VBA project is kept byte for byte and written back only into `.xlsm`
+and `.xltm` (upstream's behaviour). Nothing here writes to a project.
+
+**What the first slice built: the project can be read.**
+
+- **A reader** (`gridcraft_aniefork_dev::vba`): the project's modules, what kind each is (a
+  plain module, a class, the code behind the workbook or a sheet, a form), their source as
+  text in the project's code page, the libraries it refers to, and an outline of each
+  module: its procedures, which of them Excel would run by itself (event handlers,
+  `Auto_Open`), and which live in a library outside the workbook (`Declare`). The outline is
+  found by reading lines; it is not a parser of the language.
+- **Developer ▸ Macros** shows them: the modules on the left, the chosen one's source on the
+  right with its lines numbered, and what would not show by itself written out. Reading
+  only. (Upstream has a notice named "macros" that says a workbook's VBA is kept; this is
+  the window behind it, under another name.)
+- **`developer.macros`** reports the same, and with `{module}` that module's source.
+- **Two reading tools on the Development server**: `list_macros` and `read_macro` (twenty
+  tools). They read the project of the workbook that is open, and hand its text over inside
+  the fence: it was written by whoever made the workbook, and is data. **"Read only" now
+  reaches the open workbook's macros**, and the level's own words say so. A macro's source
+  can hold what its author put there (a password, a server's address): that is what an agent
+  at that level can now read.
+
+**Why not the `ovba` crate, which the owner named ("or equivalent").** It reads a project
+well, and unpacks every stream into memory with no upper bound. The format's compression
+turns six bytes into four thousand, so a project built for it would make GridCraft ask for
+gigabytes and be ended by the system: a crash on opening a hostile file, which is the one
+thing upstream's rules put above features. The reader here is the equivalent: it stands on
+the same container crate (`cfb`), follows Microsoft's published \[MS-OVBA\] for the rest, and
+counts what it unpacks as it unpacks it. A project is at most 32 MB, a stream 8 MB, a
+module's source 2 MB (what is longer is cut, and says so), all sources together 16 MB. The
+container crate's own faults are caught. The format's three worked examples unpack as the
+document says; a project made by Excel 16 was read whole.
+
+**What Excel keeps, found by asking it** (2026-10-13; the installed Excel 16.0, run hidden
+with macros off, on three small workbooks made for the purpose and kept outside the
+repository):
+
+| What was added to an `.xlsm` | Opened and saved again | A macro edited in Excel, then saved |
+|---|---|---|
+| A stream at the top of `vbaProject.bin` | kept | **gone** |
+| A storage of its own in `vbaProject.bin`, with a stream in it | kept | **gone** |
+| A stream inside the project's `VBA` storage | kept | **gone** |
+| A custom XML part (`customXml/item1.xml`), added through Excel | kept | kept |
+| A part of the package that nothing declares | Excel **refused to open** the workbook | |
+
+So Excel copies a project through untouched until someone edits a macro, and then writes
+it anew from what it knows: anything else in it is lost at that moment, without a word.
+`vbaProject.bin` is not a place to keep anything. A custom XML part is: it is what the file
+format gives programs for their own data, and Excel kept it both times. A file dropped into
+the package undeclared breaks the workbook for Excel. (One machine, one version, small
+cases: enough to rule the first out, and to be checked again for the second when it is
+built on.)
+
+**Proposed, for the owner to decide.**
+
+- **No file format of GridCraft's own.** The workbook stays an `.xlsm` that Excel opens:
+  its VBA untouched for those who use Excel, and what GridCraft adds carried where Excel
+  keeps it. A format of its own would buy nothing the package can't hold, and cost every
+  user the ability to hand the file to someone with Excel.
+- **A module travels in a custom XML part, when it travels at all.** That is the open
+  question of "modules and workbooks" above, now with a place found for it. What must hold
+  whatever the answer: a module that arrives in a workbook arrives untrusted, shown for
+  what it is, and opening the workbook runs nothing.
+- **Phases.**
+
+| Phase | What | Stands |
+|---|---|---|
+| V0 | Read the project: the viewer, the command, the agent's two tools | **Built**, 2026-10-13 |
+| V1 | An agent rebuilds what the macros do as a module (Python scripts, a panel), through the requests and plans that exist: it reads the VBA and the workbook, proposes a plan, the person reads every file and trusts it. With it, a note the module keeps of which procedure became which script | Next. Needs nothing new in GridCraft but the note's shape; it needs trying with a real agent and a real workbook |
+| V2 | What Excel ran by itself (`Workbook_Open`, `Worksheet_Change`) answered by the module's events, for a module the person trusts, with a visible switch | Needs the events of phase 2a taken further ("a workbook was opened by this module's workbook"), and a decision on what may run without a click |
+| V3 | The module carried in the workbook (a custom XML part), so that the workbook and what replaces its macros are one file | Needs the decision above, and Excel asked again at more length |
+| later | Help with the language itself: a real parser, for mechanical translation of the easy cases | Only if V1 shows the need |
+
+- **Parsers of VBA.** None in Rust was found. There are grammars for other tools:
+  an ANTLR `vba.g4` (the one in SSlinky's VBA-LanguageServer; a Python wrapper,
+  `antlr4-vba-parser`, calls itself a proof of concept), a tree-sitter grammar
+  (`arrmee-wt/tree-sitter-vba`), and Rubberduck's, the fullest, which is under a licence
+  GridCraft can't take code from. Their licences were not checked one by one. For V1 none is
+  needed: an agent reads source as text, and what helps it is what the outline already
+  gives (what there is, what runs by itself, what reaches outside). A parser earns its place
+  when GridCraft itself has to translate, which is "later" in the table.
+
+**Open.**
+
+- The outline misses what a line-reader misses: a procedure written on one line, or split
+  by conditional compilation.
+- A form's layout (its controls) is not read: only its code. Nor are a project's password
+  or its signature looked at.
+- A project protected with a password still has its source in the file, and it is shown:
+  that protection is Excel's editor's, not the file's.
+- The viewer is not in the Development window's list of tools yet (the ribbon has it).
+- Only the workbook that is open is read; an agent is told of another when it is opened.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

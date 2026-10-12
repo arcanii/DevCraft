@@ -17,3 +17,7 @@ toml = "1"
 # serves nothing, and so needs none.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom = "0.3"
+# Looking inside a workbook's VBA project (`vba.rs`): the container it is kept in, and the code
+# pages its text is stored in.
+cfb = "0.15"
+encoding_rs = "0.8"

@@ -37,6 +37,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
+| **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
 | **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted module's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a module without `network` is kept to its own address there. Developer ▸ Development creates a showcase module whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
@@ -394,6 +395,22 @@ asked for it as a new window in Svelte, and whether in Electron (2026-10-12).
   and by the link at the foot of the page.
 - `GRIDCRAFT_DEVELOPMENT=1` opens it as GridCraft starts.
 
+**Macros (VBA) can be read.** The owner asked for a viewer as the next slice, towards
+rebuilding what a workbook's macros do as a module (2026-10-12).
+
+- **Developer ▸ Macros** lists the modules of the VBA project the workbook carries and shows
+  each one's source: what kind it is, its procedures, which of them Excel would run by
+  itself, and which reach a library outside the workbook.
+- **An agent can read them** (`list_macros`, `read_macro`), from "Read only" up: as data,
+  inside the fence. That is what the first phase of rebuilding needs.
+- **GridCraft still runs no macro**, and keeps the project byte for byte.
+- **Excel was asked what it keeps** (ADR-0001 has the table): anything added to
+  `vbaProject.bin` is lost the moment a macro is edited in Excel; a custom XML part is kept.
+  So nothing will be written into a project, and a module that is to travel with a workbook
+  has a place that Excel keeps.
+- **Proposed, not decided:** no file format of GridCraft's own; the phases V1 to V3 in
+  ADR-0001.
+
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
 per-module Python environments, and the rest of **2d**: macOS and Linux.
 
@@ -436,6 +453,10 @@ own.
   journal and recorded scripts are not on it.
 - The Development window keeps the height of its tallest card until it is closed (GridCraft's
   own; the page scrolls).
+- **Macros are read, not understood.** The outline is found line by line; a form's layout is
+  not read; a project's password hides nothing from this (the source is in the file). "Read
+  only" now lets an agent read the open workbook's macros, with whatever their author left
+  in them.
 - **The Development window as a page is Windows only**, and a second thing to keep alike:
   what the two windows say is shared, how they are laid out is not. Its place and size are
   not remembered. To change the page: `cargo test -p gridcraft -- --ignored
@@ -487,7 +508,7 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
-| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
+| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
 
@@ -551,6 +572,17 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-13 (macros, to read):** The owner asked for a VBA viewer next. A reader for the
+  project a workbook carries (`vba.rs`: the container through the `cfb` crate, the rest from
+  Microsoft's published format, every length bounded and counted as it is unpacked, which
+  is why it is not the `ovba` crate); Developer ▸ Macros; `developer.macros`; and
+  `list_macros` and `read_macro` on the Development server (twenty tools), at "Read only"
+  and up. No hook in an upstream file. Excel 16.0 was asked, black box, what it keeps of
+  things added to an `.xlsm`: streams in `vbaProject.bin` until a macro is edited, a custom
+  XML part always, and it refuses a workbook with an undeclared part. Checked by 10 more
+  tests (5 in the reader, 1 in the server, 4 in the UI), against the format's three worked
+  examples, against a project Excel made, and on screen in the real window with that
+  workbook.
 - **2026-10-12 (Development subsystem, phase 2d, second slice: the Development window as a
   Svelte page):** The owner asked for the window as a new window in Svelte, and whether in
   Electron. Built in the system's web view instead (ADR-0001 says why): a second window with

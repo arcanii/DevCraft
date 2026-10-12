@@ -2204,6 +2204,39 @@ mod tests {
     }
 
     #[test]
+    fn at_read_only_an_agent_reads_the_macros_of_the_workbook_that_is_open() {
+        use crate::aniefork::macros::tests::{TOTALS, carry, sample};
+
+        let _s = Sandbox::new("agents-macros");
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        open(&mut h);
+        choose(&mut h, Level::Read);
+        h.state_mut().dialog = None;
+        h.run_steps(2);
+        assert!(agent("list_macros", json!({})).1.contains("carries no macros"));
+        // The workbook that is open carries a project: the server is told, and an agent reads it.
+        let project = sample();
+        carry(h.state_mut(), project.clone());
+        h.run_steps(3);
+        let (failed, text) = agent("list_macros", json!({}));
+        assert!(!failed && text.contains("GridCraft does not run it") && text.contains("\"name\": \"Totals\""), "{text}");
+        let (failed, text) = agent("read_macro", json!({"module": "Totals"}));
+        assert!(!failed && text.contains("Lines 1 to 8 of 8"), "{text}");
+        let (_, rest) = text.split_once("<untrusted-data-").unwrap();
+        assert_eq!(rest.split_once(">\n").unwrap().1.rsplit_once("\n</untrusted-data-").unwrap().0, TOTALS.lines().collect::<Vec<_>>().join("\n"));
+        // Reading asks the person nothing, and changes nothing.
+        assert_eq!(asked.questions().len(), 1, "only the level was asked about");
+        assert!(agents::snapshot().waiting.is_empty() && h.state().notice.is_none());
+        assert_eq!(h.state().session.active().unwrap().wb.vba_project.as_deref(), Some(project.as_slice()));
+        // The workbook no longer carries one: nor is it told of any more.
+        let doc = h.state_mut().session.active_mut().unwrap();
+        std::sync::Arc::make_mut(&mut doc.wb).vba_project = None;
+        h.run_steps(3);
+        assert!(agent("list_macros", json!({})).1.contains("carries no macros"));
+    }
+
+    #[test]
     fn the_window_gathers_the_tools() {
         let _s = Sandbox::new("agents-tools");
         create("Clean Data").unwrap();

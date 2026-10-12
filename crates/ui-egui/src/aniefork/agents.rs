@@ -49,7 +49,7 @@ use gridcraft_aniefork_dev::trust::Status;
 use gridcraft_aniefork_dev::{TrustStore, module, settings, starter};
 use serde_json::{Value as Json, json};
 
-use super::{modules, panels};
+use super::{macros, modules, panels};
 use crate::{Notice, NoticeKind, SheetApp};
 
 /// What the bar under the ribbon says while a request waits for the person.
@@ -88,6 +88,9 @@ struct Running {
     /// Why nothing is served although something should be.
     problem: String,
     jobs: Vec<Job>,
+    /// Which VBA project the server was last told of (`None` inside: a workbook without one).
+    /// `None`: it has not been told yet.
+    macros: Option<Option<macros::Key>>,
 }
 
 thread_local! {
@@ -165,6 +168,7 @@ fn start(ctx: &egui::Context, at: &Places, now: &mut Running) {
     // requests from one again.
     now.server = None;
     now.jobs.clear();
+    now.macros = None;
     now.problem.clear();
     if now.level == Level::Off {
         return;
@@ -195,6 +199,15 @@ pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     }
     let Some(server) = now.server.clone() else { return };
     let mut changed = false;
+    // The macros of the workbook that is open, for an agent to read: told to the server when
+    // another workbook is open than the one it was last told of.
+    let open = macros::key(app);
+    if now.macros != Some(open) {
+        let read = macros::read(app).and_then(|read| read.project.as_ref().as_ref().ok().map(|project| (read.title.clone(), project.clone())));
+        server.set_macros(read.map(|(title, project)| (title, std::sync::Arc::new(project))));
+        now.macros = Some(open);
+        changed = true;
+    }
     // Scripts that finished since the last frame.
     let before = now.jobs.len();
     now.jobs.retain(|job| match job.slot.lock().unwrap_or_else(PoisonError::into_inner).take() {
