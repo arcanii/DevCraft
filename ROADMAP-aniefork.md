@@ -447,6 +447,29 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
   project has a part of its own; a new one is made in the kit's part.
 - Both windows show it: GridCraft's own, and the page, redrawn around the list.
 
+**Planned, not built: a second kit, Doom, and source control** (the owner's request and
+decisions, 2026-10-13; ADR-0001 has the plan).
+
+- **A C Development Kit**, beside the Anie kit, the easiest way first: C built by a compiler
+  the person names (as the Python is), and run as a program of its own that calls the
+  spreadsheet. Like Python it can't be limited. A WebAssembly kit, whose projects could be
+  held to what they were granted, can come later.
+- **Doom as its demonstration**, in a repository of its own ("GridCraft Doom"), never in
+  this one: its code is under the GPL. It runs in its own window at first, **with its live
+  variables updating in the cells** (health, ammunition, where the player stands) and
+  formulas and a chart over them. Freedoom's game data by default.
+- **Files a project changes itself** (its data, apart from the code that was trusted): asked
+  for by the owner, to be designed.
+- **Live values**: first by the project writing cells a few times a second, which works
+  today and makes every update a step of undo; then as values a project publishes and a
+  function shows (Excel's `RTD`), which needs a hook in the engine.
+- **Source Control at the top of the Development window**, after the kit: git by a library
+  inside GridCraft (never by running `git` in a folder that came from elsewhere). Until
+  then `doomgeneric` is cloned by hand, so a project's `.git` is left out of its
+  fingerprint from the kit's first slice. Push and signing in to GitHub are later.
+- **Known so far**: this machine has no C compiler on its path; whether zig builds
+  `doomgeneric` as it stands is the first thing to try; nothing was built.
+
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
 per-project Python environments, and the rest of **2d**: macOS and Linux.
 
@@ -497,7 +520,8 @@ own.
   procedure, and GridCraft can't run the macro to compare what the two give. The rebuild
   was tried once, on one small procedure.
 - **Kits: one, and no way to load another.** How one would be loaded is not decided
-  (ADR-0001 has what is known). The kit can't be turned off as a whole.
+  (ADR-0001 has what is known). The kit can't be turned off as a whole. A second kit, for C,
+  is planned as one compiled in: it shows two kits, and still loads none.
 - **What was made while a project was called a module is read where it is**: a
   `module.toml`, a `modules` folder, `trusted-modules.json`. Nothing is renamed for the
   person. An agent set up with the server's older tool names (`create_module` and the like)
@@ -624,6 +648,20 @@ included.
 
 Newest first.
 
+- **2026-10-13 (planned: a C kit, Doom, source control):** The owner asked for a second
+  Development kit (C), Doom ported in as a project of it, and git with GitHub at the top of
+  the Development window. Recorded as proposed in ADR-0001, with phases and seven
+  decisions for the owner. Looked up for it: `doomgeneric` is GPL-2.0 and Freedoom's data
+  3-clause BSD, so Doom can only be a repository of its own; `gitoxide` does not push yet;
+  this machine has no C compiler that makes WebAssembly. The owner added what Doom is to
+  show: its live variables updating in the spreadsheet; the proposal has two ways to do
+  it (plain writes, and a function like Excel's `RTD`, which upstream does not have). No
+  code was written. Decided the same day: Doom is not put in this repository but in one of
+  its own, "GridCraft Doom", as a demonstration of the kit; Freedoom's data by default,
+  and a project being able to change files of its own is to be a feature; the easiest way
+  first, so C runs as a program of its own and a WebAssembly kit can come later; the
+  compiler is the person's, named as the Python is; the kit before source control, with
+  `doomgeneric` cloned by hand until then; push and signing in to GitHub later.
 - **2026-10-13 (merge of upstream 0.6.1):** The owner asked for the sync. Upstream `fc45b7f`,
   6 commits: printing through its shared `craft-print` library, with printers found and jobs
   sent from the app; the print commands listed on the control channel; delimited files that

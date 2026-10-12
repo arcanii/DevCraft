@@ -976,9 +976,196 @@ Development                    the whole, at a glance
   same to it. That is enough to say what a project is for; it is not enough for anything
   that would run by itself (phase V2), which needs the decision of "modules and workbooks".
 
+### A second kit (C), Doom as its showcase, and source control (planned)
+
+**What the owner asked (2026-10-13).** "For our roadmap, let's show another Development kit.
+Let's make a C dev kit and port Doom in as a project. We'll also need to embed git (github)
+functionality inside the development system (as a top level functionality)." And, of what
+Doom is to show: "we can demonstrate live variables updating in the spreadsheet."
+
+**What the owner decided (2026-10-13)**, on the points put to them:
+
+1. **Doom is not in this repository.** "We wouldn't put Doom in the repo - this is just a
+   demonstration of a dev kit", and: "we just make a GridCraft Doom repo to demonstrate the
+   GridCraft development kit system."
+2. **Freedoom's game data by default**, "but we should allow for a project to change project
+   files as a feature."
+3. **The easiest way first.** "We should take the easiest approach first. We can always make
+   a WebAssembly Dev kit later." So C runs first as a program of its own, as Python does.
+4. **The compiler is the person's, and named.** "As this is a development kit, we can
+   specify what the compiler is (and use external like we are doing for Python)."
+5. **Push later.**
+6. **Signing in to GitHub: on the backlog**, with a recommendation asked for (below).
+7. **The kit before source control.** "We can manually clone doomgeneric until the dev kit
+   is self hosting."
+
+Not answered, and taken the easiest way until told otherwise: how live values reach the
+cells (by plain writes first; see below).
+
+**Nothing of this is built.** The window it leads to:
+
+```text
+Development
+  MCP Server
+  Source Control            later: git, and GitHub
+  Development Kits
+    Anie Development Kit    Python · Svelte
+    C Development Kit       C, built by the compiler the person names
+      Doom                  a project, cloned from a repository of its own
+```
+
+**1. What a kit is, once there are two.** Today the kits are a list of one, and the rest of
+the crate *is* the Anie kit. A second kit makes the line plain. What every kit shares: a
+project is a folder with a `project.toml`, a fingerprint, the person's trust, what it asks
+to be allowed, the Development server's requests and plans, the console. What a kit brings:
+what a project's sources are, how they are built, how they are run, its starter, and what an
+agent is told about writing for it. `project.toml` gains `kit = "c"`; without the line a
+project is the Anie kit's, so every project there is stays as it is. The C kit is compiled
+into GridCraft like the first. That shows a second kit; it does not settle how a kit that is
+not compiled in gets loaded, which stays open.
+
+**2. The C kit: C built by the person's compiler, and run as a program.**
+
+- **The compiler is external and named**, as the Python is: found, or named in the window.
+  First a compiler that takes the usual command line (`zig cc`, clang, gcc); Microsoft's
+  after. **This machine has none on its path** (looked, 2026-10-13). zig is the candidate:
+  one download without an installer, the same on every system, and it brings the C library
+  and the Windows headers with it. `doomgeneric` is plain C with a port for Windows and a
+  makefile for it, which is the kind of thing `zig cc` builds; **whether it builds as it
+  stands has not been tried**, and is the first thing to try. GridCraft ships no compiler.
+- **A build is not harmless, so it is a request like running a script.** It runs the
+  person's compiler over files an agent may have written, and `#include` of a file outside
+  the project puts that file's lines into the compiler's messages, which the agent would
+  then read. So: a build asks the person at "Ask" and "Build"; what the compiler says
+  reaches an agent fenced; and the recipe is a list in `project.toml` (the sources, include
+  folders inside the project, a few named options), never a makefile or a command line of
+  the project's own.
+- **What is built is kept outside the project**, beside the settings, under the fingerprint
+  of the sources it was built from. A build then never changes what the person trusted, and
+  a program built from other sources than the ones trusted now can't be the one that runs.
+- **It runs as a program of its own**, the way a script does: started by GridCraft after
+  the trust check, in a process of its own, speaking to GridCraft over its pipes. It calls
+  the spreadsheet through a small C file the kit gives a project (as the runner gives a
+  Python script its `spreadsheet`), and every call is checked against what the project was
+  granted at that moment. Unlike a script it may run until it is closed: the person starts
+  it and stops it, and for an agent starting it is a request.
+- **It can't be limited**, like Python: a program can do anything a program the person runs
+  can do. So it is a thing a project asks to be allowed, worded as `python` is, and the
+  window says so before trust is given.
+- **Later, a WebAssembly kit** (the owner: "we can always make a WebAssembly Dev kit
+  later"). Its reason stands: a WebAssembly module can do only what whoever runs it hands
+  it, so its projects would be the first that are *held* to what they were granted. It
+  would run in a project's panel, or inside GridCraft by an interpreter written in Rust.
+
+**3. Doom.**
+
+- **A repository of its own, "GridCraft Doom"**, made to demonstrate the kit: `doomgeneric`
+  (GPL-2.0; a port writes five functions: start, draw a frame, sleep, the clock, a key),
+  its `project.toml`, and the little that reports the game's variables. Under the GPL, as
+  Doom's code requires. GridCraft's repository holds the kit and nothing of Doom: no GPL
+  code is copied in (upstream's rule, and the fork's), and GridCraft is to that project
+  what an editor is to a GPL program opened in it. Until GridCraft has source control,
+  `doomgeneric` is cloned by hand into the projects folder. Making the repository on GitHub
+  is for when the demonstration works, on the owner's word.
+- **Its window, at first, is its own**: the one `doomgeneric`'s port for Windows opens.
+  Docked beside the sheet comes with the WebAssembly kit, or with frames carried over to
+  GridCraft; not in the first showing.
+- **Its live variables update in the cells** as it is played (the owner's addition):
+  health, armour, ammunition, where the player stands, what was killed, the level's clock;
+  and formulas and a chart over them that move with the game. It makes the showcase about
+  the spreadsheet, not only beside it. Doom asks for `write` and to run its program.
+- **Its game data is Freedoom's by default** (3-clause BSD, which may be passed on with its
+  licence text; the shareware WAD may not be, and the rule on assets keeps it out of here
+  in any case), kept with the Doom project, not in GridCraft's repository.
+
+**Files a project changes itself** (decision 2: "we should allow for a project to change
+project files as a feature"). As things are, any change to a project's files ends its
+trust: that is the point of the fingerprint. Read here as: a project may have files that
+are its *data*, which it or the person may change without that (another WAD, a saved game,
+what it fetched), apart from the files that are its code. A sketch, to be designed when it
+is built, with what must hold whatever the design:
+
+- The data has a place of its own that the fingerprint leaves out, and the window says
+  which files those are.
+- Nothing in it is ever served to a panel as a page or a script, or taken as a source to
+  build: otherwise what nobody reviewed would run with what the project was granted.
+- A program that can't be limited reads its data as it likes, and data can be made to
+  attack the program that reads it (Doom's own reading of a WAD was never hardened). So an
+  agent writing into a project's data is a request that asks, like running it; it is not
+  something "Build" does unasked.
+- If this reading is not what was meant (for one: that a project should be able to rewrite
+  its own *code*), it needs saying before it is built: that would be a different thing,
+  and it would cut across trust.
+
+**Live variables: two ways for a running project to put values in cells.**
+
+- **By writing them, with what exists.** The project calls the granted `write` a few times
+  a second, all the values in one call, into a sheet of its own. It needs nothing new. What
+  it costs: **every call is an edit**. Each is a step of undo (a minute of play is hundreds
+  of them, and Ctrl+Z walks back through the game), and the workbook counts as changed.
+  Good enough to show it; not how it should stay.
+- **By publishing them, with cells that show them.** The project hands GridCraft named
+  values ("health", "ammo"); a cell shows one through a function, and is worked out again
+  when the value changes. Nothing is edited: no undo steps, nothing saved but the formula,
+  and the person decides where a value appears. Excel has a function for exactly this,
+  `RTD` (real-time data). Upstream lists `RTD` as one it does not take, because Excel's
+  reaches a program through COM; here the same name could mean "a value a trusted project
+  publishes". It needs the engine to take values from outside a workbook, which is a hook
+  in upstream's formula code and a larger piece of work; it would serve both kits (a
+  Python project's readings or a long job's progress as much as Doom's health).
+- **The other direction** (a cell that changes the game: type a number into "health") needs
+  `read` and the event that says the workbook changed. After the first way works.
+
+**4. Source control: git, and GitHub, at the top. After the kit.**
+
+- **In slices.** Local first: which projects are repositories, the branch, what changed
+  (in the view a request's card already uses for changes), a commit. Then clone from an
+  address (the project arrives untrusted, like any that arrives), fetch and pull. Push and
+  signing in are later (decided). Then for agents: reading tools (status, changes, log), a
+  commit as a request, and a push that always asks, since it leaves the computer.
+- **By a library inside GridCraft, not by running `git`.** Run in a folder that came from
+  elsewhere, `git` runs what that folder's own settings and hooks name; that is a known
+  way for a copied folder to run code. `gitoxide` is written in Rust and clones, fetches,
+  compares and commits; its own status page lists push among what is still to be built,
+  which fits push being later.
+- **A project's `.git` is not part of the project**, and this is needed from the first
+  slice of the kit, since `doomgeneric` is cloned by hand: `.git` changes with almost
+  every git command and holds many files, so counted in the fingerprint it would end trust
+  again and again. It is left out of the fingerprint, never served to a panel, never a
+  source to build, and out of reach of the project-file tools. GridCraft's own git, when
+  there is one, never runs anything a repository names: the two rules stand together.
+- **Signing in to GitHub (backlog). Recommended**: the credential manager that git already
+  uses on the computer (on Windows, the one that comes with Git). The person signs in the
+  way they already do, GridCraft keeps no secret of its own and registers nothing with
+  GitHub, and the token never passes through a window, an agent or a project. GitHub's
+  sign-in for devices would be the way without git installed; it needs an app registered
+  with GitHub.
+
+**Phases.**
+
+| Phase | What | Waits for |
+|---|---|---|
+| K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | |
+| K2 | The C kit builds: the compiler found or named, the recipe, a build as a request, what is built kept outside the project | zig (or another) on the machine; `doomgeneric` tried with it |
+| K3 | The C kit runs a program: started and stopped by the person, the spreadsheet called from C, held to nothing but its grants' checks | K2 |
+| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built, run in its own window; its live variables written into a sheet a few times a second; then the "GridCraft Doom" repository | K3 |
+| P1 | Files a project changes itself | D1 shows what it needs |
+| G1 | Source control, local: repositories among the projects, changes, a commit | |
+| G2 | Clone from an address; fetch and pull | G1 |
+| L1 | Live values that are not edits: a project publishes them, a function shows them (`RTD`) | A hook in upstream's formula code |
+| later | Push and signing in to GitHub; a WebAssembly kit; Doom docked beside the sheet | |
+
+**Still the owner's to say.**
+
+- Whether "a project changes project files" is read rightly above.
+- Live variables by plain writes first (taken so, as the easiest), or the function first.
+- The go-ahead to put zig on a machine and try `doomgeneric` with it, and later to make the
+  "GridCraft Doom" repository on GitHub.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.
+- Signing in to GitHub, and push (with source control; the recommendation is recorded there).
 - (Letting agents use modules moved out of the backlog: it is phase 2e, whose own open
   points are listed with it.)
 - Modules and workbooks (the open point above).
