@@ -1,23 +1,23 @@
-//! Panels: a trusted module's page, opened in the user's browser, and the calls it makes.
+//! Panels: a trusted project's page, opened in the user's browser, and the calls it makes.
 //!
 //! The page is served by the bridge (`gridcraft_aniefork_dev::bridge`), which answers what it can
 //! itself (files, Python) and queues the calls that need the workbook. Those are carried out
 //! here, on the UI thread, once a frame ([`poll`]).
 //!
-//! A module is a program calling GridCraft, so it gets what any program does: every command of
+//! A project is a program calling GridCraft, so it gets what any program does: every command of
 //! the engine, by id, and commands never open dialogs for it. What it may run depends on what
 //! the user granted it:
 //!
 //! - a command that only reports needs `read`; any other needs `write`;
 //! - a command that reads or writes a file (the `file.` commands, and any command given a
-//!   `path`) needs `files`, and even then GridCraft's own settings folder, where the modules and
+//!   `path`) needs `files`, and even then GridCraft's own settings folder, where the projects and
 //!   the user's decisions are kept, is out of reach.
 //!
 //! A batch is several commands as **one undo step**: all of them, or, if one fails, none.
 //!
 //! Panels are also **told what happens** ([`tell`]): once a frame, what the window shows now is
 //! compared with what the panels were last told, and the difference is handed to the bridge as
-//! events. Whether a module's panel is given them is the bridge's to decide, by what the user
+//! events. Whether a project's panel is given them is the bridge's to decide, by what the user
 //! granted it. A call that is refused for want of an ability is noted in the Developer console.
 
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ use gridcraft_aniefork_dev::console::{self, Console};
 use gridcraft_engine::{CommandSpec, HistoryEntry};
 use serde_json::{Value as Json, json};
 
-use super::modules;
+use super::projects;
 use crate::SheetApp;
 
 /// The most calls carried out in one frame, so that a busy panel can't hold up the window.
@@ -73,39 +73,39 @@ fn the_bridge(ctx: &egui::Context) -> Bridge {
     made
 }
 
-/// Opens the panel of the module `id` in the user's browser. Refused unless the user trusts the
-/// module as it is on disk now.
+/// Opens the panel of the project `id` in the user's browser. Refused unless the user trusts the
+/// project as it is on disk now.
 pub fn open(app: &SheetApp, ctx: &egui::Context, id: &str) -> Result<String, String> {
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
     let Some(open_url) = &app.services.open_url else { return Err("This copy of GridCraft can't open a browser.".into()) };
     let address = the_bridge(ctx).serve(&at, id)?;
-    // The address holds the module's token. It goes to the browser, and is shown nowhere else.
+    // The address holds the project's token. It goes to the browser, and is shown nowhere else.
     open_url(&address);
     Ok("The panel is opening in your browser.".into())
 }
 
-/// Starts serving the panel of the module `id` and gives its address, for a web view of the
-/// window's own ([`super::dock`]). The address holds the module's token: it goes to the view,
-/// and is shown nowhere. Refused unless the user trusts the module as it is on disk now.
+/// Starts serving the panel of the project `id` and gives its address, for a web view of the
+/// window's own ([`super::dock`]). The address holds the project's token: it goes to the view,
+/// and is shown nowhere. Refused unless the user trusts the project as it is on disk now.
 pub(super) fn serve(ctx: &egui::Context, at: &bridge::Places, id: &str) -> Result<String, String> {
     the_bridge(ctx).serve(at, id)
 }
 
-/// What answers the calls a script of the module `id` makes to the spreadsheet while it runs,
-/// for a script started from this window rather than by a panel (Developer ▸ Modules ▸ Run).
+/// What answers the calls a script of the project `id` makes to the spreadsheet while it runs,
+/// for a script started from this window rather than by a panel (Developer ▸ Projects ▸ Run).
 /// The calls are carried out on the UI thread by [`poll`], like a panel's.
 pub fn script_calls(ctx: &egui::Context, at: &bridge::Places, id: &str) -> impl Fn(&Json) -> Result<Json, String> + Send + Sync + use<> {
     the_bridge(ctx).script_calls(at, id)
 }
 
-/// Stops serving the module `id` (its trust was taken back).
+/// Stops serving the project `id` (its trust was taken back).
 pub fn stop(ctx: &egui::Context, id: &str) {
     if let Some(bridge) = running(ctx) {
         bridge.stop(id);
     }
 }
 
-/// The modules whose panels are being served.
+/// The projects whose panels are being served.
 pub fn serving(ctx: &egui::Context) -> Vec<String> {
     running(ctx).map(|bridge| bridge.serving()).unwrap_or_default()
 }
@@ -197,20 +197,20 @@ fn carry_out(app: &mut SheetApp, call: &Call) -> Result<Json, String> {
             if !call.granted.contains(&Permission::Read) {
                 return Err(not_granted(call, Permission::Read, "the selection"));
             }
-            modules::selection_data(app)
+            projects::selection_data(app)
         }
     }
 }
 
 /// Why a call is refused for want of an ability. It is noted in the Developer console too, where
-/// the module's author will look for it.
+/// the project's author will look for it.
 fn not_granted(call: &Call, needed: Permission, what: &str) -> String {
     let why = format!("{} wasn't granted `{}`, which {what} needs.", call.name, needed.code());
-    Console::global().push(&call.module, "panel", console::Kind::Refused, &why);
+    Console::global().push(&call.project, "panel", console::Kind::Refused, &why);
     why
 }
 
-/// Whether the module may make this call; if so, what the call needs.
+/// Whether the project may make this call; if so, what the call needs.
 fn allowed(call: &Call, command: &str, params: &Json) -> Result<Permission, String> {
     let Some(spec) = gridcraft_engine::find_command(command) else { return Err(format!("{command} is not a command.")) };
     let needed = bridge::needs(spec.id, kind(spec), params);
@@ -237,16 +237,16 @@ fn resolved(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// GridCraft's own settings folder holds the modules and the user's decisions about them. No
-/// module reads or writes there, whatever it was granted.
+/// GridCraft's own settings folder holds the projects and the user's decisions about them. No
+/// project reads or writes there, whatever it was granted.
 fn outside_settings(params: &Json) -> Result<(), String> {
     let Some(path) = params.get("path").and_then(Json::as_str) else { return Ok(()) };
-    let Some(settings) = modules::places().and_then(|at| at.trust.parent().map(Path::to_path_buf)) else { return Ok(()) };
+    let Some(settings) = projects::places().and_then(|at| at.trust.parent().map(Path::to_path_buf)) else { return Ok(()) };
     // A settings folder that isn't there holds nothing to keep from anyone.
     let Ok(settings) = std::fs::canonicalize(settings) else { return Ok(()) };
     match resolved(Path::new(path)) {
         Some(target) if !target.starts_with(&settings) => Ok(()),
-        _ => Err("Modules can't read or write GridCraft's own settings folder.".into()),
+        _ => Err("Projects can't read or write GridCraft's own settings folder.".into()),
     }
 }
 
@@ -328,31 +328,31 @@ mod tests {
 
     use egui_kittest::kittest::Queryable as _;
     use gridcraft_aniefork_dev::python::PythonHost;
-    use gridcraft_aniefork_dev::{TrustStore, module};
+    use gridcraft_aniefork_dev::{TrustStore, project};
     use serde_json::json;
 
     use super::*;
-    use crate::aniefork::modules::tests::{Sandbox, app_with, click, drive, harness, yes};
+    use crate::aniefork::projects::tests::{Sandbox, app_with, click, drive, harness, yes};
 
     type Harness = egui_kittest::Harness<'static, SheetApp>;
 
-    /// Installs and trusts a module that asks for `permissions`, the way a user who said yes
+    /// Installs and trusts a project that asks for `permissions`, the way a user who said yes
     /// would have. Its panel is one page; its script hands back what it was given.
     fn install(s: &Sandbox, id: &str, permissions: &[&str]) {
-        let dir = s.0.join("modules").join(id);
+        let dir = s.0.join("projects").join(id);
         std::fs::create_dir_all(dir.join("panel")).unwrap();
         std::fs::create_dir_all(dir.join("python")).unwrap();
         let asked: Vec<String> = permissions.iter().map(|p| format!("\"{p}\"")).collect();
         let manifest = format!(
-            "id = \"{id}\"\nname = \"Module {id}\"\nversion = \"1.0\"\npermissions = [{}]\n\n[panel]\nentry = \"panel/index.html\"\n\n[python]\nscripts = \"python\"\n",
+            "id = \"{id}\"\nname = \"Project {id}\"\nversion = \"1.0\"\npermissions = [{}]\n\n[panel]\nentry = \"panel/index.html\"\n\n[python]\nscripts = \"python\"\n",
             asked.join(", ")
         );
-        std::fs::write(dir.join("module.toml"), manifest).unwrap();
+        std::fs::write(dir.join("project.toml"), manifest).unwrap();
         std::fs::write(dir.join("panel/index.html"), "<script src=\"spreadsheet.js\"></script>").unwrap();
         std::fs::write(dir.join("python/echo.py"), "def main(data):\n    return data\n").unwrap();
-        let found = module::load(&dir);
+        let found = project::load(&dir);
         assert!(found.is_sound(), "{:?}", found.problem);
-        TrustStore::load(&s.0.join("trusted-modules.json")).trust(&found, false).unwrap();
+        TrustStore::load(&s.0.join("trusted-projects.json")).trust(&found, false).unwrap();
     }
 
     /// An app whose "browser" is a list of the addresses it was asked to open.
@@ -427,18 +427,18 @@ mod tests {
         (doc.undo.len(), doc.redo.len())
     }
 
-    /// Adds a script to an installed module, and trusts the module again as a user who looked
+    /// Adds a script to an installed project, and trusts the project again as a user who looked
     /// at the change and said yes would have.
     fn add_script(s: &Sandbox, id: &str, name: &str, source: &str) {
-        let dir = s.0.join("modules").join(id);
+        let dir = s.0.join("projects").join(id);
         std::fs::write(dir.join("python").join(name), source).unwrap();
-        TrustStore::load(&s.0.join("trusted-modules.json")).trust(&module::load(&dir), false).unwrap();
+        TrustStore::load(&s.0.join("trusted-projects.json")).trust(&project::load(&dir), false).unwrap();
     }
 
-    /// In the real window: a module's script changes the sheet itself, through the `spreadsheet`
-    /// it imports, and gets only what its module was granted.
+    /// In the real window: a project's script changes the sheet itself, through the `spreadsheet`
+    /// it imports, and gets only what its project was granted.
     #[test]
-    fn a_script_changes_the_workbook_itself_with_what_its_module_was_granted() {
+    fn a_script_changes_the_workbook_itself_with_what_its_project_was_granted() {
         use gridcraft_aniefork_dev::console::{Console, Kind};
         let s = Sandbox::new("script-writes");
         if let Err(why) = PythonHost::global().interpreter("") {
@@ -472,7 +472,7 @@ mod tests {
         h.state_mut().session.run("edit.undo", json!({})).unwrap();
         assert_eq!(cell(&mut h, "B2"), Json::Null);
 
-        // A module that was not granted `write`: its script is told so, and nothing changes.
+        // A project that was not granted `write`: its script is told so, and nothing changes.
         let reader = open_panel(&mut h, &opened, "script-reader");
         let refused = call(&mut h, &reader, json!({"call": "runPython", "script": "write.py", "data": "nope", "timeout": 60}));
         assert_eq!(refused["ok"], false, "{refused}");
@@ -482,11 +482,11 @@ mod tests {
         assert_eq!(history(&h).0, undo);
         // Both are in the Developer console: the refusal, and the script that failed for it.
         let entries = Console::global().entries();
-        assert!(entries.iter().any(|e| e.module == "script-reader" && e.kind == Kind::Refused && e.text.contains("range.setValues")));
-        assert!(entries.iter().any(|e| e.module == "script-reader" && e.source == "write.py" && e.kind == Kind::Error));
-        let modules = s.0.join("modules");
-        PythonHost::global().stop(&modules, "script-writer");
-        PythonHost::global().stop(&modules, "script-reader");
+        assert!(entries.iter().any(|e| e.project == "script-reader" && e.kind == Kind::Refused && e.text.contains("range.setValues")));
+        assert!(entries.iter().any(|e| e.project == "script-reader" && e.source == "write.py" && e.kind == Kind::Error));
+        let projects = s.0.join("projects");
+        PythonHost::global().stop(&projects, "script-writer");
+        PythonHost::global().stop(&projects, "script-reader");
     }
 
     /// What the panel is told after the place `next`, which is moved on. The names, in order.
@@ -570,7 +570,7 @@ mod tests {
         assert_eq!(names(&told(&mut h, &address, &mut next)), ["workbookChanged"]);
     }
 
-    /// A module that wasn't granted `read` is told nothing, and what it was refused is noted in
+    /// A project that wasn't granted `read` is told nothing, and what it was refused is noted in
     /// the Developer console.
     #[test]
     fn a_panel_that_may_not_read_is_told_nothing_and_refusals_are_noted() {
@@ -589,14 +589,14 @@ mod tests {
         let refused = call(&mut h, &blind, json!({"call": "events", "after": 0}));
         assert!(refused["ok"] == false && refused["error"].as_str().unwrap().contains("`read`"), "{refused}");
         assert!(refused.get("events").is_none());
-        // The module beside it, which may read, is told.
+        // The project beside it, which may read, is told.
         let told = call(&mut h, &reader, json!({"call": "events", "after": 0}));
         assert_eq!(told["events"][0]["range"], json!("B2"), "{told}");
-        // A command it wasn't granted is refused, and the console says so under the module's id.
+        // A command it wasn't granted is refused, and the console says so under the project's id.
         let write = run(&mut h, &reader, "cell.set", json!({"cell": "A1", "input": "x"}));
         assert!(write["ok"] == false && write["error"].as_str().unwrap().contains("`write`"), "{write}");
-        let noted = |module: &str, text: &str| {
-            Console::global().entries().iter().any(|e| e.module == module && e.kind == Kind::Refused && e.text.contains(text))
+        let noted = |project: &str, text: &str| {
+            Console::global().entries().iter().any(|e| e.project == project && e.kind == Kind::Refused && e.text.contains(text))
         };
         assert!(noted("reader-panel", "wasn't granted `write`, which cell.set needs"));
         assert!(noted("blind-panel", "which events need"));
@@ -604,21 +604,21 @@ mod tests {
         let logged = call(&mut h, &reader, json!({"call": "log", "text": "the reader panel says hello"}));
         assert_eq!(logged["ok"], true);
         assert!(
-            Console::global().entries().iter().any(|e| e.module == "reader-panel" && e.kind == Kind::Log && e.text == "the reader panel says hello")
+            Console::global().entries().iter().any(|e| e.project == "reader-panel" && e.kind == Kind::Log && e.text == "the reader panel says hello")
         );
     }
 
     /// The whole path in the real window: Open Panel, and then the panel's page, as a browser
     /// would load it, reads the selection and changes the workbook.
     #[test]
-    fn a_trusted_modules_panel_opens_in_the_browser_and_reaches_the_workbook() {
+    fn a_trusted_projects_panel_opens_in_the_browser_and_reaches_the_workbook() {
         let s = Sandbox::new("panel");
-        crate::aniefork::modules::create("Clean Data").unwrap();
+        crate::aniefork::projects::create("Clean Data").unwrap();
         let (mut a, opened) = app();
         a.session.run("range.setValues", json!({"range": "A1", "values": [["north", 12], ["south", 7.5]]})).unwrap();
         a.session.run("selection.set", json!({"range": "A1:B2"})).unwrap();
-        let fingerprint = crate::aniefork::modules::list()["modules"][0]["fingerprint"].as_str().unwrap().to_string();
-        crate::aniefork::modules::trust(&a, "clean-data", &fingerprint, false).unwrap();
+        let fingerprint = crate::aniefork::projects::list()["projects"][0]["fingerprint"].as_str().unwrap().to_string();
+        crate::aniefork::projects::trust(&a, "clean-data", &fingerprint, false).unwrap();
         let mut h = harness(a);
         click(&mut h, "Open Panel");
         let address = opened.borrow().last().cloned().unwrap();
@@ -651,14 +651,14 @@ mod tests {
         assert_eq!(read["result"]["values"], json!([["total", "=SUM(B1:B2)"]]));
 
         // What isn't a command of the engine is not a call: nothing of the window's own.
-        for id in ["no.such.command", "view.theme", "ui.dialog", "ui.backstage", "developer.modules", "developer.tab", "app.userName", ""] {
+        for id in ["no.such.command", "view.theme", "ui.dialog", "ui.backstage", "developer.projects", "developer.tab", "app.userName", ""] {
             let answer = run(&mut h, &address, id, json!({"name": "about", "mode": "dark"}));
             assert_eq!(answer["ok"], json!(false), "{id}: {answer}");
         }
         assert!(!h.state().ui.dark);
-        // A command that would have opened a dialog for a user opens none for a module.
+        // A command that would have opened a dialog for a user opens none for a project.
         let asked = run(&mut h, &address, "home.formatCells", json!({}));
-        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("modules"), "{asked}");
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("projects"), "{asked}");
         assert!(h.state().message.is_none());
         // Nor does the command that opens the Options page for a user.
         let asked = run(&mut h, &address, "file.options", json!({}));
@@ -667,10 +667,10 @@ mod tests {
         let refused = run(&mut h, &address, "file.open", json!({}));
         assert!(refused["error"].as_str().is_some_and(|why| why.contains("wasn't granted `files`")), "{refused}");
 
-        // The address holds the module's token: nothing the control channel can read shows it.
+        // The address holds the project's token: nothing the control channel can read shows it.
         let token = address.trim_end_matches('/').rsplit('/').next().unwrap().to_string();
         let ctx = h.ctx.clone();
-        for method in ["ui.inspect", "developer.modules", "engine.commands"] {
+        for method in ["ui.inspect", "developer.projects", "engine.commands"] {
             let seen = match crate::control::handle(h.state_mut(), &ctx, method, &json!({})) {
                 crate::control::Outcome::Done(v) => v.to_string(),
                 _ => String::new(),
@@ -686,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn a_module_runs_only_what_it_was_granted() {
+    fn a_project_runs_only_what_it_was_granted() {
         let s = Sandbox::new("granted");
         install(&s, "reader", &["read"]);
         install(&s, "writer", &["write"]);
@@ -730,7 +730,7 @@ mod tests {
         assert!(refusal(&run(&mut h, &writer, "document.inspect", json!({})), "read"));
         assert!(refusal(&call(&mut h, &writer, json!({"call": "selection"})), "read"));
 
-        // Files: anywhere but GridCraft's own settings folder, where the modules and the user's
+        // Files: anywhere but GridCraft's own settings folder, where the projects and the user's
         // decisions are kept.
         let elsewhere = std::env::temp_dir().join(format!("gridcraft-ui-panels-elsewhere-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&elsewhere);
@@ -738,15 +738,15 @@ mod tests {
         let saved = elsewhere.join("Saved.xlsx");
         let answer = run(&mut h, &filer, "file.save", json!({"path": saved}));
         assert!(answer["ok"] == true && saved.is_file(), "{answer}");
-        let trust_file = s.0.join("trusted-modules.json");
+        let trust_file = s.0.join("trusted-projects.json");
         let decisions = std::fs::read(&trust_file).unwrap();
-        let roundabout = s.0.join("modules").join("..").join("trusted-modules.json");
+        let roundabout = s.0.join("projects").join("..").join("trusted-projects.json");
         for path in [
             trust_file.clone(),
             roundabout,
             s.0.join("developer.json"),
-            s.0.join("modules/filer/panel/index.html"),
-            s.0.join("modules/new-module/module.toml"),
+            s.0.join("projects/filer/panel/index.html"),
+            s.0.join("projects/new-project/project.toml"),
             s.0.join("not/there/yet/book.xlsx"),
         ] {
             for command in ["file.save", "file.open", "file.exportCsv"] {
@@ -784,7 +784,7 @@ mod tests {
         assert_eq!(answer["results"][3]["values"], json!([[10.0, 20.0]]), "a later step sees what an earlier one did");
         assert_eq!((cell(&mut h, "A1"), cell(&mut h, "B1")), (json!(10.0), json!(20.0)));
         assert_eq!(history(&h), (before.0 + 1, 0), "three changes, one undo step");
-        assert_eq!(h.state().session.active().unwrap().undo.last().map(|e| e.label.as_str()), Some("Module tidy"), "named after the module");
+        assert_eq!(h.state().session.active().unwrap().undo.last().map(|e| e.label.as_str()), Some("Project tidy"), "named after the project");
         h.state_mut().run("edit.undo", json!({})).unwrap();
         assert_eq!((cell(&mut h, "A1"), cell(&mut h, "B1")), (json!(1.0), Json::Null), "one undo takes all of it back");
         h.state_mut().run("edit.redo", json!({})).unwrap();
@@ -830,7 +830,7 @@ mod tests {
         stop(&h.ctx, "tidy");
     }
 
-    /// What the starter module's panel does when its button is pressed, call by call.
+    /// What the starter project's panel does when its button is pressed, call by call.
     #[test]
     fn the_starter_panel_cleans_the_selection_through_python_as_one_undo_step() {
         let _s = Sandbox::new("round-trip");
@@ -838,12 +838,12 @@ mod tests {
             eprintln!("skipped: {why}");
             return;
         }
-        crate::aniefork::modules::create("Clean Data").unwrap();
+        crate::aniefork::projects::create("Clean Data").unwrap();
         let (mut a, opened) = app();
         a.session.run("range.setValues", json!({"range": "B2", "values": [["  north ", 12], ["south  ", 7.5]]})).unwrap();
         a.session.run("selection.set", json!({"range": "B2:C3"})).unwrap();
-        let fingerprint = crate::aniefork::modules::list()["modules"][0]["fingerprint"].as_str().unwrap().to_string();
-        crate::aniefork::modules::trust(&a, "clean-data", &fingerprint, false).unwrap();
+        let fingerprint = crate::aniefork::projects::list()["projects"][0]["fingerprint"].as_str().unwrap().to_string();
+        crate::aniefork::projects::trust(&a, "clean-data", &fingerprint, false).unwrap();
         let mut h = harness(a);
         let panel = open_panel(&mut h, &opened, "clean-data");
         let before = history(&h);
@@ -865,8 +865,8 @@ mod tests {
         // The control channel being busy in the window doesn't stop a panel the person opened.
         drive(&mut h);
         assert_eq!(call(&mut h, &panel, json!({"call": "selection"}))["ok"], json!(true));
-        // The module's files change under the open panel: nothing more is carried out for it.
-        let dir = crate::aniefork::modules::places().unwrap().modules.join("clean-data");
+        // The project's files change under the open panel: nothing more is carried out for it.
+        let dir = crate::aniefork::projects::places().unwrap().projects.join("clean-data");
         std::fs::write(dir.join("python/clean.py"), "def main(data):\n    return 'changed'\n").unwrap();
         for body in [
             json!({"call": "selection"}),
@@ -878,7 +878,7 @@ mod tests {
         }
         assert_eq!(cell(&mut h, "A1"), Json::Null);
         assert_eq!(get(&panel, "").0, 403);
-        PythonHost::global().stop(&crate::aniefork::modules::places().unwrap().modules, "clean-data");
+        PythonHost::global().stop(&crate::aniefork::projects::places().unwrap().projects, "clean-data");
         stop(&h.ctx, "clean-data");
     }
 }

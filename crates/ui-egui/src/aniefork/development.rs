@@ -11,7 +11,7 @@
 //! **A request is answered on a card**, in the manner of a coding agent's permission prompt:
 //! what it is, the thing itself in a block of its own (for a file that is there, the lines it
 //! would take out and put in), what it means, and then yes, yes and don't ask again (for that
-//! kind of thing in that module, until GridCraft closes), or no with a word for the agent on
+//! kind of thing in that project, until GridCraft closes), or no with a word for the agent on
 //! what to do differently. When GridCraft runs with the control channel a yes is confirmed by
 //! the operating system's own question before anything is done; without it, nothing but the
 //! person can click here, and the yes on the card is enough. A yes can't be pressed in the
@@ -25,7 +25,7 @@
 //!
 //! **A plan is answered on one card**: its purpose, then every step whole, each as it will find
 //! things once the steps before it are done (a file written twice is compared with what the
-//! earlier step wrote), and what in it trusts a module or runs code. A yes approves it and does
+//! earlier step wrote), and what in it trusts a project or runs code. A yes approves it and does
 //! nothing else; the window then shows the plan with where each step stands, and a way to stop
 //! it.
 //!
@@ -34,7 +34,7 @@
 //! Agents part described above: it stands at the top because it is not any kit's. Then the
 //! **development kits**: the one this build has is the Anie Development Kit (Python and
 //! Svelte), and under it its **projects**, by kind: the code of one workbook, and libraries.
-//! The kit's part has the way to Modules and the Developer console, the Python that runs
+//! The kit's part has the way to Projects and the Developer console, the Python that runs
 //! scripts, a new project, and a showcase: a project whose panel is a Svelte app, which the
 //! window creates and, once the person has trusted it, docks beside the sheet in the system's
 //! web view ([`super::dock`]).
@@ -60,7 +60,7 @@ use serde_json::{Value as Json, json};
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
 use super::diff::{Line, Row};
 use super::kits::{self, Pane};
-use super::{agents, modules, presence};
+use super::{agents, presence, projects};
 use crate::SheetApp;
 use crate::dialogs::Dialog;
 use crate::theme::Tokens;
@@ -84,10 +84,10 @@ pub(super) enum Act {
     Look(u64),
     NotNow,
     Allow(u64),
-    /// Yes, and not to ask again for this kind of thing in this module until GridCraft closes.
+    /// Yes, and not to ask again for this kind of thing in this project until GridCraft closes.
     AllowNotAgain(u64),
     Refuse(u64),
-    /// Ask again for this kind of thing in this module.
+    /// Ask again for this kind of thing in this project.
     AskAgain(String, Kind),
     /// Stop a plan that was approved.
     StopPlan(u64),
@@ -104,7 +104,7 @@ pub(super) enum Act {
         name: String,
         for_workbook: bool,
     },
-    /// Create the Svelte showcase module (untrusted, like any new module).
+    /// Create the Svelte showcase project (untrusted, like any new project).
     CreateShowcase,
     /// Show the showcase's panel: docked in the window, or in the browser.
     ShowShowcase {
@@ -155,7 +155,7 @@ impl State {
     /// it opens on the list, for the person to choose: opening the window (which anything on
     /// the control channel can do) never decides which request is under their eyes.
     pub(super) fn fresh() -> State {
-        let kept = modules::places().map(|at| settings::load(&at.settings).agents.port).unwrap_or_default();
+        let kept = projects::places().map(|at| settings::load(&at.settings).agents.port).unwrap_or_default();
         let mut state = State { port: kept.to_string(), ..State::default() };
         let waiting = agents::snapshot().waiting;
         let only = match waiting.as_slice() {
@@ -188,7 +188,7 @@ impl State {
         {
             return kept.clone();
         }
-        // Whether it can be approved as things are: its modules as they stood when it was
+        // Whether it can be approved as things are: its projects as they stood when it was
         // proposed, and its steps fitting one another.
         let fresh = Arc::new(dev::plan_fits(at, steps, stood));
         self.followed = Some((id, now, fresh.clone()));
@@ -413,7 +413,7 @@ fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driv
     if ui.add_enabled(ready && !cut && !unfit, egui::Button::new(yes)).clicked() {
         *action = Some(Act::Allow(asked.id));
     }
-    // And don't ask again: for what can go unasked, in a module whose files are looked at
+    // And don't ask again: for what can go unasked, in a project whose files are looked at
     // before they run.
     let three = agents::can_go_unasked(asked);
     if three {
@@ -502,7 +502,7 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
     if !now.waiting.is_empty() {
         ui.add_space(4.0);
         ui.label(egui::RichText::new(format!("Waiting for your answer ({})", now.waiting.len())).strong());
-        if let Some(at) = modules::places() {
+        if let Some(at) = projects::places() {
             for asked in &now.waiting {
                 waiting_card(ui, &at, asked, action);
             }
@@ -520,11 +520,11 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
     if !now.unasked.is_empty() {
         ui.add_space(4.0);
         ui.label(egui::RichText::new("Not asked again until GridCraft closes").strong());
-        for (module, kind) in &now.unasked {
+        for (project, kind) in &now.unasked {
             ui.horizontal(|ui| {
-                ui.label(agents::covers(module, *kind));
+                ui.label(agents::covers(project, *kind));
                 if ui.small_button("Ask again").clicked() {
-                    *action = Some(Act::AskAgain(module.clone(), *kind));
+                    *action = Some(Act::AskAgain(project.clone(), *kind));
                 }
             });
         }
@@ -757,8 +757,8 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
     }
     ui.add_space(2.0);
     ui.horizontal(|ui| {
-        if ui.button("Modules…").on_hover_text("Review, trust and run your projects; name the Python that runs their scripts").clicked() {
-            *action = Some(Act::Open(modules::NAME));
+        if ui.button("Projects…").on_hover_text("Review, trust and run your projects; name the Python that runs their scripts").clicked() {
+            *action = Some(Act::Open(projects::NAME));
         }
         ui.label(said(told, "projectsSays"));
         ui.add_space(12.0);
@@ -931,8 +931,8 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
     ui.add_space(6.0);
     ui.label(small(said(told, "manage")));
     ui.horizontal(|ui| {
-        if ui.button("Modules…").on_hover_text("Review, trust and run your projects").clicked() {
-            *action = Some(Act::Open(modules::NAME));
+        if ui.button("Projects…").on_hover_text("Review, trust and run your projects").clicked() {
+            *action = Some(Act::Open(projects::NAME));
         }
         if told["canOpenFolder"] == true && ui.button("Open Project Folder").clicked() {
             *action = Some(Act::OpenProjectFolder(said(told, "id").to_string()));
@@ -956,7 +956,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 
     // A request being looked at takes the place of the rest, while it still waits.
     let looked_at = state.looking.and_then(|id| agents::snapshot().waiting.into_iter().find(|asked| asked.id == id));
-    match (looked_at, modules::places()) {
+    match (looked_at, projects::places()) {
         (Some(asked), Some(at)) => review(ui, &at, &asked, &mut state, driven, agents::confirms(app), &mut action),
         _ => {
             state.looking = None;
@@ -1060,7 +1060,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
         Act::CreateProject { name, for_workbook } => {
             // The workbook it is the code of is the one that is open: nobody names another.
             let workbook = if for_workbook { app.session.active().map(|doc| doc.title.clone()) } else { None };
-            let created = modules::create_project(&name, workbook.as_deref())?;
+            let created = projects::create_project(&name, workbook.as_deref())?;
             state.new_name.clear();
             state.new_for = false;
             // The window turns to what was made.
@@ -1070,13 +1070,13 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             }
             Ok(created)
         }
-        Act::OpenProjectFolder(id) => match (modules::places(), &app.services.open_url) {
-            (Some(at), Some(open_url)) if manifest::valid_id(&id) && at.modules.join(&id).is_dir() => {
-                open_url(&at.modules.join(&id).display().to_string());
+        Act::OpenProjectFolder(id) => match (projects::places(), &app.services.open_url) {
+            (Some(at), Some(open_url)) if manifest::valid_id(&id) && at.projects.join(&id).is_dir() => {
+                open_url(&at.projects.join(&id).display().to_string());
                 Ok(String::new())
             }
             (Some(_), Some(_)) => Err("That project's folder is no longer there.".into()),
-            _ => Err(modules::UNAVAILABLE.into()),
+            _ => Err(projects::UNAVAILABLE.into()),
         },
         Act::Level(level) => {
             let from = agents::snapshot().level;
@@ -1124,9 +1124,9 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             state.look_at(agents::snapshot().waiting.first().map(|asked| asked.id));
             outcome
         }
-        Act::AskAgain(module, kind) => {
-            agents::ask_again(&module, kind);
-            Ok(format!("You will be asked again for {}.", agents::covers(&module, kind)))
+        Act::AskAgain(project, kind) => {
+            agents::ask_again(&project, kind);
+            Ok(format!("You will be asked again for {}.", agents::covers(&project, kind)))
         }
         Act::StopPlan(id) => agents::stop_plan(id, !driven),
         Act::Open(name) => {
@@ -1134,7 +1134,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             *open = false;
             Ok(String::new())
         }
-        Act::CreateShowcase => modules::create_showcase(),
+        Act::CreateShowcase => projects::create_showcase(),
         // Showing a panel is opening it: the person's alone to do (checked above).
         Act::ShowShowcase { docked: true } => {
             let said = super::dock::dock(app, ctx, showcase::ID)?;
@@ -1144,13 +1144,13 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             Ok(String::new())
         }
         Act::ShowShowcase { docked: false } => super::panels::open(app, ctx, showcase::ID),
-        Act::OpenFolder => match (modules::places(), &app.services.open_url) {
+        Act::OpenFolder => match (projects::places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
-                std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
-                open_url(&at.modules.display().to_string());
+                std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
+                open_url(&at.projects.display().to_string());
                 Ok(String::new())
             }
-            _ => Err(modules::UNAVAILABLE.into()),
+            _ => Err(projects::UNAVAILABLE.into()),
         },
     }
 }
@@ -1180,8 +1180,8 @@ mod tests {
 
     use super::*;
     use crate::aniefork::devpage;
-    use crate::aniefork::modules::tests::{Asked as Answers, Sandbox, app_with, drive, quiet, sandbox, yes};
-    use crate::aniefork::modules::{create, list, trust};
+    use crate::aniefork::projects::tests::{Asked as Answers, Sandbox, app_with, drive, quiet, sandbox, yes};
+    use crate::aniefork::projects::{create, list, trust};
 
     type Harness = egui_kittest::Harness<'static, SheetApp>;
 
@@ -1383,8 +1383,8 @@ mod tests {
         assert!(!std::fs::read_to_string(s.0.join("developer.json")).unwrap().contains(&token));
         assert!(h.query_by_label_contains(&token[..12]).is_none(), "it is nowhere in the window");
         // An agent that holds it is answered, and one that doesn't is not.
-        let (failed, text) = agent("list_modules", json!({}));
-        assert!(!failed && text.starts_with("0 module(s)."), "{text}");
+        let (failed, text) = agent("list_projects", json!({}));
+        assert!(!failed && text.starts_with("0 project(s)."), "{text}");
         assert_eq!(post(&"0".repeat(64), &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).0, 401);
         h.run_steps(3);
         assert!(agents::snapshot().clients.is_empty(), "a client is known once it has said who it is");
@@ -1468,15 +1468,15 @@ mod tests {
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
-        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        trust(h.state(), "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
         open(&mut h);
         choose(&mut h, Level::Ask);
         h.state_mut().dialog = None;
         h.run_steps(2);
         let text = "def main(data):\n    return 'from the agent'\n";
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/extra.py", "text": text}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/extra.py", "text": text}));
         // Nothing was done. The person is told, in the bar under the ribbon.
-        let file = s.0.join("modules/clean-data/python/extra.py");
+        let file = s.0.join("projects/clean-data/python/extra.py");
         assert!(!file.exists());
         let notice = h.state().notice.clone().unwrap();
         assert_eq!(notice.text, "An agent is asking for your answer in Development (1 waiting).");
@@ -1506,8 +1506,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
         let (failed, said) = stands(id);
         assert!(!failed && said.contains("was carried out. python/extra.py was created in clean-data"), "{said}");
-        assert!(said.contains("clean-data is no longer the module that was trusted"), "{said}");
-        assert_eq!(list()["modules"][0]["status"], "changed", "what the agent wrote runs nowhere until the person looks again");
+        assert!(said.contains("clean-data is no longer the project that was trusted"), "{said}");
+        assert_eq!(list()["projects"][0]["status"], "changed", "what the agent wrote runs nowhere until the person looks again");
         assert_eq!(outcomes(&s), ["asked", "allowed", "done"]);
         assert!(agents::snapshot().waiting.is_empty());
         // The window is back to the whole of it, and says what happened.
@@ -1523,18 +1523,18 @@ mod tests {
         let mut h = harness(app_with(Some(&asked)));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "delete_module_file", json!({"module": "clean-data", "path": "python/clean.py"}));
+        let id = asks(&mut h, "delete_project_file", json!({"project": "clean-data", "path": "python/clean.py"}));
         look(&mut h);
         say_no(&mut h);
         assert_eq!(asked.questions().len(), 1, "a no needs no confirming");
-        assert!(s.0.join("modules/clean-data/python/clean.py").exists());
+        assert!(s.0.join("projects/clean-data/python/clean.py").exists());
         let (failed, said) = stands(id);
         assert!(failed && said.contains("was refused: The person at the screen said no."), "{said}");
         h.get_by_label("The request was refused.");
         // Whatever it asks next has to wait.
-        let (failed, said) = agent("create_module", json!({"name": "Another"}));
+        let (failed, said) = agent("create_project", json!({"name": "Another"}));
         assert!(failed && said.contains("The person refused the last request. Wait"), "{said}");
-        assert!(agents::snapshot().waiting.is_empty() && !s.0.join("modules/another").exists());
+        assert!(agents::snapshot().waiting.is_empty() && !s.0.join("projects/another").exists());
         assert_eq!(outcomes(&s), ["asked", "refused", "not allowed"]);
     }
 
@@ -1545,7 +1545,7 @@ mod tests {
         let mut h = harness(app_with(Some(&yes())));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "delete_module_file", json!({"module": "clean-data", "path": "python/clean.py"}));
+        let id = asks(&mut h, "delete_project_file", json!({"project": "clean-data", "path": "python/clean.py"}));
         look(&mut h);
         h.get_by_label("Delete file");
         h.get_by_label("Do you want to let the agent delete \"python/clean.py\"?");
@@ -1562,7 +1562,7 @@ mod tests {
         let told = "was refused: The person at the screen said no. They tell you: \"Keep it:rename it to tidy.py instead.\"";
         assert!(failed && said.contains(told), "{said}");
         h.get_by_label("The request was refused, and the agent was told why.");
-        assert!(s.0.join("modules/clean-data/python/clean.py").exists());
+        assert!(s.0.join("projects/clean-data/python/clean.py").exists());
         // The word is on the record too.
         let log = std::fs::read_to_string(s.0.join("agent-log.jsonl")).unwrap();
         assert!(log.lines().last().unwrap().contains("rename it to tidy.py instead"));
@@ -1576,12 +1576,12 @@ mod tests {
         let mut h = harness(app_with(Some(&asked)));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let file = s.0.join("modules/clean-data/python/clean.py");
+        let file = s.0.join("projects/clean-data/python/clean.py");
         let old = std::fs::read_to_string(&file).unwrap();
         let line = old.lines().find(|line| line.contains("print(")).unwrap();
         let new = old.replacen(line, "    print('all done')", 1);
         assert_ne!(new, old);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": new}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": new}));
         look(&mut h);
         h.get_by_label("Edit file");
         h.get_by_label("It changes the file that is there: 1 line in, 1 out.");
@@ -1616,28 +1616,28 @@ mod tests {
         // Letting agents go further is still confirmed by the operating system.
         choose(&mut h, Level::Ask);
         assert_eq!(asked.questions().len(), 1);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/extra.py", "text": "x = 1\n"}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/extra.py", "text": "x = 1\n"}));
         look(&mut h);
         h.get_by_label_contains("The agent gave no name.");
         assert!(h.query_by_label_contains("confirmed by your operating system").is_none(), "the card promises no second question");
         // One click, and it is done: nothing but the person can click here.
         say_yes(&mut h);
         assert_eq!(asked.questions().len(), 1, "no second question was put");
-        assert_eq!(std::fs::read_to_string(s.0.join("modules/clean-data/python/extra.py")).unwrap(), "x = 1\n");
+        assert_eq!(std::fs::read_to_string(s.0.join("projects/clean-data/python/extra.py")).unwrap(), "x = 1\n");
         assert!(stands(id).1.contains("was carried out"));
-        let id = asks(&mut h, "delete_module_file", json!({"module": "clean-data", "path": "python/extra.py"}));
+        let id = asks(&mut h, "delete_project_file", json!({"project": "clean-data", "path": "python/extra.py"}));
         look(&mut h);
         say_yes(&mut h);
-        assert!(stands(id).1.contains("was carried out") && !s.0.join("modules/clean-data/python/extra.py").exists());
+        assert!(stands(id).1.contains("was carried out") && !s.0.join("projects/clean-data/python/extra.py").exists());
         // A copy of GridCraft that can't put the operating system's question answers requests
         // all the same, when nothing else can click in its window.
         drop(h);
         agents::forget();
         let mut h = harness_alone(app_with(None));
-        let id = asks(&mut h, "create_module", json!({"name": "Another"}));
+        let id = asks(&mut h, "create_project", json!({"name": "Another"}));
         open(&mut h);
         say_yes(&mut h);
-        assert!(stands(id).1.contains("Another was created as the module another"), "{}", stands(id).1);
+        assert!(stands(id).1.contains("Another was created as the project another"), "{}", stands(id).1);
         assert_eq!(asked.questions().len(), 1);
     }
 
@@ -1647,11 +1647,11 @@ mod tests {
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
-        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        trust(h.state(), "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
         open(&mut h);
         choose(&mut h, Level::Ask);
         let again = "2. Yes, and don't ask again for changes to clean-data's files until GridCraft closes";
-        let first = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/a.py", "text": "a = 1\n"}));
+        let first = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/a.py", "text": "a = 1\n"}));
         look(&mut h);
         h.get_by_label(NO_OF_THREE);
         std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
@@ -1660,19 +1660,19 @@ mod tests {
         assert!(question.contains("And GridCraft will not ask you again for changes to clean-data's files until it closes."), "{question}");
         assert!(stands(first).1.contains("was carried out"));
         assert_eq!(asked.questions().len(), 3, "trusting, the level, and this yes");
-        // The next change to that module's files is not asked about: it is done, and on record.
-        let second = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/b.py", "text": "b = 2\n"}));
+        // The next change to that project's files is not asked about: it is done, and on record.
+        let second = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/b.py", "text": "b = 2\n"}));
         assert!(stands(second).1.contains("python/b.py was created in clean-data"), "{}", stands(second).1);
-        assert_eq!(std::fs::read_to_string(s.0.join("modules/clean-data/python/b.py")).unwrap(), "b = 2\n");
+        assert_eq!(std::fs::read_to_string(s.0.join("projects/clean-data/python/b.py")).unwrap(), "b = 2\n");
         assert_eq!(asked.questions().len(), 3);
         assert!(h.state().notice.is_none() && agents::snapshot().waiting.is_empty());
         let said =
             agents::snapshot().recent.iter().any(|line| line.request == second && line.detail == "without asking: the person said not to ask again");
         assert!(said, "{:?}", agents::snapshot().recent);
-        // Nobody looked at that change: the module's trust went with it.
-        assert_eq!(list()["modules"][0]["status"], "untrusted");
-        // It covers that kind of thing in that module, and nothing else: trusting it asks.
-        let third = asks(&mut h, "trust_module", json!({"module": "clean-data"}));
+        // Nobody looked at that change: the project's trust went with it.
+        assert_eq!(list()["projects"][0]["status"], "untrusted");
+        // It covers that kind of thing in that project, and nothing else: trusting it asks.
+        let third = asks(&mut h, "trust_project", json!({"project": "clean-data"}));
         assert!(stands(third).1.contains("is waiting for the person"));
         look(&mut h);
         h.get_by_label(NO);
@@ -1682,12 +1682,12 @@ mod tests {
         h.get_by_label("Not asked again until GridCraft closes");
         h.get_by_label("changes to clean-data's files");
         let report = h.state_mut().run("developer.agents", json!({})).unwrap();
-        assert_eq!(report["notAskedAgain"], json!([{"module": "clean-data", "what": "changing its files"}]));
+        assert_eq!(report["notAskedAgain"], json!([{"project": "clean-data", "what": "changing its files"}]));
         // The person can be asked again.
         click(&mut h, "Ask again");
         assert!(agents::snapshot().unasked.is_empty());
         std::thread::sleep(Duration::from_millis(3_200));
-        let fourth = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/c.py", "text": "c = 3\n"}));
+        let fourth = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/c.py", "text": "c = 3\n"}));
         assert!(stands(fourth).1.contains("is waiting for the person"));
         // And letting agents go less far ends it too.
         look(&mut h);
@@ -1697,7 +1697,7 @@ mod tests {
         choose(&mut h, Level::Read);
         assert!(agents::snapshot().unasked.is_empty());
         choose(&mut h, Level::Ask);
-        let fifth = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/d.py", "text": "d = 4\n"}));
+        let fifth = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/d.py", "text": "d = 4\n"}));
         assert!(stands(fifth).1.contains("is waiting for the person"));
         // GridCraft closing ends it: a server that starts knows of none.
         drop(h);
@@ -1712,11 +1712,11 @@ mod tests {
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
-        // The person keeps trusting this module as its files change.
-        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
+        // The person keeps trusting this project as its files change.
+        trust(h.state(), "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/a.py", "text": "a = 1\n"}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/a.py", "text": "a = 1\n"}));
         look(&mut h);
         h.get_by_label_contains("what is written runs without your looking at it again");
         h.get_by_label(NO);
@@ -1739,8 +1739,8 @@ mod tests {
         h.state_mut().dialog = None;
         h.run_steps(2);
         // Two requests that read alike: the same file, the same length, another text.
-        let benign = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": "x = 'kind'\n"}));
-        let other = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": "x = 'evil'\n"}));
+        let benign = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": "x = 'kind'\n"}));
+        let other = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": "x = 'evil'\n"}));
         let waiting = agents::snapshot().waiting;
         assert_eq!(waiting[0].action.title(), waiting[1].action.title(), "they are told apart by nothing in their titles");
         let marks: Vec<String> = waiting.iter().map(|asked| gridcraft_aniefork_dev::agents::mark(&asked.action)).collect();
@@ -1767,7 +1767,7 @@ mod tests {
         say_yes(&mut h);
         let question = asked.questions().pop().unwrap();
         assert!(question.contains(&format!("This is request #{other}, holding what its card marks {}.", marks[1])), "{question}");
-        assert_eq!(std::fs::read_to_string(s.0.join("modules/clean-data/python/clean.py")).unwrap(), "x = 'evil'\n");
+        assert_eq!(std::fs::read_to_string(s.0.join("projects/clean-data/python/clean.py")).unwrap(), "x = 'evil'\n");
         // The one that still waits is the next card: the person's own answer brought it.
         h.get_by_label(format!("request #{benign}  ·  marked {}  ·  lapses in 20 min", marks[0]).as_str());
         h.get_by_label_contains("x = 'kind'");
@@ -1782,13 +1782,13 @@ mod tests {
         open(&mut h);
         choose(&mut h, Level::Ask);
         let long = format!("{}# the end\n", "x = 1\n".repeat(card::SHOWN / 6 + 1));
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/long.py", "text": long}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/long.py", "text": long}));
         look(&mut h);
         h.get_by_label_contains("so it can't be allowed here");
         h.get_by_label_contains("Only the first 200000 characters are shown");
         say_yes(&mut h);
         assert_eq!(asked.questions().len(), 1, "the operating system's question isn't raised");
-        assert!(stands(id).1.contains("is waiting for the person") && !s.0.join("modules/clean-data/python/long.py").exists());
+        assert!(stands(id).1.contains("is waiting for the person") && !s.0.join("projects/clean-data/python/long.py").exists());
         say_no(&mut h);
         assert!(stands(id).1.contains("was refused"));
     }
@@ -1807,10 +1807,10 @@ mod tests {
             _ => Json::Null,
         };
         let inside = |name: &str| s.0.join(name).display().to_string();
-        let script = s.0.join("modules/clean-data/python/clean.py");
+        let script = s.0.join("projects/clean-data/python/clean.py");
         let before = std::fs::read_to_string(&script).unwrap();
-        // Reading: the token, the decisions, a module's files.
-        for name in ["agent-token", "trusted-modules.json", "developer.json", "modules/clean-data/python/clean.py"] {
+        // Reading: the token, the decisions, a project's files.
+        for name in ["agent-token", "trusted-projects.json", "developer.json", "projects/clean-data/python/clean.py"] {
             for (method, params) in [
                 ("app.open", json!({"path": inside(name)})),
                 ("engine.execute", json!({"command": "file.open", "params": {"path": inside(name)}})),
@@ -1823,12 +1823,12 @@ mod tests {
         }
         let sheet = sent(&mut h, "engine.execute", json!({"command": "sheet.read", "params": {}}));
         assert!(!sheet.to_string().contains(&token), "the token is in no cell");
-        // Writing: over the token, the decisions, the settings, a module's script; by any spelling.
+        // Writing: over the token, the decisions, the settings, a project's script; by any spelling.
         let _ = sent(&mut h, "engine.execute", json!({"command": "cell.set", "params": {"cell": "A1", "input": "0".repeat(64)}}));
-        let spelled = format!("{}/modules/../agent-token", s.0.display());
+        let spelled = format!("{}/projects/../agent-token", s.0.display());
         for path in [
             inside("agent-token"),
-            inside("trusted-modules.json"),
+            inside("trusted-projects.json"),
             inside("developer.json"),
             script.display().to_string(),
             inside("new.csv"),
@@ -1862,7 +1862,7 @@ mod tests {
         let mut h = harness(app_with(Some(&asked)));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "delete_module_file", json!({"module": "clean-data", "path": "python/clean.py"}));
+        let id = asks(&mut h, "delete_project_file", json!({"project": "clean-data", "path": "python/clean.py"}));
         look(&mut h);
         // The card has only just come on screen (here: for a long while yet).
         let mut state: State = h.ctx.data(|d| d.get_temp(state_id())).unwrap();
@@ -1870,7 +1870,7 @@ mod tests {
         h.ctx.data_mut(|d| d.insert_temp(state_id(), state));
         click(&mut h, YES);
         assert_eq!(asked.questions().len(), 1, "the operating system's question isn't raised");
-        assert!(stands(id).1.contains("is waiting for the person") && s.0.join("modules/clean-data/python/clean.py").exists());
+        assert!(stands(id).1.contains("is waiting for the person") && s.0.join("projects/clean-data/python/clean.py").exists());
         // No is never held back.
         say_no(&mut h);
         assert!(stands(id).1.contains("was refused"));
@@ -1884,7 +1884,7 @@ mod tests {
         let mut h = harness(app_with(Some(&asked)));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": "changed"}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": "changed"}));
         look(&mut h);
         h.get_by_label("Edit file");
         h.get_by_label_contains("It changes the file that is there:");
@@ -1896,13 +1896,13 @@ mod tests {
         say_yes(&mut h);
         assert_eq!(asked.questions().len(), 2, "the operating system asked");
         assert!(stands(id).1.contains("was refused: The person at the screen said no."));
-        assert_ne!(std::fs::read_to_string(s.0.join("modules/clean-data/python/clean.py")).unwrap(), "changed");
+        assert_ne!(std::fs::read_to_string(s.0.join("projects/clean-data/python/clean.py")).unwrap(), "changed");
         // A copy of GridCraft that can't put that question carries nothing out for an agent.
         drop(h);
         agents::forget();
         let mut h = harness(app_with(None));
         std::thread::sleep(Duration::from_millis(50));
-        let id = asks(&mut h, "stop_trusting_module", json!({"module": "clean-data"}));
+        let id = asks(&mut h, "stop_trusting_project", json!({"project": "clean-data"}));
         open(&mut h);
         look(&mut h);
         say_yes(&mut h);
@@ -1927,7 +1927,7 @@ mod tests {
         quiet(&mut h);
         choose(&mut h, Level::Ask);
         assert_eq!(agents::snapshot().level, Level::Ask);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": "changed"}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": "changed"}));
         let (token_before, port) = (token(), agents::snapshot().port);
         drive(&mut h);
         // Which request is under the person's eyes is theirs to choose: the channel can't turn
@@ -1948,7 +1948,7 @@ mod tests {
             h.get_by_label_contains("It changes the file that is there:");
         }
         assert_eq!(asked.questions().len(), 1, "only the level was ever asked about");
-        assert_ne!(std::fs::read_to_string(s.0.join("modules/clean-data/python/clean.py")).unwrap(), "changed");
+        assert_ne!(std::fs::read_to_string(s.0.join("projects/clean-data/python/clean.py")).unwrap(), "changed");
         // Nor is the setup, which holds the token, the token itself, or the port.
         quiet(&mut h);
         click(&mut h, "Not now");
@@ -2050,21 +2050,21 @@ mod tests {
         choose(&mut h, Level::Build);
         h.state_mut().dialog = None;
         h.run_steps(2);
-        // It creates a module and writes its script: nobody is asked.
-        let id = asks(&mut h, "create_module", json!({"name": "Tidy"}));
+        // It creates a project and writes its script: nobody is asked.
+        let id = asks(&mut h, "create_project", json!({"name": "Tidy"}));
         let (failed, said) = stands(id);
-        assert!(!failed && said.contains("Tidy was created as the module tidy, with 3 files. It is not trusted"), "{said}");
-        let id = asks(&mut h, "write_module_file", json!({"module": "tidy", "path": "python/tidy.py", "text": SCRIPT}));
+        assert!(!failed && said.contains("Tidy was created as the project tidy, with 3 files. It is not trusted"), "{said}");
+        let id = asks(&mut h, "write_project_file", json!({"project": "tidy", "path": "python/tidy.py", "text": SCRIPT}));
         let (failed, said) = stands(id);
         assert!(!failed && said.contains("python/tidy.py was created in tidy") && said.contains("tidy is not trusted"), "{said}");
-        assert_eq!(std::fs::read_to_string(s.0.join("modules/tidy/python/tidy.py")).unwrap(), SCRIPT);
+        assert_eq!(std::fs::read_to_string(s.0.join("projects/tidy/python/tidy.py")).unwrap(), SCRIPT);
         assert_eq!(asked.questions().len(), 1, "only the level was asked about");
         assert!(h.state().notice.is_none() && agents::snapshot().waiting.is_empty());
-        // What it wrote runs nowhere: the module isn't trusted.
-        let (failed, said) = agent("run_script", json!({"module": "tidy", "script": "tidy.py"}));
+        // What it wrote runs nowhere: the project isn't trusted.
+        let (failed, said) = agent("run_script", json!({"project": "tidy", "script": "tidy.py"}));
         assert!(failed && said.contains("tidy is not trusted"), "{said}");
         // Trusting it is the person's to allow, and they see what it would be allowed.
-        let id = asks(&mut h, "trust_module", json!({"module": "tidy"}));
+        let id = asks(&mut h, "trust_project", json!({"project": "tidy"}));
         assert!(h.state().notice.as_ref().is_some_and(|notice| notice.text.contains("1 waiting")));
         open(&mut h);
         look(&mut h);
@@ -2073,7 +2073,7 @@ mod tests {
         say_yes(&mut h);
         let question = asked.questions().pop().unwrap();
         for part in [
-            "An agent asks you to trust a module (request #",
+            "An agent asks you to trust a project (request #",
             "Trust \"Tidy\"",
             "Run its Python scripts",
             "If any of them changes, GridCraft will ask you again.",
@@ -2081,14 +2081,14 @@ mod tests {
             assert!(question.contains(part), "{part}: {question}");
         }
         assert!(stands(id).1.contains("was carried out. tidy is trusted as it is now."));
-        assert_eq!(list()["modules"][0]["status"], "trusted");
-        assert_eq!(list()["modules"][0]["followsChanges"], false, "never \"as it changes\": that is the person's alone to choose");
+        assert_eq!(list()["projects"][0]["status"], "trusted");
+        assert_eq!(list()["projects"][0]["followsChanges"], false, "never \"as it changes\": that is the person's alone to choose");
         // Running it asks too, and what the script gave comes back as data.
         if let Err(why) = PythonHost::global().interpreter("") {
             eprintln!("skipped the run: {why}");
             return;
         }
-        let id = asks(&mut h, "run_script", json!({"module": "tidy", "script": "tidy.py", "data": {"rows": [["  a ", "b  "]]}}));
+        let id = asks(&mut h, "run_script", json!({"project": "tidy", "script": "tidy.py", "data": {"rows": [["  a ", "b  "]]}}));
         look(&mut h);
         h.get_by_label("main(data) is handed this:");
         h.get_by_label("A script can do anything a program you run can do.");
@@ -2100,56 +2100,59 @@ mod tests {
         let data: Json = serde_json::from_str(rest.split_once(">\n").unwrap().1.rsplit_once("\n</untrusted-data-").unwrap().0).unwrap();
         assert_eq!(data["result"], json!({"rows": [["a", "b"]]}));
         assert_eq!(data["printed"].as_str().map(str::trim), Some("tidying"));
-        PythonHost::global().stop(&s.0.join("modules"), "tidy");
-        // A module the person keeps trusting as it changes: writing to it is running code, and asks.
-        trust(h.state(), "tidy", list()["modules"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
-        let id =
-            asks(&mut h, "write_module_file", json!({"module": "tidy", "path": "python/tidy.py", "text": "def main(data):\n    return 'swapped'\n"}));
+        PythonHost::global().stop(&s.0.join("projects"), "tidy");
+        // A project the person keeps trusting as it changes: writing to it is running code, and asks.
+        trust(h.state(), "tidy", list()["projects"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
+        let id = asks(
+            &mut h,
+            "write_project_file",
+            json!({"project": "tidy", "path": "python/tidy.py", "text": "def main(data):\n    return 'swapped'\n"}),
+        );
         assert!(stands(id).1.contains("is waiting for the person"));
-        assert_eq!(std::fs::read_to_string(s.0.join("modules/tidy/python/tidy.py")).unwrap(), SCRIPT);
+        assert_eq!(std::fs::read_to_string(s.0.join("projects/tidy/python/tidy.py")).unwrap(), SCRIPT);
         look(&mut h);
         h.get_by_label("You chose to keep trusting tidy as its files change: what is written runs without your looking at it again.");
     }
 
     #[test]
-    fn at_build_a_change_nobody_looked_at_ends_the_trust_in_the_module_whatever_it_holds_after() {
+    fn at_build_a_change_nobody_looked_at_ends_the_trust_in_the_project_whatever_it_holds_after() {
         let s = Sandbox::new("agents-swap");
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
-        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        trust(h.state(), "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
         open(&mut h);
         choose(&mut h, Level::Build);
-        let file = s.0.join("modules/clean-data/python/clean.py");
+        let file = s.0.join("projects/clean-data/python/clean.py");
         let original = std::fs::read_to_string(&file).unwrap();
-        let fingerprint = list()["modules"][0]["fingerprint"].clone();
+        let fingerprint = list()["projects"][0]["fingerprint"].clone();
         // The agent swaps the script, and puts the old one back: the files are as they were
         // trusted, to the byte.
         let id = asks(
             &mut h,
-            "write_module_file",
-            json!({"module": "clean-data", "path": "python/clean.py", "text": "def main(data):\n    return 'swapped'\n"}),
+            "write_project_file",
+            json!({"project": "clean-data", "path": "python/clean.py", "text": "def main(data):\n    return 'swapped'\n"}),
         );
         assert!(stands(id).1.contains("clean-data is not trusted"), "{}", stands(id).1);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": original}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": original}));
         assert!(stands(id).1.contains("was carried out"));
-        assert_eq!(list()["modules"][0]["fingerprint"], fingerprint);
+        assert_eq!(list()["projects"][0]["fingerprint"], fingerprint);
         // The trust is gone all the same: it was in what the person looked at, and nobody
         // looked at what was there in between.
-        assert_eq!(list()["modules"][0]["status"], "untrusted");
-        let (failed, said) = agent("run_script", json!({"module": "clean-data", "script": "clean.py"}));
+        assert_eq!(list()["projects"][0]["status"], "untrusted");
+        let (failed, said) = agent("run_script", json!({"project": "clean-data", "script": "clean.py"}));
         assert!(failed && said.contains("is not trusted"), "{said}");
         assert_eq!(asked.questions().len(), 2, "trusting, and the level: the changes asked nothing");
-        // A module the person keeps trusting as it changes: taking its trust back would end
+        // A project the person keeps trusting as it changes: taking its trust back would end
         // that choice and leave its files free to change, so it asks, as changing them does.
-        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
-        let id = asks(&mut h, "stop_trusting_module", json!({"module": "clean-data"}));
+        trust(h.state(), "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
+        let id = asks(&mut h, "stop_trusting_project", json!({"project": "clean-data"}));
         assert!(stands(id).1.contains("is waiting for the person"));
-        assert_eq!(list()["modules"][0]["status"], "trusted");
+        assert_eq!(list()["projects"][0]["status"], "trusted");
         look(&mut h);
-        h.get_by_label("Stop trusting module");
+        h.get_by_label("Stop trusting project");
         say_no(&mut h);
-        assert_eq!(list()["modules"][0]["followsChanges"], true);
+        assert_eq!(list()["projects"][0]["followsChanges"], true);
     }
 
     #[test]
@@ -2178,22 +2181,22 @@ mod tests {
         );
         h.state_mut().dialog = None;
         h.run_steps(2);
-        // It builds a module, trusts it and runs it: nobody is asked.
+        // It builds a project, trusts it and runs it: nobody is asked.
         for (tool, arguments, part) in [
-            ("create_module", json!({"name": "Tidy"}), "Tidy was created as the module tidy"),
-            ("write_module_file", json!({"module": "tidy", "path": "python/tidy.py", "text": SCRIPT}), "python/tidy.py was created in tidy"),
-            ("trust_module", json!({"module": "tidy"}), "tidy is trusted as it is now."),
+            ("create_project", json!({"name": "Tidy"}), "Tidy was created as the project tidy"),
+            ("write_project_file", json!({"project": "tidy", "path": "python/tidy.py", "text": SCRIPT}), "python/tidy.py was created in tidy"),
+            ("trust_project", json!({"project": "tidy"}), "tidy is trusted as it is now."),
         ] {
             let id = asks(&mut h, tool, arguments);
             let (failed, said) = stands(id);
             assert!(!failed && said.contains(part), "{tool}: {said}");
         }
-        assert_eq!(list()["modules"][0]["status"], "trusted");
+        assert_eq!(list()["projects"][0]["status"], "trusted");
         if PythonHost::global().interpreter("").is_ok() {
-            let id = asks(&mut h, "run_script", json!({"module": "tidy", "script": "tidy.py", "data": {"rows": [[" x "]]}}));
+            let id = asks(&mut h, "run_script", json!({"project": "tidy", "script": "tidy.py", "data": {"rows": [[" x "]]}}));
             let (failed, said) = settled(&mut h, id);
             assert!(!failed && said.contains("tidy.py of tidy returned.") && said.contains("\"x\""), "{said}");
-            PythonHost::global().stop(&s.0.join("modules"), "tidy");
+            PythonHost::global().stop(&s.0.join("projects"), "tidy");
         }
         assert_eq!(asked.questions().len(), 2, "nothing more was asked");
         assert!(agents::snapshot().waiting.is_empty());
@@ -2209,30 +2212,30 @@ mod tests {
     }
 
     #[test]
-    fn trust_asked_for_a_module_that_then_changed_is_not_given() {
+    fn trust_asked_for_a_project_that_then_changed_is_not_given() {
         let s = Sandbox::new("agents-trust-changed");
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "trust_module", json!({"module": "clean-data"}));
+        let id = asks(&mut h, "trust_project", json!({"project": "clean-data"}));
         // A file changes after the agent asked, before the person answers.
-        std::fs::write(s.0.join("modules/clean-data/python/clean.py"), "def main(data):\n    return 'swapped'\n").unwrap();
+        std::fs::write(s.0.join("projects/clean-data/python/clean.py"), "def main(data):\n    return 'swapped'\n").unwrap();
         look(&mut h);
-        h.get_by_label("The module changed after the agent asked. It has to ask again: this request can't be allowed.");
+        h.get_by_label("The project changed after the agent asked. It has to ask again: this request can't be allowed.");
         say_yes(&mut h);
         assert!(message(&mut h).unwrap().contains("clean-data changed after the agent asked"));
         assert_eq!(asked.questions().len(), 1, "the person is not asked about files they didn't see");
-        assert_eq!(list()["modules"][0]["status"], "untrusted");
+        assert_eq!(list()["projects"][0]["status"], "untrusted");
         let (failed, said) = stands(id);
-        assert!(failed && said.contains("was refused: The module's files changed after this was asked."), "{said}");
-        // That was nobody's no: the agent may ask again at once, for the module as it is now.
-        let again = asks(&mut h, "trust_module", json!({"module": "clean-data"}));
+        assert!(failed && said.contains("was refused: The project's files changed after this was asked."), "{said}");
+        // That was nobody's no: the agent may ask again at once, for the project as it is now.
+        let again = asks(&mut h, "trust_project", json!({"project": "clean-data"}));
         assert_ne!(again, id);
         look(&mut h);
         say_yes(&mut h);
-        assert_eq!(list()["modules"][0]["status"], "trusted");
+        assert_eq!(list()["projects"][0]["status"], "trusted");
     }
 
     #[test]
@@ -2242,17 +2245,17 @@ mod tests {
         let mut h = harness(app_with(Some(&yes())));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": "changed"}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": "changed"}));
         choose(&mut h, Level::Read);
         let (failed, said) = stands(id);
         assert!(failed && said.contains("was refused: Agent access was lowered."), "{said}");
         assert!(agents::snapshot().waiting.is_empty());
         // That counts against nobody, and at this level there is nothing to ask for anyway.
-        let (failed, said) = agent("write_module_file", json!({"module": "clean-data", "path": "python/clean.py", "text": "changed"}));
+        let (failed, said) = agent("write_project_file", json!({"project": "clean-data", "path": "python/clean.py", "text": "changed"}));
         assert!(failed && said.starts_with("Not allowed:") && said.contains("\"Read only\""), "{said}");
         // Turning agents off while something waits refuses it too.
         choose(&mut h, Level::Ask);
-        let id = asks(&mut h, "stop_trusting_module", json!({"module": "clean-data"}));
+        let id = asks(&mut h, "stop_trusting_project", json!({"project": "clean-data"}));
         assert_eq!(agents::snapshot().waiting[0].id, id);
         choose(&mut h, Level::Off);
         assert!(!agents::snapshot().serving);
@@ -2284,7 +2287,7 @@ mod tests {
         choose(&mut h, Level::Ask);
         h.state_mut().dialog = None;
         h.run_steps(2);
-        let script = s.0.join("modules/clean-data/python/clean.py");
+        let script = s.0.join("projects/clean-data/python/clean.py");
         let before = std::fs::read_to_string(&script).unwrap();
         let first = "def main(data):\n    return 1\n";
         let second = "def main(data):\n    print('doubling')\n    return {'twice': data['n'] * 2}\n";
@@ -2294,10 +2297,10 @@ mod tests {
             json!({
                 "title": "Double it", "purpose": "Make clean.py double a number, and try it.",
                 "steps": [
-                    {"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "python/clean.py", "text": first}},
-                    {"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "python/clean.py", "text": second}},
-                    {"tool": "trust_module", "arguments": {"module": "clean-data"}},
-                    {"tool": "run_script", "arguments": {"module": "clean-data", "script": "clean.py", "data": {"n": 21}}},
+                    {"tool": "write_project_file", "arguments": {"project": "clean-data", "path": "python/clean.py", "text": first}},
+                    {"tool": "write_project_file", "arguments": {"project": "clean-data", "path": "python/clean.py", "text": second}},
+                    {"tool": "trust_project", "arguments": {"project": "clean-data"}},
+                    {"tool": "run_script", "arguments": {"project": "clean-data", "script": "clean.py", "data": {"n": 21}}},
                 ],
             }),
         );
@@ -2310,15 +2313,15 @@ mod tests {
         h.get_by_label("What the agent says it is for: \"Make clean.py double a number, and try it.\"");
         h.get_by_label_contains("Its files that this plan doesn't write are trusted as they are now.");
         h.get_by_label_contains("Nothing is done now. Each step is done later, when the agent asks for it");
-        for heading in ["Step 1 of 4  ·  Edit file", "Step 2 of 4  ·  Edit file", "Step 3 of 4  ·  Trust module", "Step 4 of 4  ·  Run script"] {
+        for heading in ["Step 1 of 4  ·  Edit file", "Step 2 of 4  ·  Edit file", "Step 3 of 4  ·  Trust project", "Step 4 of 4  ·  Run script"] {
             h.get_by_label(heading);
         }
         // Each step is shown as it will find things: the second edit takes out what the first put in.
         assert_eq!(h.query_all_by_label_contains("return 1").count(), 2, "put in by step 1, taken out by step 2");
         assert_eq!(h.query_all_by_label_contains("return {'twice': data['n'] * 2}").count(), 1);
-        h.get_by_label_contains("As the steps before this one leave it, it will contain 3 files: module.toml, panel/index.html, python/clean.py.");
+        h.get_by_label_contains("As the steps before this one leave it, it will contain 3 files: panel/index.html, project.toml, python/clean.py.");
         h.get_by_label_contains("Run its Python scripts. This cannot be limited");
-        // What in it trusts a module or runs code is said by itself.
+        // What in it trusts a project or runs code is said by itself.
         h.get_by_label("Step 3 trusts clean-data: from then on its code can run, with what it asks to be allowed.");
         h.get_by_label("Step 4 runs \"clean.py\" of clean-data: a script can do anything a program you run can do.");
         h.get_by_label("Do you want to approve this plan, as the agent proposes it?");
@@ -2335,7 +2338,7 @@ mod tests {
             "  3. Trust clean-data",
             "  4. Run \"clean.py\" of clean-data",
             "Nothing is done now.",
-            "It trusts a module and runs its code",
+            "It trusts a project and runs its code",
             tag.as_str(),
             "Approve the plan?",
         ] {
@@ -2364,11 +2367,11 @@ mod tests {
         let (failed, said) = step(&mut h, plan, 2);
         assert!(!failed, "{said}");
         assert_eq!(std::fs::read_to_string(&script).unwrap(), second);
-        assert_eq!(list()["modules"][0]["status"], "untrusted");
+        assert_eq!(list()["projects"][0]["status"], "untrusted");
         let (failed, said) = step(&mut h, plan, 3);
         assert!(!failed && said.contains("clean-data is trusted as it is now."), "{said}");
-        assert_eq!(list()["modules"][0]["status"], "trusted");
-        assert_eq!(list()["modules"][0]["followsChanges"], false);
+        assert_eq!(list()["projects"][0]["status"], "trusted");
+        assert_eq!(list()["projects"][0]["followsChanges"], false);
         assert_eq!(asked.questions().len(), questions + 1, "the plan was the one thing asked");
         assert!(agents::snapshot().waiting.is_empty() && h.state().notice.is_none());
         h.get_by_label_contains("3 of 4 done");
@@ -2387,7 +2390,7 @@ mod tests {
         let data: Json = serde_json::from_str(rest.split_once(">\n").unwrap().1.rsplit_once("\n</untrusted-data-").unwrap().0).unwrap();
         assert_eq!(data["result"], json!({"twice": 42}));
         assert_eq!(data["printed"].as_str().map(str::trim), Some("doubling"));
-        PythonHost::global().stop(&s.0.join("modules"), "clean-data");
+        PythonHost::global().stop(&s.0.join("projects"), "clean-data");
         // It is over: the window says so, and nothing more of it can be asked for.
         h.run_steps(3);
         h.get_by_label_contains("4 of 4 done  ·  ended: every step was carried out");
@@ -2397,7 +2400,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plans_step_waits_while_its_module_is_not_as_the_plan_left_it_and_the_person_can_stop_the_plan() {
+    fn a_plans_step_waits_while_its_project_is_not_as_the_plan_left_it_and_the_person_can_stop_the_plan() {
         let s = Sandbox::new("agents-plan-fits");
         create("Clean Data").unwrap();
         let asked = yes();
@@ -2407,10 +2410,10 @@ mod tests {
         choose(&mut h, Level::Ask);
         h.state_mut().dialog = None;
         h.run_steps(2);
-        let script = s.0.join("modules/clean-data/python/clean.py");
-        let notes = s.0.join("modules/clean-data/notes.txt");
+        let script = s.0.join("projects/clean-data/python/clean.py");
+        let notes = s.0.join("projects/clean-data/notes.txt");
         let before = std::fs::read_to_string(&script).unwrap();
-        let write = |text: &str| json!({"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "notes.txt", "text": text}});
+        let write = |text: &str| json!({"tool": "write_project_file", "arguments": {"project": "clean-data", "path": "notes.txt", "text": text}});
         let plan = asks(&mut h, "propose_plan", json!({"title": "Notes", "purpose": "Keep notes.", "steps": [write("one\n"), write("two\n")]}));
         open(&mut h);
         look(&mut h);
@@ -2420,7 +2423,7 @@ mod tests {
         approve_plan(&mut h);
         assert_eq!(asked.questions().len(), questions, "nothing but the person can click here");
         assert_eq!(agents::snapshot().plans[0].ended, None);
-        // Something else changes the module: the plan was approved for the files as they stood.
+        // Something else changes the project: the plan was approved for the files as they stood.
         std::fs::write(&script, "def main(data):\n    return 'changed by hand'\n").unwrap();
         let (failed, said) = step(&mut h, plan, 1);
         assert!(failed && said.contains("clean-data's files are not as the plan's steps left them"), "{said}");
@@ -2454,10 +2457,10 @@ mod tests {
         choose(&mut h, Level::Ask);
         h.state_mut().dialog = None;
         h.run_steps(2);
-        let script = s.0.join("modules/clean-data/python/clean.py");
-        let delete = json!({"tool": "delete_module_file", "arguments": {"module": "clean-data", "path": "python/clean.py"}});
+        let script = s.0.join("projects/clean-data/python/clean.py");
+        let delete = json!({"tool": "delete_project_file", "arguments": {"project": "clean-data", "path": "python/clean.py"}});
         let plan = asks(&mut h, "propose_plan", json!({"title": "Tidy", "purpose": "Take the script out.", "steps": [delete]}));
-        // The module changes before the person answers: it is no longer the one the plan was
+        // The project changes before the person answers: it is no longer the one the plan was
         // proposed for. (So it is with trust asked for by itself.)
         let before = std::fs::read_to_string(&script).unwrap();
         std::fs::write(&script, "def main(data):\n    return 'not what was proposed for'\n").unwrap();
@@ -2480,17 +2483,17 @@ mod tests {
         std::fs::write(&script, &before).unwrap();
         // Nor one whose steps no longer fit: here the person takes back the trust its run needs.
         h.run_steps(3);
-        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
-        let run = json!({"tool": "run_script", "arguments": {"module": "clean-data", "script": "clean.py"}});
+        trust(h.state(), "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        let run = json!({"tool": "run_script", "arguments": {"project": "clean-data", "script": "clean.py"}});
         let plan = asks(&mut h, "propose_plan", json!({"title": "Run", "purpose": "Try it.", "steps": [run]}));
-        gridcraft_aniefork_dev::TrustStore::load(&s.0.join("trusted-modules.json")).revoke("clean-data").unwrap();
+        gridcraft_aniefork_dev::TrustStore::load(&s.0.join("trusted-projects.json")).revoke("clean-data").unwrap();
         look(&mut h);
         h.get_by_label_contains("so it can't be approved. Step 1: clean-data will not be trusted when \"clean.py\" is to run");
         let refused = agents::answer(h.state_mut(), &ctx, plan, agents::Said::Yes).unwrap_err();
         assert!(refused.contains("Step 1: clean-data will not be trusted"), "{refused}");
         // A plan that was approved ends when the person lets agents go less far.
         h.run_steps(3);
-        let write = json!({"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "notes.txt", "text": "n\n"}});
+        let write = json!({"tool": "write_project_file", "arguments": {"project": "clean-data", "path": "notes.txt", "text": "n\n"}});
         let plan = asks(&mut h, "propose_plan", json!({"title": "Notes", "purpose": "Keep notes.", "steps": [write]}));
         look(&mut h);
         approve_plan(&mut h);
@@ -2498,7 +2501,7 @@ mod tests {
         choose(&mut h, Level::Read);
         assert_eq!(agents::snapshot().plans[0].ended.as_deref(), Some("agent access was lowered"));
         let (failed, said) = step(&mut h, plan, 1);
-        assert!(failed && !s.0.join("modules/clean-data/notes.txt").exists(), "{said}");
+        assert!(failed && !s.0.join("projects/clean-data/notes.txt").exists(), "{said}");
         let report = h.state_mut().run("developer.agents", json!({})).unwrap();
         assert_eq!(report["plans"][0]["ended"], "agent access was lowered");
     }
@@ -2585,7 +2588,7 @@ mod tests {
         assert!(page(&mut h, json!({"act": "ready"})), "a page that has just loaded is told everything again");
         // An agent asks. The window is open: it never turns to a card by itself.
         let text = "def main(data):\n    return 'from the agent'\n";
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/extra.py", "text": text}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/extra.py", "text": text}));
         let now = told(&mut h);
         assert_eq!(now["looking"], Json::Null);
         assert_eq!(now["nav"][1]["badge"], "1", "the list says that something waits there");
@@ -2602,7 +2605,7 @@ mod tests {
         assert!(shown["yesAnd"].as_str().unwrap().starts_with("2. Yes, and don't ask again for changes to clean-data's files"));
         assert_eq!(shown["asker"], "The agent gave no name.");
         // A yes for another card than the one on screen answers nothing.
-        let file = s.0.join("modules/clean-data/python/extra.py");
+        let file = s.0.join("projects/clean-data/python/extra.py");
         std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
         page(&mut h, json!({"act": "allow", "id": id + 1}));
         assert!(!file.exists() && stands(id).1.contains("is waiting for the person"));
@@ -2620,14 +2623,14 @@ mod tests {
         // What is too long to show is not said yes to, whatever the page sends; a no carries
         // the person's word.
         let long = "x = 1\n".repeat(card::SHOWN / 6 + 1);
-        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/long.py", "text": long}));
+        let id = asks(&mut h, "write_project_file", json!({"project": "clean-data", "path": "python/long.py", "text": long}));
         page(&mut h, json!({"act": "look", "id": id}));
         let shown = told(&mut h)["looking"].clone();
         assert_eq!((&shown["blocked"], &shown["blockedWhy"]), (&json!(true), &json!(card::TOO_LONG)));
         std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
         page(&mut h, json!({"act": "allow", "id": id}));
         assert_eq!(told(&mut h)["error"], card::TOO_LONG);
-        assert!(!s.0.join("modules/clean-data/python/long.py").exists());
+        assert!(!s.0.join("projects/clean-data/python/long.py").exists());
         page(&mut h, json!({"act": "refuse", "id": id, "reason": "smaller pieces, please"}));
         let (failed, said) = stands(id);
         assert!(failed && said.contains("They tell you: \"smaller pieces, please\""), "{said}");
@@ -2653,8 +2656,8 @@ mod tests {
         assert_eq!(agents::snapshot().level, before);
         assert!(h.state().dialog.is_none());
         // Its other windows open in GridCraft's own.
-        page(&mut h, json!({"act": "open", "name": "modules"}));
-        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(modules::NAME));
+        page(&mut h, json!({"act": "open", "name": "projects"}));
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
         h.state_mut().dialog = None;
         page(&mut h, json!({"act": "open", "name": "macros"}));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::macros::NAME));
@@ -2678,10 +2681,10 @@ mod tests {
         );
         assert_eq!(made["forSays"], json!(format!("It says it is the code of the workbook {title:?}, which is open now.")));
         assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "project:budget-macros" && row["selected"] == true));
-        assert_eq!(list()["modules"].as_array().unwrap().iter().find(|m| m["id"] == "budget-macros").unwrap()["status"], "untrusted");
+        assert_eq!(list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "budget-macros").unwrap()["status"], "untrusted");
         assert_eq!(asked.questions().len(), 1, "creating it asked nothing and trusted nothing");
         // A project that is gone gives way to its kit.
-        std::fs::remove_dir_all(s.0.join("modules/budget-macros")).unwrap();
+        std::fs::remove_dir_all(s.0.join("projects/budget-macros")).unwrap();
         assert_eq!(told(&mut h)["pane"]["kind"], "kit");
         // The person can have GridCraft's own window instead, until GridCraft closes.
         page(&mut h, json!({"act": "builtin"}));
@@ -2752,8 +2755,8 @@ mod tests {
         h.get_by_label_contains("Python: found automatically.");
         h.get_by_label(kits::PROJECTS_NOTE);
         h.get_by_label("None yet.");
-        click(&mut h, "Modules…");
-        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(modules::NAME));
+        click(&mut h, "Projects…");
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
         open_top(&mut h);
         go(&mut h, "Anie Development Kit");
         click(&mut h, "Console…");
@@ -2775,7 +2778,7 @@ mod tests {
         h.run_steps(2);
         click(&mut h, "Create Project");
         let title = h.state().session.active().unwrap().title.clone();
-        let made = gridcraft_aniefork_dev::module::load(&s.0.join("modules/budget-macros"));
+        let made = gridcraft_aniefork_dev::project::load(&s.0.join("projects/budget-macros"));
         assert_eq!(made.manifest.unwrap().workbook, Some(title.clone()));
         // The window turns to what was made, which is not trusted.
         h.get_by_label("Anie Development Kit  ·  Workbook code");
@@ -2804,18 +2807,18 @@ mod tests {
         let mut h = harness(app);
         open_top(&mut h);
         go(&mut h, "Anie Development Kit");
-        // Created like any module: on disk, and not trusted.
+        // Created like any project: on disk, and not trusted.
         click(&mut h, "Create Showcase");
-        assert!(s.0.join("modules/svelte-showcase/panel/app.js").is_file() && s.0.join("modules/svelte-showcase/source/src/App.svelte").is_file());
+        assert!(s.0.join("projects/svelte-showcase/panel/app.js").is_file() && s.0.join("projects/svelte-showcase/source/src/App.svelte").is_file());
         let listed = list();
-        let made = listed["modules"].as_array().unwrap().iter().find(|m| m["id"] == showcase::ID).unwrap().clone();
+        let made = listed["projects"].as_array().unwrap().iter().find(|m| m["id"] == showcase::ID).unwrap().clone();
         assert_eq!((made["status"].as_str(), made["name"].as_str()), (Some("untrusted"), Some("Svelte Showcase")));
         assert_eq!(made["asks"].as_array().unwrap().iter().map(|a| a["permission"].as_str().unwrap()).collect::<Vec<_>>(), ["read", "write"]);
         h.get_by_label_contains("Svelte Showcase was created. It is not trusted yet");
-        h.get_by_label_contains("review and trust it in Modules, then come back");
+        h.get_by_label_contains("review and trust it in Projects, then come back");
         assert!(h.query_by_label("Dock Showcase").is_none() && h.query_by_label("Create Showcase").is_none());
         assert!(asked.questions().is_empty(), "creating it asked nothing and trusted nothing");
-        // The person trusts it, as they would any module: the operating system asks.
+        // The person trusts it, as they would any project: the operating system asks.
         trust(h.state(), showcase::ID, made["fingerprint"].as_str().unwrap(), false).unwrap();
         assert_eq!(asked.questions().len(), 1);
         h.run_steps(3);
@@ -2837,7 +2840,7 @@ mod tests {
         click(&mut h, "Dock Showcase");
         assert!(h.state().dialog.is_none(), "{:?}", h.state().message);
         let docked = dock::docked(&ctx).unwrap();
-        assert_eq!((docked.module.as_str(), docked.name.as_str(), docked.network), (showcase::ID, "Svelte Showcase", false));
+        assert_eq!((docked.project.as_str(), docked.name.as_str(), docked.network), (showcase::ID, "Svelte Showcase", false));
         h.run_steps(3);
         assert!(dock::wanted(&ctx).is_some_and(|wanted| wanted.rect.is_some()));
         assert_eq!(docked.address, opened.borrow()[0], "the same panel the browser was given, on the same bridge");

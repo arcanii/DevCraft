@@ -1,5 +1,5 @@
 //! What a project says it rebuilds of a workbook's macros: `rebuilt.toml`, beside its
-//! `module.toml`.
+//! `project.toml`.
 //!
 //! GridCraft does not run VBA. What a workbook's macros did is rebuilt as a project (ADR-0001,
 //! "Macros"), by a person or by an agent helping them. This file is the project's note of
@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::manifest;
-use crate::module::Module;
+use crate::project::Project;
 
 /// The file's name in a project's folder.
 pub const FILE: &str = "rebuilt.toml";
@@ -180,7 +180,7 @@ pub fn read(dir: &Path) -> Option<Result<Note, String>> {
 }
 
 /// Whether the script a note names is among the project's files.
-fn has_script(project: &Module, script: &str) -> bool {
+fn has_script(project: &Project, script: &str) -> bool {
     let Some(folder) = project.manifest.as_ref().and_then(|manifest| manifest.python.as_deref()) else { return false };
     let path = format!("{folder}/{script}");
     project.files.contains(&path)
@@ -188,7 +188,7 @@ fn has_script(project: &Module, script: &str) -> bool {
 
 /// A project's note, as it is reported with the project: what it says of each procedure, how
 /// many of each state, and whether a script it names is missing. `Null` when it has none.
-pub fn describe(project: &Module) -> Json {
+pub fn describe(project: &Project) -> Json {
     match read(&project.dir) {
         None => Json::Null,
         Some(Err(problem)) => json!({"problem": problem, "procedures": [], "rebuilt": 0, "partly": 0, "left": 0}),
@@ -255,7 +255,7 @@ impl Claim {
 /// What the projects that are the code of the workbook named `workbook` say of its macros:
 /// every entry of every such project's note. Projects that can't be read, and notes that
 /// can't, say nothing.
-pub fn claims(projects: &[Module], workbook: &str) -> Vec<Claim> {
+pub fn claims(projects: &[Project], workbook: &str) -> Vec<Claim> {
     let mut all = Vec::new();
     for project in projects {
         let Some(manifest) = &project.manifest else { continue };
@@ -310,8 +310,8 @@ pub fn mark(summary: &mut Json, claims: &[Claim]) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::tests::TempDir;
-    use crate::module::{self};
+    use crate::project::tests::TempDir;
+    use crate::project::{self};
     use crate::vba;
 
     const NOTE: &str = r#"
@@ -336,17 +336,17 @@ state = "partly"
 script = "report.py"
 "#;
 
-    fn project(t: &TempDir, id: &str, workbook: Option<&str>, note: Option<&str>) -> Module {
+    fn project(t: &TempDir, id: &str, workbook: Option<&str>, note: Option<&str>) -> Project {
         let names = workbook.map(|name| format!("workbook = {name:?}\n")).unwrap_or_default();
         t.write(
-            &format!("{id}/module.toml"),
+            &format!("{id}/project.toml"),
             &format!("id = \"{id}\"\nname = \"The {id}\"\nversion = \"1\"\npermissions = [\"python\"]\n{names}\n[python]\nscripts = \"python\"\n"),
         );
         t.write(&format!("{id}/python/add_up.py"), "def main(data):\n    return 1\n");
         if let Some(note) = note {
             t.write(&format!("{id}/{FILE}"), note);
         }
-        module::load(&t.0.join(id))
+        project::load(&t.0.join(id))
     }
 
     #[test]

@@ -1,38 +1,38 @@
-//! The bridge: a small HTTP server, on the loopback address only, that serves a trusted module's
+//! The bridge: a small HTTP server, on the loopback address only, that serves a trusted project's
 //! panel to the user's browser and carries the panel's calls to GridCraft.
 //!
-//! Each module that is served gets a port of its own, so that the browser keeps the panels of two
-//! modules apart (a page's origin is its address and port), and a secret token made for this run,
+//! Each project that is served gets a port of its own, so that the browser keeps the panels of two
+//! projects apart (a page's origin is its address and port), and a secret token made for this run,
 //! which starts every path. A request is answered only when all of this holds:
 //!
 //! - it names this bridge by its loopback address (a name someone pointed at this machine is
 //!   refused), and the browser doesn't say that a page of another site is asking;
-//! - its path starts with the module's token;
-//! - **the module is trusted as it is on disk now.** It is read, and the user's decisions with
-//!   it, for every request: a module that was changed or is no longer trusted stops being served
+//! - its path starts with the project's token;
+//! - **the project is trusted as it is on disk now.** It is read, and the user's decisions with
+//!   it, for every request: a project that was changed or is no longer trusted stops being served
 //!   at once;
-//! - a file is one of the module's own, under its panel folder; a call comes from the module's
+//! - a file is one of the project's own, under its panel folder; a call comes from the project's
 //!   own page (the browser names the page that asks) and is JSON.
 //!
 //! What a panel may call:
 //!
 //! - `runPython` is answered here, by [`crate::python`], which checks trust again for itself.
 //!   What the script asks of the spreadsheet while it runs (`import spreadsheet`) is carried to
-//!   the app like a panel's own calls: the module is read from disk again for each, and the
-//!   script gets only what the module was granted ([`Bridge::script_calls`]).
+//!   the app like a panel's own calls: the project is read from disk again for each, and the
+//!   script gets only what the project was granted ([`Bridge::script_calls`]).
 //! - `run`, `batch` and `selection` need the workbook, which only the app has. They are put in a
-//!   queue as [`Call`]s, with what the module was granted, for the app to carry out on its own
+//!   queue as [`Call`]s, with what the project was granted, for the app to carry out on its own
 //!   thread ([`Bridge::take_calls`]). The app decides what each command needs ([`needs`]).
 //! - `events` hands a panel what happened in GridCraft since it last asked ([`EVENTS`]), waiting a
 //!   while for something to happen if nothing has. The app says what happened ([`Bridge::emit`]);
-//!   a module that wasn't granted `read` is told nothing.
+//!   a project that wasn't granted `read` is told nothing.
 //! - `log` writes a line to the Developer console ([`crate::console`]).
 //!
 //! The panel is given its `spreadsheet` object by [`CLIENT`], a script served beside the page, and
 //! TypeScript is told its shape by [`typings`]. Both are text made here: the repository holds no
 //! JavaScript files.
 //!
-//! A module that wasn't granted `network` is served with a policy that makes the browser refuse
+//! A project that wasn't granted `network` is served with a policy that makes the browser refuse
 //! its requests to anywhere but this bridge. In a browser that policy cannot stop a page from
 //! sending the user to another address, which can carry data with it: that needs the panel docked
 //! in the window, where GridCraft decides where a page may go.
@@ -47,10 +47,10 @@ use serde_json::Value as Json;
 
 use crate::manifest::Permission;
 
-/// Where this run keeps modules, the user's decisions and the subsystem's settings.
+/// Where this run keeps projects, the user's decisions and the subsystem's settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Places {
-    pub modules: PathBuf,
+    pub projects: PathBuf,
     pub trust: PathBuf,
     pub settings: PathBuf,
 }
@@ -79,17 +79,17 @@ impl Default for Limits {
 }
 
 /// The events a panel can listen for (`spreadsheet.on`), and what each tells. All of them say
-/// something about the open workbooks, so a module needs `read` to be told any.
+/// something about the open workbooks, so a project needs `read` to be told any.
 pub const EVENTS: &[(&str, &str)] = &[
     ("selectionChanged", "{workbook, sheet, range, active}: the selection moved, or another sheet was chosen"),
     ("workbookChanged", "{workbook}: something in the workbook changed (an edit, an undo, a redo)"),
     ("workbookActivated", "{workbook}: another workbook became the one being worked on (it was opened, or switched to)"),
 ];
 
-/// The most events kept for a module's panels to collect. When more pile up the oldest are
+/// The most events kept for a project's panels to collect. When more pile up the oldest are
 /// dropped, and a panel that hadn't collected them is told it missed some.
 pub const MAX_EVENTS: usize = 256;
-/// The most panels of one module that can be kept waiting for events at once. More are answered
+/// The most panels of one project that can be kept waiting for events at once. More are answered
 /// at once and told to ask again in a moment.
 pub const MAX_LISTENERS: usize = 8;
 
@@ -111,7 +111,7 @@ pub enum Kind {
     Changes,
 }
 
-/// What a module must have been granted to make this call.
+/// What a project must have been granted to make this call.
 ///
 /// A command given a `path` reads or writes a file, whatever else it is; so do the `file.`
 /// commands that aren't reports (`file.properties` only changes the workbook).
@@ -133,7 +133,7 @@ pub struct CommandDoc {
     pub id: String,
     pub label: String,
     pub params: String,
-    /// What a module needs to run it without a `path`.
+    /// What a project needs to run it without a `path`.
     pub needs: Permission,
 }
 
@@ -150,8 +150,8 @@ pub enum Request {
 
 /// A call waiting for the app: who asks, what they were granted, and what they ask.
 pub struct Call {
-    /// The module's id.
-    pub module: String,
+    /// The project's id.
+    pub project: String,
     /// Its name, for what the user sees (the label of an undo step).
     pub name: String,
     /// What the user granted it, as of this call.
@@ -175,7 +175,7 @@ impl Call {
 
 /// The script that gives a panel its `spreadsheet` object. Served as `spreadsheet.js` beside the
 /// panel's page, it finds the bridge from its own address.
-pub const CLIENT: &str = r#"// GridCraft: the `spreadsheet` object of a module's panel. Served by GridCraft; not a file to edit.
+pub const CLIENT: &str = r#"// GridCraft: the `spreadsheet` object of a project's panel. Served by GridCraft; not a file to edit.
 (function () {
   "use strict";
   const api = new URL("api", document.currentScript.src).href;
@@ -351,7 +351,7 @@ pub const CLIENT: &str = r#"// GridCraft: the `spreadsheet` object of a module's
 })();
 "#;
 
-const TYPINGS: &str = r#"// GridCraft: the types of the `spreadsheet` object a module's panel is given.
+const TYPINGS: &str = r#"// GridCraft: the types of the `spreadsheet` object a project's panel is given.
 // Made from this copy of GridCraft's commands; not a file to edit.
 
 /** What a command takes. Each command's line in `SpreadsheetCommands` says what it reads. */
@@ -365,8 +365,8 @@ interface SpreadsheetSelection {
 }
 
 interface SpreadsheetInfo {
-  module: { id: string; name: string; version: string };
-  /** What the user granted the module: "read", "write", "files", "network", "python". */
+  project: { id: string; name: string; version: string };
+  /** What the user granted the project: "read", "write", "files", "network", "python". */
   granted: string[];
 }
 
@@ -437,7 +437,7 @@ interface Spreadsheet {
   /** Runs several commands as one undo step. If one fails, none of them stays. */
   batch(commands: SpreadsheetStep[], options?: { label?: string }): Promise<any[]>;
   /**
-   * Runs one of the module's own Python scripts. Its `main(data)` is handed `data`, and what it
+   * Runs one of the project's own Python scripts. Its `main(data)` is handed `data`, and what it
    * returns comes back. `timeout` is in seconds; `printed` is handed what the script printed.
    */
   runPython(script: string, data?: unknown, options?: { timeout?: number; printed?: (text: string) => void }): Promise<any>;
@@ -447,7 +447,7 @@ interface Spreadsheet {
   read(range?: string, options?: { sheet?: string; formulas?: boolean; formatted?: boolean }): Promise<unknown[][]>;
   /** Writes rows of values from the range's first cell. Text that starts with = is a formula. */
   write(range: string, rows: unknown[][], options?: { sheet?: string }): Promise<any>;
-  /** The module, and what the user granted it. */
+  /** The project, and what the user granted it. */
   info(): Promise<SpreadsheetInfo>;
   /** A sheet, by name; without one, whichever sheet is active. Nothing is asked of GridCraft until it is used. */
   sheet(name?: string): SpreadsheetSheet;
@@ -470,7 +470,7 @@ interface Spreadsheet {
 declare const spreadsheet: Spreadsheet;
 
 /**
- * Every command `spreadsheet.run` takes: its name, what it takes, and what the module must have
+ * Every command `spreadsheet.run` takes: its name, what it takes, and what the project must have
  * been granted. A command given a `path` needs `files` as well.
  */
 interface SpreadsheetCommands {
@@ -557,20 +557,20 @@ mod server {
     use crate::http::{self, Incoming, lock, same};
     use crate::python::{self, PythonHost, RunError};
     use crate::trust::{Status, TrustStore};
-    use crate::{manifest, module, settings};
+    use crate::{manifest, project, settings};
 
-    /// The most requests answered at once for one module; more are turned away.
+    /// The most requests answered at once for one project; more are turned away.
     const MAX_CONNECTIONS: usize = 32;
     /// The most events handed to a panel in one answer.
     const EVENTS_A_REPLY: usize = 64;
 
-    /// What the browser is told when the module wasn't granted `network`: load and call nothing
+    /// What the browser is told when the project wasn't granted `network`: load and call nothing
     /// that isn't this bridge's.
     const CLOSED: &str = "default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
     /// With `network`: anything, but still in no other page's frame.
     const OPEN: &str = "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
-    /// What every module's listener shares: the queue to the app.
+    /// What every project's listener shares: the queue to the app.
     struct Shared {
         wake: Box<dyn Fn() + Send + Sync>,
         calls: Mutex<VecDeque<Call>>,
@@ -578,7 +578,7 @@ mod server {
         limits: Limits,
     }
 
-    /// What happened lately, for a module's panels to collect.
+    /// What happened lately, for a project's panels to collect.
     #[derive(Default)]
     struct Events {
         /// The place of the latest event: 0 before the first.
@@ -588,7 +588,7 @@ mod server {
         kept: VecDeque<(u64, Event)>,
     }
 
-    /// One module being served.
+    /// One project being served.
     struct Site {
         id: String,
         token: String,
@@ -597,7 +597,7 @@ mod server {
         stop: AtomicBool,
         open: AtomicUsize,
         events: Mutex<Events>,
-        /// Told when there is an event to collect, or the module stops being served.
+        /// Told when there is an event to collect, or the project stops being served.
         news: Condvar,
         /// How many panels are being kept waiting for events.
         listening: AtomicUsize,
@@ -639,9 +639,9 @@ mod server {
             *lock(&self.0.shared.commands) = Arc::new(commands);
         }
 
-        /// Starts serving the module `id` and returns the address of its panel. The address holds
-        /// the module's token: it is for the user's browser, and nothing else should be shown it.
-        /// Refused unless the user trusts the module as it is on disk now and it has a panel.
+        /// Starts serving the project `id` and returns the address of its panel. The address holds
+        /// the project's token: it is for the user's browser, and nothing else should be shown it.
+        /// Refused unless the user trusts the project as it is on disk now and it has a panel.
         pub fn serve(&self, places: &Places, id: &str) -> Result<String, String> {
             let (found, _) = trusted(places, id)?;
             if found.manifest.as_ref().is_none_or(|m| m.panel.is_none()) {
@@ -675,14 +675,14 @@ mod server {
             Ok(address(&site))
         }
 
-        /// Stops serving the module `id`.
+        /// Stops serving the project `id`.
         pub fn stop(&self, id: &str) {
             if let Some(site) = lock(&self.0.sites).remove(id) {
                 halt(&site);
             }
         }
 
-        /// The modules being served.
+        /// The projects being served.
         pub fn serving(&self) -> Vec<String> {
             let mut ids: Vec<String> = lock(&self.0.sites).keys().cloned().collect();
             ids.sort();
@@ -703,10 +703,10 @@ mod server {
             taken
         }
 
-        /// Tells the panels of every module being served that something happened.
+        /// Tells the panels of every project being served that something happened.
         ///
         /// An event of the same name that is still the latest one waiting is replaced: a panel
-        /// wants where the selection is, not every place it has been. Whether a module is told
+        /// wants where the selection is, not every place it has been. Whether a project is told
         /// is decided when its panel asks, by what the user has granted it by then.
         pub fn emit(&self, event: &Event) {
             for site in lock(&self.0.sites).values() {
@@ -727,15 +727,15 @@ mod server {
             }
         }
 
-        /// How many panels of the module `id` are being kept waiting for events right now.
+        /// How many panels of the project `id` are being kept waiting for events right now.
         pub fn listeners(&self, id: &str) -> usize {
             lock(&self.0.sites).get(id).map_or(0, |site| site.listening.load(Ordering::SeqCst))
         }
 
-        /// What answers the calls a script of the module `id` makes to the spreadsheet while it
+        /// What answers the calls a script of the project `id` makes to the spreadsheet while it
         /// runs ([`crate::python::Calls`]), for a script that was not started by a panel. Each
-        /// call is put in the queue for the app, as a panel's is, after the module has been read
-        /// from disk again: a script gets what its module is granted at that moment.
+        /// call is put in the queue for the app, as a panel's is, after the project has been read
+        /// from disk again: a script gets what its project is granted at that moment.
         pub fn script_calls(&self, places: &Places, id: &str) -> impl Fn(&Json) -> Result<Json, String> + Send + Sync + use<> {
             let (shared, places, id) = (self.0.shared.clone(), places.clone(), id.to_string());
             move |call: &Json| script_call(&shared, &places, &id, call)
@@ -779,16 +779,16 @@ mod server {
         }
     }
 
-    /// The module as it is on disk now and what the user granted it, or why it isn't served.
-    fn trusted(places: &Places, id: &str) -> Result<(module::Module, Vec<Permission>), String> {
+    /// The project as it is on disk now and what the user granted it, or why it isn't served.
+    fn trusted(places: &Places, id: &str) -> Result<(project::Project, Vec<Permission>), String> {
         if !manifest::valid_id(id) {
-            return Err("That is not a module.".into());
+            return Err("That is not a project.".into());
         }
-        let found = module::load(&places.modules.join(id));
+        let found = project::load(&places.projects.join(id));
         match TrustStore::load(&places.trust).status(&found) {
             Status::Trusted(granted) => Ok((found, granted)),
-            Status::Changed => Err(format!("{} has changed since you trusted it. Review it again in Developer > Modules.", found.name())),
-            Status::Untrusted => Err(format!("{} is not trusted. Trust it in Developer > Modules first.", found.name())),
+            Status::Changed => Err(format!("{} has changed since you trusted it. Review it again in Developer > Projects.", found.name())),
+            Status::Untrusted => Err(format!("{} is not trusted. Trust it in Developer > Projects first.", found.name())),
             Status::Problem(why) => Err(format!("{} can't be used: {why}.", found.name())),
         }
     }
@@ -799,7 +799,7 @@ mod server {
         kind: &'static str,
         body: Vec<u8>,
         allow: Option<&'static str>,
-        /// The module was granted `network`.
+        /// The project was granted `network`.
         network: bool,
     }
 
@@ -869,7 +869,7 @@ mod server {
         // comes from say "none" for an address the user opened themselves.)
         match request.header("sec-fetch-site") {
             Ok(None | Some("same-origin" | "none")) => {}
-            _ => return Reply::plain(403, "Forbidden", "Only the module's own panel is served."),
+            _ => return Reply::plain(403, "Forbidden", "Only the project's own panel is served."),
         }
         let path = request.target.split(['?', '#']).next().unwrap_or("");
         let mut parts = path.splitn(3, '/');
@@ -937,9 +937,9 @@ mod server {
         }
     }
 
-    /// A file of the module's panel: the page itself for the bare address, otherwise the path
-    /// beside it. Only what is in the module's own list of files, which is what the user trusted.
-    fn file(found: &module::Module, rest: &str) -> Reply {
+    /// A file of the project's panel: the page itself for the bare address, otherwise the path
+    /// beside it. Only what is in the project's own list of files, which is what the user trusted.
+    fn file(found: &project::Project, rest: &str) -> Reply {
         let Some(manifest) = &found.manifest else { return Reply::missing() };
         let Some(entry) = manifest.panel.as_deref() else { return Reply::missing() };
         let (folder, page) = entry.rsplit_once('/').map_or(("", entry), |(folder, page)| (folder, page));
@@ -952,9 +952,9 @@ mod server {
             }
         };
         let inner = if folder.is_empty() { wanted } else { format!("{folder}/{wanted}") };
-        // A panel at the top of its module doesn't get the manifest or the scripts with it.
+        // A panel at the top of its project doesn't get the manifest or the scripts with it.
         let script = manifest.python.as_deref().is_some_and(|scripts| inner.starts_with(&format!("{scripts}/")));
-        if inner == manifest::FILE || script || !found.files.contains(&inner) {
+        if manifest::is_manifest(&inner) || script || !found.files.contains(&inner) {
             return Reply::missing();
         }
         match std::fs::read(found.dir.join(&inner)) {
@@ -963,11 +963,11 @@ mod server {
         }
     }
 
-    fn api(site: &Site, request: &Incoming, found: &module::Module, granted: &[Permission], host: &str) -> Reply {
+    fn api(site: &Site, request: &Incoming, found: &project::Project, granted: &[Permission], host: &str) -> Reply {
         let refuse = |status, reason, why: &str| Reply::json(status, reason, &json!({"ok": false, "error": why}));
-        // Only the module's own page may call: the browser names the page that asks.
+        // Only the project's own page may call: the browser names the page that asks.
         if request.header("origin") != Ok(Some(format!("http://{host}").as_str())) {
-            return refuse(403, "Forbidden", "Only this module's own panel may call GridCraft.");
+            return refuse(403, "Forbidden", "Only this project's own panel may call GridCraft.");
         }
         let json_sent = request.header("content-type").ok().flatten().and_then(|kind| kind.split(';').next());
         if !json_sent.is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json")) {
@@ -1009,11 +1009,11 @@ mod server {
     }
 
     /// Carries out one call. `Ok` holds the fields of the answer; `Err` the whole answer.
-    fn call(site: &Site, found: &module::Module, granted: &[Permission], body: &Json) -> Result<Json, Json> {
+    fn call(site: &Site, found: &project::Project, granted: &[Permission], body: &Json) -> Result<Json, Json> {
         let version = found.manifest.as_ref().map(|m| m.version.as_str()).unwrap_or("");
         match body.get("call").and_then(Json::as_str) {
             Some("info") => Ok(json!({"result": {
-                "module": {"id": found.id, "name": found.name(), "version": version},
+                "project": {"id": found.id, "name": found.name(), "version": version},
                 "granted": granted.iter().map(|p| p.code()).collect::<Vec<_>>(),
             }})),
             Some("runPython") => run_python(site, body),
@@ -1051,16 +1051,16 @@ mod server {
             return Err(fail(format!("A batch can hold at most {MAX_BATCH} commands.")));
         }
         let commands = steps.iter().map(step).collect::<Result<Vec<_>, _>>()?;
-        // The label of the undo step: the module's name unless a plain one was given.
+        // The label of the undo step: the project's name unless a plain one was given.
         let given = body.get("label").and_then(Json::as_str).unwrap_or("");
         let label: String = given.chars().filter(|c| !c.is_control()).take(60).collect();
         let label = if label.trim().is_empty() { name.to_string() } else { label.trim().to_string() };
         Ok(Request::Batch { label, commands })
     }
 
-    /// Answers what a module's script asks of the spreadsheet while it runs. The module is read
+    /// Answers what a project's script asks of the spreadsheet while it runs. The project is read
     /// from disk, and the user's decisions with it, for every call, as for a panel's request: a
-    /// script whose module changed or lost its trust while it ran is answered nothing more.
+    /// script whose project changed or lost its trust while it ran is answered nothing more.
     fn script_call(shared: &Shared, places: &Places, id: &str, body: &Json) -> Result<Json, String> {
         let said = |answer: Json| answer["error"].as_str().unwrap_or("The call failed.").to_string();
         let (found, granted) = trusted(places, id)?;
@@ -1076,7 +1076,7 @@ mod server {
     /// Hands a panel what happened since the event it last saw, keeping it waiting a while for
     /// something to happen if nothing has. Asked without `after`, it says where the events have
     /// got to, so that a panel begins from now.
-    fn events(site: &Site, found: &module::Module, granted: &[Permission], body: &Json) -> Result<Json, Json> {
+    fn events(site: &Site, found: &project::Project, granted: &[Permission], body: &Json) -> Result<Json, Json> {
         // Every event says something about the open workbooks.
         if !granted.contains(&Permission::Read) {
             let why = format!("{} wasn't granted `read`, which events need.", found.name());
@@ -1133,7 +1133,7 @@ mod server {
         answer
     }
 
-    /// Runs one of the module's scripts. The Python host checks for itself that the module is
+    /// Runs one of the project's scripts. The Python host checks for itself that the project is
     /// trusted and was granted `python`, and that the script is its own.
     fn run_python(site: &Site, body: &Json) -> Result<Json, Json> {
         let Some(script) = body.get("script").and_then(Json::as_str) else { return Err(fail("runPython needs the script's name.")) };
@@ -1144,14 +1144,14 @@ mod server {
         let interpreter = settings::load(&site.places.settings).python;
         let calls = |call: &Json| script_call(&site.shared, &site.places, &site.id, call);
         let at = &site.places;
-        match PythonHost::global().run_with(&at.modules, &at.trust, &interpreter, &site.id, script, &data, timeout, Some(&calls)) {
+        match PythonHost::global().run_with(&at.projects, &at.trust, &interpreter, &site.id, script, &data, timeout, Some(&calls)) {
             Ok(output) => Ok(json!({"result": output.result, "printed": output.printed})),
             Err(RunError::Script { error, trace }) => Err(json!({"ok": false, "error": error, "trace": trace})),
             Err(other) => Err(fail(other.to_string())),
         }
     }
 
-    /// Puts a call of the module `id` (named `name`) in the queue for the app and waits for its
+    /// Puts a call of the project `id` (named `name`) in the queue for the app and waits for its
     /// answer.
     fn ask(shared: &Shared, id: &str, name: &str, granted: &[Permission], request: Request) -> Result<Json, Json> {
         let (reply, answer) = mpsc::channel();
@@ -1162,7 +1162,7 @@ mod server {
                 return Err(fail("GridCraft has too many calls waiting. Try again in a moment."));
             }
             waiting.push_back(Call {
-                module: id.to_string(),
+                project: id.to_string(),
                 name: name.to_string(),
                 granted: granted.to_vec(),
                 request,
@@ -1273,8 +1273,8 @@ mod served {
     use serde_json::json;
 
     use super::*;
-    use crate::module;
-    use crate::module::tests::TempDir;
+    use crate::project;
+    use crate::project::tests::TempDir;
     use crate::python::PythonHost;
     use crate::trust::TrustStore;
 
@@ -1286,7 +1286,7 @@ mod served {
         )
     }
 
-    /// A trusted module being served, and what a test needs to reach it.
+    /// A trusted project being served, and what a test needs to reach it.
     struct Served {
         t: TempDir,
         places: Places,
@@ -1303,12 +1303,12 @@ mod served {
 
         fn with_entry(tag: &str, permissions: &str, entry: &str, limits: Limits) -> Served {
             let t = TempDir::new(tag);
-            t.write("modules/clean-data/module.toml", &manifest(permissions, entry));
-            t.write(&format!("modules/clean-data/{entry}"), PAGE);
-            t.write("modules/clean-data/panel/app.js", "console.log('panel');");
-            t.write("modules/clean-data/python/clean.py", "def main(data):\n    print('cleaning')\n    return {'got': data}\n");
-            t.write("modules/clean-data/python/broken.py", "def main(data):\n    raise ValueError('no good')\n");
-            let places = Places { modules: t.0.join("modules"), trust: t.0.join("trusted-modules.json"), settings: t.0.join("developer.json") };
+            t.write("projects/clean-data/project.toml", &manifest(permissions, entry));
+            t.write(&format!("projects/clean-data/{entry}"), PAGE);
+            t.write("projects/clean-data/panel/app.js", "console.log('panel');");
+            t.write("projects/clean-data/python/clean.py", "def main(data):\n    print('cleaning')\n    return {'got': data}\n");
+            t.write("projects/clean-data/python/broken.py", "def main(data):\n    raise ValueError('no good')\n");
+            let places = Places { projects: t.0.join("projects"), trust: t.0.join("trusted-projects.json"), settings: t.0.join("developer.json") };
             let woken = Arc::new(AtomicUsize::new(0));
             let counted = woken.clone();
             let bridge = Bridge::with_limits(
@@ -1329,7 +1329,7 @@ mod served {
         }
 
         fn trust(&self, follow_changes: bool) {
-            let found = module::load(&self.places.modules.join("clean-data"));
+            let found = project::load(&self.places.projects.join("clean-data"));
             assert!(found.is_sound(), "{:?}", found.problem);
             TrustStore::load(&self.places.trust).trust(&found, follow_changes).unwrap();
         }
@@ -1391,7 +1391,7 @@ mod served {
     }
 
     #[test]
-    fn a_trusted_module_is_served_its_page_the_script_and_the_typings() {
+    fn a_trusted_project_is_served_its_page_the_script_and_the_typings() {
         let s = Served::new("page", "\"read\", \"python\"", Limits::default());
         let (status, head, body) = s.get("");
         assert_eq!((status, body.as_str()), (200, PAGE));
@@ -1430,7 +1430,7 @@ mod served {
     }
 
     #[test]
-    fn a_module_granted_network_is_served_with_an_open_policy() {
+    fn a_project_granted_network_is_served_with_an_open_policy() {
         let s = Served::new("network", "\"network\"", Limits::default());
         let (status, head, _) = s.get("");
         assert_eq!(status, 200);
@@ -1469,7 +1469,7 @@ mod served {
         assert_eq!(s.get("").0, 200, "the right request is still answered");
 
         // A file changes: what was trusted is no longer what is on disk.
-        s.t.write("modules/clean-data/panel/app.js", "console.log('changed');");
+        s.t.write("projects/clean-data/panel/app.js", "console.log('changed');");
         let (status, _, body) = s.get("");
         assert!(status == 403 && body.contains("changed since you trusted it"), "{status} {body}");
         assert_eq!(s.get("app.js").0, 403);
@@ -1477,14 +1477,14 @@ mod served {
         assert!(answer.0 == 403 && answer.2.contains("\"ok\":false"), "{answer:?}");
         // Trusted again as it is now, to follow its changes: served through further changes.
         s.trust(true);
-        s.t.write("modules/clean-data/panel/app.js", "console.log('changed again');");
+        s.t.write("projects/clean-data/panel/app.js", "console.log('changed again');");
         assert_eq!(s.get("app.js").2, "console.log('changed again');");
         // Trust is taken back: at once, nothing.
         TrustStore::load(&s.places.trust).revoke("clean-data").unwrap();
         let (status, _, body) = s.get("");
         assert!(status == 403 && body.contains("is not trusted"), "{status} {body}");
         assert!(s.bridge.serve(&s.places, "clean-data").is_err(), "and it can't be served anew");
-        assert!(s.bridge.serve(&s.places, "no-such-module").is_err());
+        assert!(s.bridge.serve(&s.places, "no-such-project").is_err());
         assert!(s.bridge.serve(&s.places, "../clean-data").is_err());
     }
 
@@ -1492,14 +1492,14 @@ mod served {
     fn only_the_panels_own_files_are_served() {
         let s = Served::new("files", "\"read\"", Limits::default());
         for path in [
-            "../module.toml",
-            "%2e%2e/module.toml",
-            "..%2fmodule.toml",
+            "../project.toml",
+            "%2e%2e/project.toml",
+            "..%2fproject.toml",
             "..%2Fpython/clean.py",
             "%2e%2e%2fpython%2fclean.py",
-            "..%5cmodule.toml",
-            "/module.toml",
-            "//module.toml",
+            "..%5cproject.toml",
+            "/project.toml",
+            "//project.toml",
             "C:/Windows/win.ini",
             "C%3a/Windows/win.ini",
             "app.js%00.png",
@@ -1509,7 +1509,7 @@ mod served {
             "%",
             "%e9",
             "no-such-file.js",
-            "module.toml",
+            "project.toml",
             "python/clean.py",
             "api",
         ] {
@@ -1517,18 +1517,18 @@ mod served {
             assert!(status == 404 || status == 405, "{path} gave {status}");
             assert!(!body.contains("permissions") && !body.contains("def main"), "{path} leaked {body}");
         }
-        // A panel kept at the top of its module still doesn't get the manifest or the scripts.
+        // A panel kept at the top of its project still doesn't get the manifest or the scripts.
         let top = Served::with_entry("top", "\"read\"", "index.html", Limits::default());
         assert_eq!(top.get("").2, PAGE);
         assert_eq!(top.get("panel/app.js").0, 200);
-        for path in ["module.toml", "python/clean.py", "python/broken.py"] {
+        for path in ["project.toml", "python/clean.py", "python/broken.py"] {
             assert_eq!(top.get(path).0, 404, "{path}");
         }
-        // A module with no panel is not served at all.
+        // A project with no panel is not served at all.
         let t = TempDir::new("no-panel");
-        t.write("modules/plain/module.toml", "id = \"plain\"\nname = \"Plain\"\nversion = \"1\"\npermissions = []\n");
-        let places = Places { modules: t.0.join("modules"), trust: t.0.join("trust.json"), settings: t.0.join("developer.json") };
-        TrustStore::load(&places.trust).trust(&module::load(&places.modules.join("plain")), false).unwrap();
+        t.write("projects/plain/project.toml", "id = \"plain\"\nname = \"Plain\"\nversion = \"1\"\npermissions = []\n");
+        let places = Places { projects: t.0.join("projects"), trust: t.0.join("trust.json"), settings: t.0.join("developer.json") };
+        TrustStore::load(&places.trust).trust(&project::load(&places.projects.join("plain")), false).unwrap();
         assert_eq!(Bridge::new(|| {}).serve(&places, "plain"), Err("Plain has no panel.".to_string()));
     }
 
@@ -1542,7 +1542,7 @@ mod served {
         };
         let json = "Content-Type: application/json\r\n";
         for (request, status) in [
-            // No page named, or another one: not the module's panel.
+            // No page named, or another one: not the project's panel.
             (with(json, body), 403),
             (with(&format!("{json}Origin: https://evil.example\r\n"), body), 403),
             (with(&format!("{json}Origin: http://127.0.0.1:1\r\n"), body), 403),
@@ -1578,7 +1578,7 @@ mod served {
         let info = s.call(json!({"call": "info"}));
         assert_eq!(
             info,
-            json!({"ok": true, "result": {"module": {"id": "clean-data", "name": "Clean Data", "version": "0.1.0"}, "granted": ["read"]}})
+            json!({"ok": true, "result": {"project": {"id": "clean-data", "name": "Clean Data", "version": "0.1.0"}, "granted": ["read"]}})
         );
         let local = format!("localhost:{}", s.port);
         let (status, _, _) = s.send(&format!(
@@ -1616,7 +1616,7 @@ mod served {
         };
         let asking = panel(json!({"call": "run", "command": "cell.set", "params": {"cell": "A1", "input": "7"}}));
         s.app_answers(|call| {
-            assert_eq!((call.module.as_str(), call.name.as_str()), ("clean-data", "Clean Data"));
+            assert_eq!((call.project.as_str(), call.name.as_str()), ("clean-data", "Clean Data"));
             assert_eq!(call.granted, [Permission::Read, Permission::Write]);
             assert_eq!(call.request, Request::Run { command: "cell.set".into(), params: json!({"cell": "A1", "input": "7"}) });
             Ok(json!({"cell": "A1"}))
@@ -1628,11 +1628,11 @@ mod served {
         let asking = panel(json!({"call": "run", "command": "file.save"}));
         s.app_answers(|call| {
             assert_eq!(call.request, Request::Run { command: "file.save".into(), params: json!({}) });
-            Err("This module wasn't granted `files`.".into())
+            Err("This project wasn't granted `files`.".into())
         });
-        assert_eq!(asking.join().unwrap(), json!({"ok": false, "error": "This module wasn't granted `files`."}));
+        assert_eq!(asking.join().unwrap(), json!({"ok": false, "error": "This project wasn't granted `files`."}));
 
-        // A batch arrives whole, under the module's name unless the panel names it.
+        // A batch arrives whole, under the project's name unless the panel names it.
         let steps = json!([{"command": "cell.set", "params": {"input": "1"}}, {"command": "home.bold"}]);
         let asking = panel(json!({"call": "batch", "commands": steps}));
         s.app_answers(|call| {
@@ -1680,14 +1680,14 @@ mod served {
     }
 
     #[test]
-    fn a_script_runs_for_a_module_granted_python_and_for_no_other() {
+    fn a_script_runs_for_a_project_granted_python_and_for_no_other() {
         // Refused before any process exists: this needs no Python on the machine.
         let without = Served::new("no-python", "\"read\"", Limits::default());
         let answer = without.call(json!({"call": "runPython", "script": "clean.py", "data": 1}));
         assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("permission to run Python"), "{answer}");
 
         let s = Served::new("python", "\"python\"", Limits::default());
-        for script in ["../module.toml", "nothing.py", "", "clean.py/../clean.py"] {
+        for script in ["../project.toml", "nothing.py", "", "clean.py/../clean.py"] {
             let answer = s.call(json!({"call": "runPython", "script": script}));
             assert_eq!(answer["ok"], false, "{script} gave {answer}");
         }
@@ -1706,7 +1706,7 @@ mod served {
         let answer = s.call(json!({"call": "runPython", "script": "broken.py"}));
         assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("no good"), "{answer}");
         assert!(answer["trace"].as_str().unwrap().contains("ValueError"), "{answer}");
-        PythonHost::global().stop(&s.places.modules, "clean-data");
+        PythonHost::global().stop(&s.places.projects, "clean-data");
         assert!(s.bridge.take_calls(10).is_empty(), "scripts never concern the app");
     }
 
@@ -1751,7 +1751,7 @@ mod served {
         std::time::Instant::now()
     }
 
-    /// Waits until this many of the module's panels are being kept waiting for events.
+    /// Waits until this many of the project's panels are being kept waiting for events.
     fn waiting_panels(s: &Served, count: usize) {
         for _ in 0..2_000 {
             if s.bridge.listeners("clean-data") == count {
@@ -1766,9 +1766,9 @@ mod served {
         Event { name: "workbookChanged", detail: json!({"workbook": "Book1"}) }
     }
 
-    /// The Developer console's entries that this module's panel made with this text in them.
+    /// The Developer console's entries that this project's panel made with this text in them.
     fn console_has(kind: crate::console::Kind, text: &str) -> bool {
-        crate::console::Console::global().entries().iter().any(|e| e.module == "clean-data" && e.kind == kind && e.text.contains(text))
+        crate::console::Console::global().entries().iter().any(|e| e.project == "clean-data" && e.kind == kind && e.text.contains(text))
     }
 
     #[test]
@@ -1844,7 +1844,7 @@ mod served {
         let told = panel.join().unwrap();
         assert!(asked.elapsed() < Duration::from_secs(10), "it did not wait out the whole hold: {:?}", asked.elapsed());
         assert_eq!(told["events"][0]["range"], json!("B2"), "{told}");
-        // And when its module stops being served, it is answered with nothing rather than left hanging.
+        // And when its project stops being served, it is answered with nothing rather than left hanging.
         let waiting = s.clone();
         let asked = now();
         let panel = thread::spawn(move || {
@@ -1860,7 +1860,7 @@ mod served {
     }
 
     #[test]
-    fn a_module_that_was_not_granted_read_is_told_nothing() {
+    fn a_project_that_was_not_granted_read_is_told_nothing() {
         let s = Served::new("events-unread", "\"python\"", quick());
         s.bridge.emit(&selection("B2"));
         for call in [json!({"call": "events"}), json!({"call": "events", "after": 0}), json!({"call": "events", "names": ["selectionChanged"]})] {
@@ -1870,7 +1870,7 @@ mod served {
         }
         assert!(console_has(crate::console::Kind::Refused, "which events need"), "the refusal is in the Developer console");
         // Granted `read` later (the user reviewed it again), the same panel is told from then on.
-        s.t.write("modules/clean-data/module.toml", &manifest("\"read\", \"python\"", "panel/index.html"));
+        s.t.write("projects/clean-data/project.toml", &manifest("\"read\", \"python\"", "panel/index.html"));
         assert_eq!(s.send(&s.post(&json!({"call": "events"}).to_string())).0, 403, "changed files are not trusted yet");
         s.trust(false);
         assert_eq!(s.call(json!({"call": "events", "after": 0}))["events"][0]["range"], json!("B2"));
@@ -1939,15 +1939,15 @@ mod served {
         assert_eq!(answer, json!({"ok": true}));
         assert!(console_has(crate::console::Kind::Log, "the panel says h\u{e9}llo 4711"));
         let entry = crate::console::Console::global().entries().into_iter().find(|e| e.text.contains("4711")).unwrap();
-        assert_eq!((entry.module.as_str(), entry.source.as_str()), ("clean-data", "panel"));
+        assert_eq!((entry.project.as_str(), entry.source.as_str()), ("clean-data", "panel"));
         // Nothing to say, or something that isn't text, writes nothing and fails nothing.
         for text in [json!(""), json!(null), json!(12), json!({"a": 1})] {
             assert_eq!(s.call(json!({"call": "log", "text": text}))["ok"], true);
         }
         assert!(!console_has(crate::console::Kind::Log, "\"a\""));
-        // A module that isn't trusted any more can't write there either.
-        s.t.write("modules/clean-data/panel/app.js", "console.log('changed');");
-        let (status, _, body) = s.send(&s.post(&json!({"call": "log", "text": "from a changed module 4712"}).to_string()));
+        // A project that isn't trusted any more can't write there either.
+        s.t.write("projects/clean-data/panel/app.js", "console.log('changed');");
+        let (status, _, body) = s.send(&s.post(&json!({"call": "log", "text": "from a changed project 4712"}).to_string()));
         assert_eq!(status, 403, "{body}");
         assert!(!console_has(crate::console::Kind::Log, "4712"));
         assert!(s.bridge.take_calls(10).is_empty(), "the console never waits for the app");
@@ -1965,18 +1965,18 @@ mod served {
             return;
         }
         let s = Served::new("console-python", "\"python\"", Limits::default());
-        s.t.write("modules/clean-data/python/talk.py", "def main(data):\n    print('talking about', data)\n    return 1\n");
+        s.t.write("projects/clean-data/python/talk.py", "def main(data):\n    print('talking about', data)\n    return 1\n");
         s.trust(false);
         assert_eq!(s.call(json!({"call": "runPython", "script": "talk.py", "data": "console-test-8841", "timeout": 30}))["result"], json!(1));
         let entries = crate::console::Console::global().entries();
         let printed = entries.iter().find(|e| e.kind == Kind::Printed && e.text.contains("console-test-8841")).expect("what it printed");
-        assert_eq!((printed.module.as_str(), printed.source.as_str()), ("clean-data", "talk.py"));
+        assert_eq!((printed.project.as_str(), printed.source.as_str()), ("clean-data", "talk.py"));
         // A script that fails leaves its error and its traceback.
         s.call(json!({"call": "runPython", "script": "broken.py"}));
         let entries = crate::console::Console::global().entries();
         let failed = entries.iter().rev().find(|e| e.kind == Kind::Error && e.source == "broken.py").expect("why it failed");
         assert!(failed.text.contains("no good") && failed.text.contains("ValueError"), "{}", failed.text);
-        PythonHost::global().stop(&s.places.modules, "clean-data");
+        PythonHost::global().stop(&s.places.projects, "clean-data");
     }
 
     #[test]
@@ -1987,18 +1987,18 @@ mod served {
             return;
         }
         s.t.write(
-            "modules/clean-data/python/writer.py",
+            "projects/clean-data/python/writer.py",
             "import spreadsheet\n\ndef main(data):\n    first = spreadsheet.run('cell.set', {'cell': 'B2', 'input': data})\n    try:\n        spreadsheet.selection()\n    except spreadsheet.Error as error:\n        return [first, str(error)]\n    return [first, 'answered']\n",
         );
         s.trust(false);
-        // The app: it answers the first call, and before that changes one of the module's files,
+        // The app: it answers the first call, and before that changes one of the project's files,
         // as an update or tampering would.
         let app = s.clone();
         let acting = thread::spawn(move || {
             let mut seen = Vec::new();
             app.app_answers(|call| {
-                seen.push((call.module.clone(), call.name.clone(), call.granted.clone(), call.request.clone()));
-                app.t.write("modules/clean-data/panel/app.js", "console.log('changed while a script ran');");
+                seen.push((call.project.clone(), call.name.clone(), call.granted.clone(), call.request.clone()));
+                app.t.write("projects/clean-data/panel/app.js", "console.log('changed while a script ran');");
                 Ok(json!({"cells": 1}))
             });
             seen
@@ -2006,22 +2006,22 @@ mod served {
         let answer = s.call(json!({"call": "runPython", "script": "writer.py", "data": "from python", "timeout": 60}));
         let seen = acting.join().unwrap();
         assert_eq!(seen.len(), 1);
-        let (module, name, granted, request) = &seen[0];
-        assert_eq!((module.as_str(), name.as_str()), ("clean-data", "Clean Data"));
-        assert_eq!(granted, &[Permission::Read, Permission::Write, Permission::Python], "the call carries what the module was granted");
+        let (project, name, granted, request) = &seen[0];
+        assert_eq!((project.as_str(), name.as_str()), ("clean-data", "Clean Data"));
+        assert_eq!(granted, &[Permission::Read, Permission::Write, Permission::Python], "the call carries what the project was granted");
         assert_eq!(request, &Request::Run { command: "cell.set".into(), params: json!({"cell": "B2", "input": "from python"}) });
-        // The second call found the module changed: it was refused, and never reached the app.
+        // The second call found the project changed: it was refused, and never reached the app.
         assert_eq!(answer["ok"], true, "{answer}");
         assert_eq!(answer["result"][0], json!({"cells": 1}));
         assert!(answer["result"][1].as_str().unwrap().contains("has changed since you trusted it"), "{answer}");
         assert!(s.bridge.take_calls(10).is_empty());
-        PythonHost::global().stop(&s.places.modules, "clean-data");
+        PythonHost::global().stop(&s.places.projects, "clean-data");
     }
 
     #[test]
     fn a_script_started_outside_a_panel_is_answered_through_the_same_queue() {
         let s = Arc::new(Served::new("script-calls-outside", "\"read\"", quick()));
-        // What the window uses for Developer ▸ Modules ▸ Run: no panel is involved.
+        // What the window uses for Developer ▸ Projects ▸ Run: no panel is involved.
         let calls = s.bridge.script_calls(&s.places, "clean-data");
         let app = s.clone();
         let acting = thread::spawn(move || {
@@ -2045,8 +2045,8 @@ mod served {
         // The app never answers: the script is told, and the call is not carried out late.
         assert!(calls(&json!({"call": "selection"})).unwrap_err().contains("did not answer in time"));
         assert!(s.bridge.take_calls(10).is_empty());
-        // A module that is not trusted, or is not a module at all, is answered nothing.
-        s.t.write("modules/clean-data/panel/app.js", "console.log('changed');");
+        // A project that is not trusted, or is not a project at all, is answered nothing.
+        s.t.write("projects/clean-data/panel/app.js", "console.log('changed');");
         assert!(calls(&json!({"call": "selection"})).unwrap_err().contains("has changed since you trusted it"));
         let stranger = s.bridge.script_calls(&s.places, "../elsewhere");
         assert!(stranger(&json!({"call": "selection"})).is_err());
@@ -2059,7 +2059,7 @@ mod served {
         let b = Served::new("token-b", "\"read\"", Limits::default());
         assert!(a.token != b.token && a.port != b.port);
         assert!(a.token.chars().all(|c| c.is_ascii_hexdigit()));
-        // One module's token opens nothing at another's door.
+        // One project's token opens nothing at another's door.
         assert_eq!(b.send(&format!("GET /{}/ HTTP/1.1\r\nHost: {}\r\n\r\n", a.token, b.host())).0, 404);
     }
 }

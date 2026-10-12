@@ -1,5 +1,5 @@
 //! The fork's part of the desktop shell: the system web view (ADR-0001 in
-//! `docs/decisions-aniefork.md`, phase 2d). It shows two things: a module's panel docked in
+//! `docs/decisions-aniefork.md`, phase 2d). It shows two things: a project's panel docked in
 //! the window (this file), and the Development window as a page in a window of its own
 //! ([`window`]).
 //!
@@ -10,7 +10,7 @@
 //!
 //! The page is the one a browser would be given, from the same bridge with the same checks.
 //! What the window adds is a say over where the page may go, which a browser doesn't give: a
-//! module that wasn't granted `network` is kept to its own address, opens no other window and
+//! project that wasn't granted `network` is kept to its own address, opens no other window and
 //! downloads nothing.
 //!
 //! Windows only so far (WebView2, through `wry`). Elsewhere there is no host: the UI is never
@@ -54,7 +54,7 @@ mod host {
         /// Where the web view keeps what it keeps (its cache, its storage): a folder of its own.
         context: wry::WebContext,
         shown: Option<Shown>,
-        /// A module to dock as the app starts (`GRIDCRAFT_DOCK`), for whoever launches it.
+        /// A project to dock as the app starts (`GRIDCRAFT_DOCK`), for whoever launches it.
         at_start: Option<String>,
     }
 
@@ -189,8 +189,14 @@ mod host {
 
         #[test]
         fn the_views_place_is_the_panes_in_the_windows_own_pixels() {
-            let pane =
-                |rect| Docked { module: "m".into(), name: "M".into(), address: "http://127.0.0.1:1/t/".into(), network: false, rect, covered: false };
+            let pane = |rect| Docked {
+                project: "m".into(),
+                name: "M".into(),
+                address: "http://127.0.0.1:1/t/".into(),
+                network: false,
+                rect,
+                covered: false,
+            };
             let place = egui::Rect::from_min_max(egui::pos2(800.0, 120.5), egui::pos2(1200.0, 700.0));
             assert_eq!(bounds(&pane(Some(place)), 1.0), Some([800, 121, 400, 579]));
             assert_eq!(bounds(&pane(Some(place)), 1.5), Some([1200, 181, 600, 869]));

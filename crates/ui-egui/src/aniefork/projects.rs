@@ -1,18 +1,18 @@
-//! Developer ▸ Modules: the modules the user has installed, the one place where trust in a module
-//! is given or taken back, where a trusted module's panel is opened, and a bench for running its
+//! Developer ▸ Projects: the projects the user has installed, the one place where trust in a project
+//! is given or taken back, where a trusted project's panel is opened, and a bench for running its
 //! scripts by hand.
 //!
-//! A module does nothing until the user trusts it. Trusting is a decision about exact contents:
-//! the dialog shows what the module asks to be allowed and what it contains, and what gets
+//! A project does nothing until the user trusts it. Trusting is a decision about exact contents:
+//! the dialog shows what the project asks to be allowed and what it contains, and what gets
 //! trusted is the fingerprint the user was shown. If the files changed while the user was
 //! reading, the decision is refused and they look again.
 //!
 //! Giving trust takes two things no agent can supply. There is no command for it, so the control
-//! channel and MCP cannot ask (`developer.modules` only reports). And the last step is a question
+//! channel and MCP cannot ask (`developer.projects` only reports). And the last step is a question
 //! drawn by the operating system, outside the app's own window contents, which the control
-//! channel's synthetic clicks cannot answer. A build that can't ask it can't trust modules.
+//! channel's synthetic clicks cannot answer. A build that can't ask it can't trust projects.
 //!
-//! A trusted module that was granted `python` can have its scripts run from here on the current
+//! A trusted project that was granted `python` can have its scripts run from here on the current
 //! selection. The script runs in a Python process of its own, off the UI thread; see
 //! `gridcraft_aniefork_dev::python`. One with a panel can have it opened in the browser; see
 //! [`super::panels`].
@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::python::{DEFAULT_TIMEOUT, Output, PythonHost, RunError};
-use gridcraft_aniefork_dev::{Module, TrustStore, describe, manifest, module, settings, starter};
+use gridcraft_aniefork_dev::{Project, TrustStore, describe, manifest, project, settings, starter};
 use serde_json::{Value as Json, json};
 
 use super::{panels, presence};
@@ -35,36 +35,40 @@ use crate::dialogs::Dialog;
 use crate::theme::Tokens;
 
 /// The dialog's name, as `ui.dialog {name}` takes it.
-pub const NAME: &str = "modules";
+pub const NAME: &str = "projects";
 
-const FOLLOW: &str = "Keep trusting it as its files change (only for a module you are writing yourself)";
+const FOLLOW: &str = "Keep trusting it as its files change (only for a project you are writing yourself)";
 /// The most of a result shown in the dialog (characters).
 const SHOWN: usize = 6_000;
 
-/// Where this run keeps modules, the user's decisions and the subsystem's settings. `None` when
+/// Where this run keeps projects, the user's decisions and the subsystem's settings. `None` when
 /// the run keeps no settings (the web build, a run without preferences): then there are no
-/// modules.
+/// projects.
 #[cfg(not(test))]
 pub(super) fn places() -> Option<Places> {
     use gridcraft_aniefork_dev::paths;
-    Some(Places { modules: paths::modules_dir()?, trust: paths::trust_file()?, settings: paths::settings_file()? })
+    Some(Places { projects: paths::projects_dir()?, trust: paths::trust_file()?, settings: paths::settings_file()? })
 }
 
 /// In tests: only the folder a test set up for itself, never the developer's own settings.
 #[cfg(test)]
 pub(super) fn places() -> Option<Places> {
-    tests::sandbox().map(|dir| Places { modules: dir.join("modules"), trust: dir.join("trusted-modules.json"), settings: dir.join("developer.json") })
+    tests::sandbox().map(|dir| Places {
+        projects: dir.join("projects"),
+        trust: dir.join("trusted-projects.json"),
+        settings: dir.join("developer.json"),
+    })
 }
 
-pub(super) const UNAVAILABLE: &str = "Modules are not available in this run.";
+pub(super) const UNAVAILABLE: &str = "Projects are not available in this run.";
 
-/// The user's modules and where each stands: what `developer.modules` reports and the dialog
+/// The user's projects and where each stands: what `developer.projects` reports and the dialog
 /// shows. Reading only.
 pub fn list() -> Json {
-    let Some(at) = places() else { return json!({"available": false, "folder": null, "modules": []}) };
+    let Some(at) = places() else { return json!({"available": false, "folder": null, "projects": []}) };
     let store = TrustStore::load(&at.trust);
-    let modules: Vec<Json> = module::scan(&at.modules).iter().map(|m| describe(m, &store)).collect();
-    json!({"available": true, "folder": at.modules.display().to_string(), "modules": modules})
+    let projects: Vec<Json> = project::scan(&at.projects).iter().map(|m| describe(m, &store)).collect();
+    json!({"available": true, "folder": at.projects.display().to_string(), "projects": projects})
 }
 
 /// What the dialog's values report when it opens. The dialog doesn't work from them: see `State`.
@@ -74,7 +78,7 @@ pub fn values() -> Json {
 }
 
 /// The question the operating system puts to the user: what they are about to allow, in full.
-pub(super) fn question(found: &Module, follow_changes: bool) -> String {
+pub(super) fn question(found: &Project, follow_changes: bool) -> String {
     let mut text = format!("Trust \"{}\"", found.name());
     if let Some(m) = &found.manifest {
         text.push_str(&format!(" {}?\n\nIt will be allowed to:\n", m.version));
@@ -95,14 +99,14 @@ pub(super) fn question(found: &Module, follow_changes: bool) -> String {
     text
 }
 
-/// The user pressed "Trust this module" while reviewing `id`. `reviewed` is the fingerprint they
+/// The user pressed "Trust this project" while reviewing `id`. `reviewed` is the fingerprint they
 /// were shown: only that is trusted, and only after the operating system's own confirmation.
 pub(super) fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bool) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     if !manifest::valid_id(id) {
-        return Err("That is not a module.".into());
+        return Err("That is not a project.".into());
     }
-    let found = module::load(&at.modules.join(id));
+    let found = project::load(&at.projects.join(id));
     if found.fingerprint.as_deref() != Some(reviewed) {
         return Err(format!("{} changed while you were looking at it. Review it again before trusting it.", found.name()));
     }
@@ -110,9 +114,9 @@ pub(super) fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bo
         return Err(format!("{} can't be trusted: {}.", found.name(), found.problem.as_deref().unwrap_or("it could not be read")));
     }
     let Some(confirm) = &app.services.confirm else {
-        return Err("This copy of GridCraft can't ask your operating system to confirm, so it can't trust modules.".into());
+        return Err("This copy of GridCraft can't ask your operating system to confirm, so it can't trust projects.".into());
     };
-    if !confirm("Trust this module?", &question(&found, follow_changes)) {
+    if !confirm("Trust this project?", &question(&found, follow_changes)) {
         return Ok(format!("{} was not trusted.", found.name()));
     }
     // What is recorded is the fingerprint that was reviewed, whatever happened on disk meanwhile.
@@ -123,32 +127,32 @@ pub(super) fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bo
 fn stop_trusting(id: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     TrustStore::load(&at.trust).revoke(id)?;
-    PythonHost::global().stop(&at.modules, id);
-    Ok("The module is no longer trusted.".into())
+    PythonHost::global().stop(&at.projects, id);
+    Ok("The project is no longer trusted.".into())
 }
 
 pub(super) fn create(name: &str) -> Result<String, String> {
     create_project(name, None)
 }
 
-/// Creates a starter module: the code of the workbook named `workbook`, or (without one) a
+/// Creates a starter project: the code of the workbook named `workbook`, or (without one) a
 /// library, for any workbook.
 pub(super) fn create_project(name: &str, workbook: Option<&str>) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
-    std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
-    let created = starter::create_for(&at.modules, name, workbook)?;
+    std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
+    let created = starter::create_for(&at.projects, name, workbook)?;
     Ok(match created.manifest.as_ref().and_then(|manifest| manifest.workbook.as_deref()) {
         Some(workbook) => format!("{} was created, as the code of {workbook}. It is not trusted yet.", created.name()),
         None => format!("{} was created. It is not trusted yet.", created.name()),
     })
 }
 
-/// Creates the Svelte showcase module. Like any module it is not trusted until the user says.
+/// Creates the Svelte showcase project. Like any project it is not trusted until the user says.
 pub(super) fn create_showcase() -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
-    std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
-    let created = gridcraft_aniefork_dev::showcase::create(&at.modules)?;
-    Ok(format!("{} was created. It is not trusted yet: review and trust it in Modules.", created.name()))
+    std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
+    let created = gridcraft_aniefork_dev::showcase::create(&at.projects)?;
+    Ok(format!("{} was created. It is not trusted yet: review and trust it in Projects.", created.name()))
 }
 
 /// Remembers which Python to use and says whether it answers.
@@ -170,7 +174,7 @@ struct Job {
 }
 
 fn job_id() -> egui::Id {
-    egui::Id::new("aniefork.modules.job")
+    egui::Id::new("aniefork.projects.job")
 }
 
 /// The current selection, as the data a script is handed: `{range, sheet, rows}`.
@@ -180,9 +184,9 @@ pub(super) fn selection_data(app: &mut SheetApp) -> Result<Json, String> {
     Ok(json!({"range": read["range"], "sheet": read["sheet"], "rows": read["values"]}))
 }
 
-/// Starts `script` of module `id` on the selection. The trust check is the host's own, on the
+/// Starts `script` of project `id` on the selection. The trust check is the host's own, on the
 /// thread that runs it. What the script asks of the spreadsheet while it runs is carried out by
-/// this window, as a panel's calls are, with what the module was granted.
+/// this window, as a panel's calls are, with what the project was granted.
 fn start(app: &mut SheetApp, ctx: &egui::Context, id: &str, script: &str) -> Result<(), String> {
     let at = places().ok_or(UNAVAILABLE)?;
     let data = selection_data(app)?;
@@ -191,9 +195,9 @@ fn start(app: &mut SheetApp, ctx: &egui::Context, id: &str, script: &str) -> Res
     let calls = super::panels::script_calls(ctx, &at, id);
     let (slot, repaint, id, script) = (job.slot.clone(), ctx.clone(), id.to_string(), script.to_string());
     std::thread::Builder::new()
-        .name("gridcraft-module-run".into())
+        .name("gridcraft-project-run".into())
         .spawn(move || {
-            let result = PythonHost::global().run_with(&at.modules, &at.trust, &python, &id, &script, &data, DEFAULT_TIMEOUT, Some(&calls));
+            let result = PythonHost::global().run_with(&at.projects, &at.trust, &python, &id, &script, &data, DEFAULT_TIMEOUT, Some(&calls));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
             repaint.request_repaint();
         })
@@ -250,7 +254,7 @@ fn status_label(ui: &egui::Ui, m: &Json) -> egui::RichText {
     }
 }
 
-/// What a module asks for, one line each; the one that can't be limited stands out.
+/// What a project asks for, one line each; the one that can't be limited stands out.
 fn asks(ui: &mut egui::Ui, m: &Json) {
     let asked = m["asks"].as_array().cloned().unwrap_or_default();
     if asked.is_empty() {
@@ -266,7 +270,7 @@ fn asks(ui: &mut egui::Ui, m: &Json) {
     }
 }
 
-/// The scripts a trusted module may run: the `.py` files of its scripts folder, by the names a
+/// The scripts a trusted project may run: the `.py` files of its scripts folder, by the names a
 /// panel would use.
 fn scripts(m: &Json) -> Vec<String> {
     let may_run = m["status"] == "trusted" && m["granted"].as_array().is_some_and(|g| g.iter().any(|p| p == "python"));
@@ -298,7 +302,7 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
             ui.label(egui::RichText::new(format!("It says it is the code of the workbook {workbook:?}.")).small());
         }
         if let Some(problem) = m["problem"].as_str() {
-            ui.label(format!("This module can't be used: {problem}."));
+            ui.label(format!("This project can't be used: {problem}."));
             return;
         }
         if !reviewing {
@@ -306,13 +310,13 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
                 "trusted" => {
                     if can_open
                         && m["panel"].is_string()
-                        && ui.button("Open Panel").on_hover_text("Opens this module's panel in your browser").clicked()
+                        && ui.button("Open Panel").on_hover_text("Opens this project's panel in your browser").clicked()
                     {
                         *action = Some(Action::OpenPanel(id.clone()));
                     }
                     if can_dock
                         && m["panel"].is_string()
-                        && ui.button("Dock Panel").on_hover_text("Shows this module's panel inside the window, beside the sheet").clicked()
+                        && ui.button("Dock Panel").on_hover_text("Shows this project's panel inside the window, beside the sheet").clicked()
                     {
                         *action = Some(Action::DockPanel(id.clone()));
                     }
@@ -360,10 +364,10 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
         ));
         let fingerprint = m["fingerprint"].as_str().unwrap_or("").to_string();
         ui.label(egui::RichText::new(format!("Fingerprint {}…", fingerprint.chars().take(16).collect::<String>())).small())
-            .on_hover_text("Trust is given to exactly these files. If any of them changes, the module is untrusted again until you decide again.");
+            .on_hover_text("Trust is given to exactly these files. If any of them changes, the project is untrusted again until you decide again.");
         ui.checkbox(follow, FOLLOW);
         ui.horizontal(|ui| {
-            if ui.button("Trust this module").clicked() {
+            if ui.button("Trust this project").clicked() {
                 *action = Some(Action::Trust { id: id.clone(), fingerprint, follow: *follow });
             }
             if ui.button("Not now").clicked() {
@@ -376,21 +380,21 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
 
 /// The script that is running, or what the last one gave.
 fn run_area(ui: &mut egui::Ui, run: &Json, action: &mut Option<Action>) {
-    let (module, script) = (run["module"].as_str().unwrap_or(""), run["script"].as_str().unwrap_or(""));
+    let (project, script) = (run["project"].as_str().unwrap_or(""), run["script"].as_str().unwrap_or(""));
     ui.separator();
     if run["state"] == "running" {
         ui.horizontal(|ui| {
             ui.spinner();
             ui.label(format!("Running {script}…"));
             if ui.button("Stop").clicked() {
-                *action = Some(Action::StopRun(module.to_string()));
+                *action = Some(Action::StopRun(project.to_string()));
             }
         });
         return;
     }
     let ok = run["ok"] == true;
     ui.label(egui::RichText::new(if ok { format!("{script} returned:") } else { format!("{script} did not finish:") }).strong());
-    egui::ScrollArea::vertical().id_salt("module_run").max_height(150.0).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("project_run").max_height(150.0).show(ui, |ui| {
         let text = egui::RichText::new(run["text"].as_str().unwrap_or("")).monospace();
         ui.add(egui::Label::new(if ok { text } else { text.color(ui.visuals().error_fg_color) }).selectable(true));
         if let Some(printed) = run["printed"].as_str().filter(|p| !p.is_empty()) {
@@ -403,14 +407,14 @@ fn run_area(ui: &mut egui::Ui, run: &Json, action: &mut Option<Action>) {
 /// What the dialog works from, kept between frames.
 ///
 /// It is the dialog's own, out of the dialog's values: anything on the control channel can
-/// rewrite those (`ui.dialog.set`), and what the user is shown, which module they are reviewing
+/// rewrite those (`ui.dialog.set`), and what the user is shown, which project they are reviewing
 /// and which Python they named must not be anyone else's to set. The values only report.
 #[derive(Clone, Default)]
 struct State {
     /// The last frame the dialog was drawn in: after a gap it was closed, and starts afresh.
     seen: u64,
     list: Json,
-    /// The module being reviewed, if one is.
+    /// The project being reviewed, if one is.
     review: String,
     follow: bool,
     new_name: String,
@@ -422,7 +426,7 @@ struct State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("aniefork.modules.state")
+    egui::Id::new("aniefork.projects.state")
 }
 
 /// The value that marks a dialog as already drawn: one without it has just been opened.
@@ -452,7 +456,7 @@ impl State {
     }
 }
 
-/// Hook of the fork's dialogs: draws Developer ▸ Modules.
+/// Hook of the fork's dialogs: draws Developer ▸ Projects.
 pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
     ui.set_min_width(520.0);
     let ctx = ui.ctx().clone();
@@ -473,7 +477,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         match result {
             Some(result) => {
                 let mut done = finished(result);
-                done["module"] = state.run["module"].clone();
+                done["project"] = state.run["project"].clone();
                 done["script"] = state.run["script"].clone();
                 state.run = done;
             }
@@ -483,7 +487,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
     let busy = state.run["state"] == "running";
     let listing = state.list.clone();
 
-    ui.label("Modules add panels and code to GridCraft. A module does nothing until you trust it.");
+    ui.label("Projects add panels and code to GridCraft. A project does nothing until you trust it.");
     if listing["available"] == true {
         ui.horizontal(|ui| {
             ui.label("Folder:");
@@ -498,15 +502,15 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             }
         });
         ui.separator();
-        let modules = listing["modules"].as_array().cloned().unwrap_or_default();
+        let projects = listing["projects"].as_array().cloned().unwrap_or_default();
         let can_open = app.services.open_url.is_some();
         let can_dock = super::dock::available(&ctx);
         let mut follow = state.follow;
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-            if modules.is_empty() {
-                ui.label("No modules are installed. Create one below, or copy a module's folder into the folder above.");
+            if projects.is_empty() {
+                ui.label("No projects are installed. Create one below, or copy a project's folder into the folder above.");
             }
-            for m in &modules {
+            for m in &projects {
                 let reviewing = !state.review.is_empty() && m["id"].as_str() == Some(state.review.as_str());
                 card(ui, m, reviewing, busy, can_open, can_dock, &mut follow, &mut action);
             }
@@ -519,8 +523,8 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             run_area(ui, &state.run, &mut action);
         }
         ui.separator();
-        egui::Grid::new("modules_settings").num_columns(3).spacing(egui::vec2(8.0, 6.0)).show(ui, |ui| {
-            let label = ui.label("New module:");
+        egui::Grid::new("projects_settings").num_columns(3).spacing(egui::vec2(8.0, 6.0)).show(ui, |ui| {
+            let label = ui.label("New project:");
             // A grid cell would squeeze a text field to nothing: it is given its size.
             let size = egui::vec2(240.0, ui.spacing().interact_size.y);
             ui.add_sized(size, egui::TextEdit::singleline(&mut state.new_name).hint_text("Its name")).labelled_by(label.id);
@@ -536,7 +540,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             let edited = ui
                 .add_sized(size, field)
                 .labelled_by(label.id)
-                .on_hover_text("The Python that runs modules' scripts: a path or a command. Leave empty to let GridCraft find one.")
+                .on_hover_text("The Python that runs projects' scripts: a path or a command. Leave empty to let GridCraft find one.")
                 .changed();
             if edited && !driven {
                 state.python = python;
@@ -550,7 +554,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             ui.label(egui::RichText::new(&state.python_status).small());
         }
     } else {
-        ui.label("Modules are not available in this run, because it keeps no settings.");
+        ui.label("Projects are not available in this run, because it keeps no settings.");
     }
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -572,11 +576,11 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         None => {}
         Some(Ok(said)) if said.is_empty() => {}
         Some(Ok(said)) => app.toast = Some((said, crate::now_ms())),
-        Some(Err(why)) => app.message = Some(("Modules".into(), why)),
+        Some(Err(why)) => app.message = Some(("Projects".into(), why)),
     }
 }
 
-/// Carries out what the user asked for. Trusting a module, running its code, opening its panel
+/// Carries out what the user asked for. Trusting a project, running its code, opening its panel
 /// and naming the Python to run are for the person at the screen: asked for while the control
 /// channel is putting input into the window, they are refused.
 fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Action, driven: bool) -> Result<String, String> {
@@ -608,8 +612,8 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Actio
         }
         Action::OpenFolder => match (places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
-                std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}")).map(|()| {
-                    open_url(&at.modules.display().to_string());
+                std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}")).map(|()| {
+                    open_url(&at.projects.display().to_string());
                     String::new()
                 })
             }
@@ -619,12 +623,12 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Actio
         // The dialog makes way: the panel is shown where it would be standing.
         Action::DockPanel(id) => super::dock::dock(app, ctx, &id).inspect(|_| state.close = true),
         Action::Run { id, script } => start(app, ctx, &id, &script).map(|()| {
-            state.run = json!({"state": "running", "module": id, "script": script});
+            state.run = json!({"state": "running", "project": id, "script": script});
             String::new()
         }),
         Action::StopRun(id) => {
             if let Some(at) = places() {
-                PythonHost::global().stop(&at.modules, &id);
+                PythonHost::global().stop(&at.projects, &id);
             }
             Ok(String::new())
         }
@@ -660,7 +664,7 @@ pub(crate) mod tests {
         pub(crate) fn new(tag: &str) -> Sandbox {
             static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("gridcraft-ui-modules-{}-{tag}-{n}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("gridcraft-ui-projects-{}-{tag}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             SANDBOX.with(|s| *s.borrow_mut() = Some(dir.clone()));
@@ -673,7 +677,7 @@ pub(crate) mod tests {
     impl Drop for Sandbox {
         fn drop(&mut self) {
             if let Some(at) = places() {
-                PythonHost::global().stop(&at.modules, "clean-data");
+                PythonHost::global().stop(&at.projects, "clean-data");
             }
             crate::aniefork::agents::forget();
             SANDBOX.with(|s| *s.borrow_mut() = None);
@@ -721,36 +725,36 @@ pub(crate) mod tests {
     }
 
     fn status(list: &Json, id: &str) -> Option<String> {
-        list["modules"].as_array()?.iter().find(|m| m["id"] == id)?["status"].as_str().map(str::to_string)
+        list["projects"].as_array()?.iter().find(|m| m["id"] == id)?["status"].as_str().map(str::to_string)
     }
 
     fn fingerprint() -> String {
-        list()["modules"][0]["fingerprint"].as_str().unwrap().to_string()
+        list()["projects"][0]["fingerprint"].as_str().unwrap().to_string()
     }
 
     #[test]
-    fn a_run_without_settings_has_no_modules() {
+    fn a_run_without_settings_has_no_projects() {
         let a = app_with(Some(&yes()));
-        assert_eq!(list(), json!({"available": false, "folder": null, "modules": []}));
+        assert_eq!(list(), json!({"available": false, "folder": null, "projects": []}));
         assert!(create("Clean Data").is_err() && trust(&a, "clean-data", "", false).is_err() && stop_trusting("clean-data").is_err());
         assert!(check_python("").is_err());
     }
 
     #[test]
-    fn agents_can_see_modules_but_no_command_gives_trust() {
+    fn agents_can_see_projects_but_no_command_gives_trust() {
         let s = Sandbox::new("agents");
         create("Clean Data").unwrap();
         let mut a = app_with(Some(&yes()));
-        let seen = a.run("developer.modules", json!({})).unwrap();
+        let seen = a.run("developer.projects", json!({})).unwrap();
         assert_eq!(seen["available"], json!(true));
         assert_eq!(status(&seen, "clean-data").as_deref(), Some("untrusted"));
-        assert_eq!(seen["modules"][0]["granted"], json!([]));
+        assert_eq!(seen["projects"][0]["granted"], json!([]));
         // Nothing among the fork's commands trusts or runs, and unknown ids fall through to upstream.
         assert!(super::super::commands().all(|c| {
             let id = c["id"].as_str().unwrap_or("").to_lowercase();
             !id.contains("trust") && !id.contains("run") && !id.contains("python")
         }));
-        for id in ["developer.trust", "developer.trustModule", "developer.modules.trust", "developer.runPython", "developer.run"] {
+        for id in ["developer.trust", "developer.trustProject", "developer.projects.trust", "developer.runPython", "developer.run"] {
             assert!(super::super::run_command(&mut a, id, &json!({"id": "clean-data"})).is_none(), "{id}");
         }
         // The dialog has no OK command: confirming it over the control channel does nothing.
@@ -759,16 +763,16 @@ pub(crate) mod tests {
             crate::control::Outcome::Done(v) => v,
             _ => Json::Null,
         };
-        reply(crate::control::handle(&mut a, &ctx, "ui.dialog", &json!({"name": "modules"})));
+        reply(crate::control::handle(&mut a, &ctx, "ui.dialog", &json!({"name": "projects"})));
         reply(crate::control::handle(&mut a, &ctx, "ui.dialog.set", &json!({"field": "review", "value": "clean-data"})));
         let confirmed = reply(crate::control::handle(&mut a, &ctx, "ui.dialog.confirm", &json!({})));
         assert_eq!(confirmed["ok"], json!(false));
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("untrusted"));
-        assert!(!s.0.join("trusted-modules.json").exists());
+        assert!(!s.0.join("trusted-projects.json").exists());
     }
 
     #[test]
-    fn only_a_real_module_id_and_the_reviewed_fingerprint_are_trusted() {
+    fn only_a_real_project_id_and_the_reviewed_fingerprint_are_trusted() {
         let s = Sandbox::new("ids");
         create("Clean Data").unwrap();
         let asked = yes();
@@ -779,9 +783,9 @@ pub(crate) mod tests {
         }
         assert!(trust(&a, "clean-data", "", false).is_err(), "no fingerprint");
         assert!(trust(&a, "clean-data", &"0".repeat(64), false).is_err(), "another fingerprint");
-        assert!(trust(&a, "missing", &fingerprint, false).is_err(), "no such module");
+        assert!(trust(&a, "missing", &fingerprint, false).is_err(), "no such project");
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("untrusted"));
-        assert!(!s.0.join("trusted-modules.json").exists(), "none of that wrote a decision");
+        assert!(!s.0.join("trusted-projects.json").exists(), "none of that wrote a decision");
         assert!(asked.questions.borrow().is_empty(), "nor got as far as asking the user");
         assert!(trust(&a, "clean-data", &fingerprint, false).is_ok());
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("trusted"));
@@ -801,7 +805,7 @@ pub(crate) mod tests {
         let a = app_with(Some(&asked));
         assert_eq!(trust(&a, "clean-data", &fingerprint, false).as_deref(), Ok("Clean Data was not trusted."));
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("untrusted"));
-        assert!(!s.0.join("trusted-modules.json").exists());
+        assert!(!s.0.join("trusted-projects.json").exists());
         let questions = asked.questions.borrow().clone();
         assert_eq!(questions.len(), 1);
         let q = &questions[0];
@@ -846,7 +850,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_module_that_is_one_workbooks_code_says_so_and_is_otherwise_a_module_like_any() {
+    fn a_project_that_is_one_workbooks_code_says_so_and_is_otherwise_a_project_like_any() {
         let _s = Sandbox::new("workbook-code");
         assert_eq!(
             create_project("Budget Macros", Some("Budget.xlsm")).as_deref(),
@@ -856,41 +860,41 @@ pub(crate) mod tests {
         // A name that is a path is not a workbook's name: nothing is created.
         assert!(create_project("Elsewhere", Some("../Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
         let listed = list();
-        let of = |id: &str| listed["modules"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
+        let of = |id: &str| listed["projects"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
         assert_eq!((&of("budget-macros")["kind"], &of("budget-macros")["workbook"]), (&json!("workbook"), &json!("Budget.xlsm")));
         assert_eq!((&of("tools")["kind"], &of("tools")["workbook"]), (&json!("library"), &Json::Null));
-        assert_eq!(listed["modules"].as_array().unwrap().len(), 2);
+        assert_eq!(listed["projects"].as_array().unwrap().len(), 2);
         // What it is for gives it nothing: it is untrusted, and asks for what any starter asks.
         assert_eq!((&of("budget-macros")["status"], &of("budget-macros")["granted"]), (&json!("untrusted"), &json!([])));
         assert_eq!(of("budget-macros")["asks"], of("tools")["asks"]);
-        // Modules says what it says it is for, as its own word.
+        // Projects says what it says it is for, as its own word.
         let h = harness(app_with(None));
         h.get_by_label("It says it is the code of the workbook \"Budget.xlsm\".");
     }
 
     /// The whole path in the real window: create, review, trust, change, trust again, take back.
     #[test]
-    fn the_user_creates_reviews_trusts_and_stops_trusting_a_module() {
+    fn the_user_creates_reviews_trusts_and_stops_trusting_a_project() {
         let s = Sandbox::new("flow");
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.clone()).as_deref(), Some(NAME));
         typed(&mut h, |state| state.new_name = "Clean Data".into());
         click(&mut h, "Create");
-        assert_eq!(shown(&h).as_deref(), Some("untrusted"), "a new module is not trusted");
-        assert!(s.0.join("modules/clean-data/module.toml").exists());
-        assert!(h.query_by_label("clean.py").is_none(), "an untrusted module's scripts can't be run");
+        assert_eq!(shown(&h).as_deref(), Some("untrusted"), "a new project is not trusted");
+        assert!(s.0.join("projects/clean-data/project.toml").exists());
+        assert!(h.query_by_label("clean.py").is_none(), "an untrusted project's scripts can't be run");
 
         click(&mut h, "Review…");
         assert_eq!(shown(&h).as_deref(), Some("untrusted"), "looking is not trusting");
         assert!(asked.questions.borrow().is_empty());
-        click(&mut h, "Trust this module");
+        click(&mut h, "Trust this project");
         assert_eq!(shown(&h).as_deref(), Some("trusted"));
         assert_eq!(asked.questions.borrow().len(), 1, "the operating system asked, once");
-        assert!(s.0.join("trusted-modules.json").exists(), "the decision is saved");
+        assert!(s.0.join("trusted-projects.json").exists(), "the decision is saved");
 
         // One of its files changes: it is untrusted again until the user decides again.
-        std::fs::write(s.0.join("modules/clean-data/python/clean.py"), "import os\n").unwrap();
+        std::fs::write(s.0.join("projects/clean-data/python/clean.py"), "import os\n").unwrap();
         click(&mut h, "Refresh");
         assert_eq!(shown(&h).as_deref(), Some("changed"));
         click(&mut h, "Review…");
@@ -898,11 +902,11 @@ pub(crate) mod tests {
         assert_eq!(shown(&h).as_deref(), Some("changed"), "declining leaves it untrusted");
         click(&mut h, "Review…");
         click(&mut h, FOLLOW);
-        click(&mut h, "Trust this module");
+        click(&mut h, "Trust this project");
         assert_eq!(shown(&h).as_deref(), Some("trusted"));
-        std::fs::write(s.0.join("modules/clean-data/python/clean.py"), "import sys\n").unwrap();
+        std::fs::write(s.0.join("projects/clean-data/python/clean.py"), "import sys\n").unwrap();
         click(&mut h, "Refresh");
-        assert_eq!(shown(&h).as_deref(), Some("trusted"), "the user chose to keep trusting their own module as it changes");
+        assert_eq!(shown(&h).as_deref(), Some("trusted"), "the user chose to keep trusting their own project as it changes");
 
         click(&mut h, "Stop trusting");
         assert_eq!(shown(&h).as_deref(), Some("untrusted"));
@@ -911,40 +915,40 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn saying_no_to_the_operating_system_leaves_the_module_untrusted() {
+    fn saying_no_to_the_operating_system_leaves_the_project_untrusted() {
         let s = Sandbox::new("no");
         create("Clean Data").unwrap();
         let asked = Asked::default();
         let mut h = harness(app_with(Some(&asked)));
         click(&mut h, "Review…");
-        click(&mut h, "Trust this module");
+        click(&mut h, "Trust this project");
         assert_eq!(asked.questions.borrow().len(), 1);
         assert_eq!(shown(&h).as_deref(), Some("untrusted"));
-        assert!(!s.0.join("trusted-modules.json").exists());
+        assert!(!s.0.join("trusted-projects.json").exists());
         assert!(h.state().message.is_none(), "declining is not an error");
     }
 
     #[test]
-    fn a_module_that_changes_while_being_reviewed_is_not_trusted() {
+    fn a_project_that_changes_while_being_reviewed_is_not_trusted() {
         let s = Sandbox::new("race");
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
         click(&mut h, "Review…");
         // The files change after the user was shown them and before they press the button.
-        std::fs::write(s.0.join("modules/clean-data/python/clean.py"), "import os\n").unwrap();
-        click(&mut h, "Trust this module");
+        std::fs::write(s.0.join("projects/clean-data/python/clean.py"), "import os\n").unwrap();
+        click(&mut h, "Trust this project");
         assert_eq!(shown(&h).as_deref(), Some("untrusted"));
         assert!(h.state().message.as_ref().is_some_and(|(_, text)| text.contains("changed while you were looking")), "{:?}", h.state().message);
         assert!(asked.questions.borrow().is_empty(), "the user is not even asked about files they didn't see");
-        assert!(!s.0.join("trusted-modules.json").exists());
+        assert!(!s.0.join("trusted-projects.json").exists());
     }
 
     #[test]
-    fn a_broken_module_is_listed_with_its_problem_and_cannot_be_reviewed() {
+    fn a_broken_project_is_listed_with_its_problem_and_cannot_be_reviewed() {
         let s = Sandbox::new("broken");
-        std::fs::create_dir_all(s.0.join("modules/half")).unwrap();
-        std::fs::write(s.0.join("modules/half/readme.txt"), "no manifest").unwrap();
+        std::fs::create_dir_all(s.0.join("projects/half")).unwrap();
+        std::fs::write(s.0.join("projects/half/readme.txt"), "no manifest").unwrap();
         let mut h = harness(app_with(Some(&yes())));
         let list = h.state().dialog.as_ref().unwrap().values["list"].clone();
         assert_eq!(status(&list, "half").as_deref(), Some("problem"));
@@ -965,7 +969,7 @@ pub(crate) mod tests {
         panic!("the script did not finish");
     }
 
-    /// Developer ▸ Modules ▸ a script's name: a script that calls the spreadsheet changes the
+    /// Developer ▸ Projects ▸ a script's name: a script that calls the spreadsheet changes the
     /// sheet from there too, without a panel being open.
     #[test]
     fn a_script_run_from_the_dialog_can_change_the_sheet_itself() {
@@ -977,7 +981,7 @@ pub(crate) mod tests {
         create("Stamp").unwrap();
         let s = sandbox().unwrap();
         std::fs::write(
-            s.join("modules/stamp/python/stamp.py"),
+            s.join("projects/stamp/python/stamp.py"),
             "import spreadsheet\n\ndef main(data):\n    spreadsheet.write('D4', [['stamped ' + data['range']]])\n    return spreadsheet.read('D4')\n",
         )
         .unwrap();
@@ -992,13 +996,13 @@ pub(crate) mod tests {
         let sheet = h.state_mut().session.run("sheet.read", json!({"range": "D4"})).unwrap();
         assert_eq!(sheet["values"], json!([["stamped A1:B2"]]), "the script wrote to the sheet itself");
         assert_eq!(h.state().session.active().unwrap().undo.len(), 1, "as one undo step");
-        PythonHost::global().stop(&s.join("modules"), "stamp");
+        PythonHost::global().stop(&s.join("projects"), "stamp");
     }
 
-    /// The whole path in the real window: a trusted module's script runs on the selection, in a
+    /// The whole path in the real window: a trusted project's script runs on the selection, in a
     /// Python process, and its result comes back to the dialog.
     #[test]
-    fn a_trusted_modules_script_runs_on_the_selection() {
+    fn a_trusted_projects_script_runs_on_the_selection() {
         let _s = Sandbox::new("run");
         if let Err(why) = PythonHost::global().interpreter("") {
             eprintln!("skipped: {why}");
@@ -1013,7 +1017,7 @@ pub(crate) mod tests {
         click(&mut h, "clean.py");
         let run = wait_for_run(&mut h);
         assert_eq!(
-            (run["ok"].as_bool(), run["script"].as_str(), run["module"].as_str()),
+            (run["ok"].as_bool(), run["script"].as_str(), run["project"].as_str()),
             (Some(true), Some("clean.py"), Some("clean-data")),
             "{run}"
         );
@@ -1025,12 +1029,12 @@ pub(crate) mod tests {
 
         // A script that fails says why, and one that never ends can be stopped.
         let s = sandbox().unwrap();
-        std::fs::write(s.join("modules/clean-data/python/clean.py"), "def main(data):\n    return 1 / 0\n").unwrap();
-        std::fs::write(s.join("modules/clean-data/python/forever.py"), "def main(data):\n    while True:\n        pass\n").unwrap();
+        std::fs::write(s.join("projects/clean-data/python/clean.py"), "def main(data):\n    return 1 / 0\n").unwrap();
+        std::fs::write(s.join("projects/clean-data/python/forever.py"), "def main(data):\n    while True:\n        pass\n").unwrap();
         click(&mut h, "Refresh");
         assert!(h.query_by_label("clean.py").is_none(), "its files changed: it is untrusted, and nothing of it can be run");
         click(&mut h, "Review…");
-        click(&mut h, "Trust this module");
+        click(&mut h, "Trust this project");
         click(&mut h, "clean.py");
         let failed = wait_for_run(&mut h);
         assert_eq!(failed["ok"], json!(false));
@@ -1057,7 +1061,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn open_folder_asks_the_host_to_show_the_modules_folder() {
+    fn open_folder_asks_the_host_to_show_the_projects_folder() {
         let s = Sandbox::new("folder");
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
@@ -1065,8 +1069,8 @@ pub(crate) mod tests {
         a.services.open_url = Some(Box::new(move |path: &str| seen.borrow_mut().push(path.to_string())));
         let mut h = harness(a);
         click(&mut h, "Open Folder");
-        assert_eq!(*opened.borrow(), [s.0.join("modules").display().to_string()]);
-        assert!(s.0.join("modules").is_dir(), "the folder is made if it wasn't there");
+        assert_eq!(*opened.borrow(), [s.0.join("projects").display().to_string()]);
+        assert!(s.0.join("projects").is_dir(), "the folder is made if it wasn't there");
     }
 
     /// Sets what the user would have typed into the dialog's own fields.
@@ -1100,10 +1104,10 @@ pub(crate) mod tests {
         let mut h = harness(app_with(Some(&asked)));
         for (field, value) in [
             ("python", json!("gridcraft-planted-python")),
-            ("list", json!({"available": true, "folder": "elsewhere", "modules": []})),
+            ("list", json!({"available": true, "folder": "elsewhere", "projects": []})),
             ("review", json!("clean-data")),
             ("follow", json!(true)),
-            ("run", json!({"state": "done", "ok": true, "text": "planted", "script": "x", "module": "y"})),
+            ("run", json!({"state": "done", "ok": true, "text": "planted", "script": "x", "project": "y"})),
         ] {
             assert_eq!(control(&mut h, "ui.dialog.set", json!({"field": field, "value": value}))["ok"], json!(true));
         }
@@ -1112,14 +1116,14 @@ pub(crate) mod tests {
         let values = h.state().dialog.as_ref().unwrap().values.clone();
         assert_eq!(status(&values["list"], "clean-data").as_deref(), Some("untrusted"));
         assert_eq!((&values["python"], &values["review"], &values["follow"], &values["run"]), (&json!(""), &Json::Null, &json!(false), &Json::Null));
-        assert!(h.query_by_label("Trust this module").is_none(), "no review was opened for the user");
+        assert!(h.query_by_label("Trust this project").is_none(), "no review was opened for the user");
         assert!(h.query_by_label_contains("planted").is_none());
         // The person checks Python: the one they named (none) is used and remembered, not the planted one.
         click(&mut h, "Check Python");
         assert_eq!(settings::load(&s.0.join("developer.json")).python, "");
         // And reviewing by hand still starts with nothing ticked.
         click(&mut h, "Review…");
-        click(&mut h, "Trust this module");
+        click(&mut h, "Trust this project");
         assert!(asked.questions.borrow()[0].contains("will ask you again"), "{:?}", asked.questions.borrow());
     }
 
@@ -1144,14 +1148,14 @@ pub(crate) mod tests {
     /// The control channel clicks as a person does. Trusting is refused while it is putting input
     /// into the window: the operating system's question isn't even raised.
     #[test]
-    fn the_control_channel_cannot_trust_a_module() {
+    fn the_control_channel_cannot_trust_a_project() {
         let _s = Sandbox::new("driven-trust");
         create("Clean Data").unwrap();
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
         click(&mut h, "Review…");
         drive(&mut h);
-        refused(&mut h, "Trust this module");
+        refused(&mut h, "Trust this project");
         assert!(asked.questions.borrow().is_empty());
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("untrusted"));
         // The review is still open. A tick the channel makes on "keep trusting" doesn't count either.
@@ -1159,13 +1163,13 @@ pub(crate) mod tests {
         assert_eq!(h.state().dialog.as_ref().unwrap().values["follow"], json!(false));
         // When the channel has been quiet for a moment, the person can.
         quiet(&mut h);
-        click(&mut h, "Trust this module");
+        click(&mut h, "Trust this project");
         assert_eq!(asked.questions.borrow().len(), 1);
         assert!(asked.questions.borrow()[0].contains("will ask you again"), "the channel's tick was not taken");
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("trusted"));
     }
 
-    /// Nor can it run a trusted module's script, open its panel, or name the program to run as Python.
+    /// Nor can it run a trusted project's script, open its panel, or name the program to run as Python.
     #[test]
     fn the_control_channel_cannot_run_a_script_open_a_panel_or_name_a_python() {
         let s = Sandbox::new("driven-run");

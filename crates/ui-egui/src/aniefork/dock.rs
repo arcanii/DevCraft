@@ -1,4 +1,4 @@
-//! A module's panel docked in the window: the same page a browser would be given, shown in
+//! A project's panel docked in the window: the same page a browser would be given, shown in
 //! the system's web view beside the grid (ADR-0001, phase 2d).
 //!
 //! The page is still served by the bridge, with every check it makes for a browser: nothing
@@ -16,21 +16,21 @@
 
 use egui::{Rect, vec2};
 
-use super::{modules, panels};
+use super::{panels, projects};
 use crate::SheetApp;
 use crate::theme::Tokens;
 
 /// A panel docked in the window, as the shell's web view needs it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Docked {
-    /// The module's id.
-    pub module: String,
+    /// The project's id.
+    pub project: String,
     /// Its name, for the pane's heading.
     pub name: String,
-    /// The panel's address on the bridge. It holds the module's token: it goes to the web view,
+    /// The panel's address on the bridge. It holds the project's token: it goes to the web view,
     /// and is shown nowhere.
     pub address: String,
-    /// The module was granted `network`. Without it the web view lets the page go nowhere but
+    /// The project was granted `network`. Without it the web view lets the page go nowhere but
     /// its own address, opens no other window and downloads nothing.
     pub network: bool,
     /// Where the view belongs, in the window's points. `None` until the pane has been drawn.
@@ -56,7 +56,7 @@ pub fn host_is_here(ctx: &egui::Context) {
 /// Where the shell's web view keeps what it keeps (its cache, its storage): a folder of its own
 /// beside the settings, which the control channel can't reach. `None` in a run without settings.
 pub fn web_view_folder() -> Option<std::path::PathBuf> {
-    modules::places().map(|at| at.settings.with_file_name("webview"))
+    projects::places().map(|at| at.settings.with_file_name("webview"))
 }
 
 /// Whether this copy of GridCraft can show a panel inside its window.
@@ -75,19 +75,19 @@ pub fn wanted(ctx: &egui::Context) -> Option<Docked> {
     docked(ctx).filter(|docked| docked.rect.is_some() && !docked.covered)
 }
 
-/// Docks the panel of the module `id` in the window. Refused unless the user trusts the module
+/// Docks the panel of the project `id` in the window. Refused unless the user trusts the project
 /// as it is on disk now, and unless this copy of GridCraft has a web view to show it in.
 pub fn dock(_app: &SheetApp, ctx: &egui::Context, id: &str) -> Result<String, String> {
     if !available(ctx) {
         return Err("This copy of GridCraft can't show a panel inside its window. Open it in your browser instead.".into());
     }
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
     let address = panels::serve(ctx, &at, id)?;
-    let listed = modules::list();
-    let found = listed["modules"].as_array().and_then(|all| all.iter().find(|m| m["id"] == id));
+    let listed = projects::list();
+    let found = listed["projects"].as_array().and_then(|all| all.iter().find(|m| m["id"] == id));
     let name = found.and_then(|m| m["name"].as_str()).unwrap_or(id).to_string();
     let network = found.and_then(|m| m["granted"].as_array()).is_some_and(|granted| granted.iter().any(|p| p == "network"));
-    let docked = Docked { module: id.to_string(), name: name.clone(), address, network, rect: None, covered: false };
+    let docked = Docked { project: id.to_string(), name: name.clone(), address, network, rect: None, covered: false };
     ctx.data_mut(|d| d.insert_temp(self::id(), docked));
     ctx.request_repaint();
     Ok(format!("{name} is docked in the window."))
@@ -117,8 +117,8 @@ pub fn watch(app: &SheetApp, ctx: &egui::Context) {
 pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let Some(mut now) = docked(&ctx) else { return };
-    // A module that is no longer served (its trust was taken back) has no panel to show.
-    if !panels::serving(&ctx).contains(&now.module) {
+    // A project that is no longer served (its trust was taken back) has no panel to show.
+    if !panels::serving(&ctx).contains(&now.project) {
         undock(&ctx);
         return;
     }
@@ -157,8 +157,8 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
         return;
     }
     if in_browser {
-        // Opening a panel is the person's alone to do: the same rule as in Modules.
-        let said = if super::presence::driven(&ctx) { Err(super::presence::BY_HAND.to_string()) } else { panels::open(app, &ctx, &now.module) };
+        // Opening a panel is the person's alone to do: the same rule as in Projects.
+        let said = if super::presence::driven(&ctx) { Err(super::presence::BY_HAND.to_string()) } else { panels::open(app, &ctx, &now.project) };
         match said {
             Ok(said) => app.toast = Some((said, crate::now_ms())),
             Err(why) => app.message = Some(("Development".into(), why)),
@@ -181,8 +181,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::aniefork::modules::tests::{Sandbox, app_with, drive, yes};
-    use crate::aniefork::modules::{create, list, trust};
+    use crate::aniefork::projects::tests::{Sandbox, app_with, drive, yes};
+    use crate::aniefork::projects::{create, list, trust};
 
     type Harness = egui_kittest::Harness<'static, SheetApp>;
 
@@ -199,19 +199,19 @@ mod tests {
         h
     }
 
-    /// An app with a trusted starter module, and what its `open_url` was handed.
+    /// An app with a trusted starter project, and what its `open_url` was handed.
     fn trusted() -> (SheetApp, Rc<RefCell<Vec<String>>>) {
         create("Clean Data").unwrap();
         let opened = Rc::new(RefCell::new(Vec::<String>::new()));
         let seen = opened.clone();
         let mut app = app_with(Some(&yes()));
         app.services.open_url = Some(Box::new(move |address: &str| seen.borrow_mut().push(address.to_string())));
-        trust(&app, "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        trust(&app, "clean-data", list()["projects"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
         (app, opened)
     }
 
     #[test]
-    fn a_panel_docks_only_where_there_is_a_web_view_and_only_for_a_trusted_module() {
+    fn a_panel_docks_only_where_there_is_a_web_view_and_only_for_a_trusted_project() {
         let _s = Sandbox::new("dock-where");
         let (app, opened) = trusted();
         let mut h = harness(app);
@@ -221,33 +221,33 @@ mod tests {
         let refused = dock(h.state(), &ctx, "clean-data").unwrap_err();
         assert!(refused.contains("can't show a panel inside its window"), "{refused}");
         assert!(docked(&ctx).is_none() && panels::serving(&ctx).is_empty());
-        // With one: the trusted module's panel is served, and has a place in the window.
+        // With one: the trusted project's panel is served, and has a place in the window.
         host_is_here(&ctx);
         assert_eq!(dock(h.state(), &ctx, "clean-data").unwrap(), "Clean Data is docked in the window.");
         assert_eq!(panels::serving(&ctx), ["clean-data"]);
         assert!(wanted(&ctx).is_none(), "its place isn't known until the pane has been drawn");
         h.run_steps(3);
         let now = wanted(&ctx).unwrap();
-        assert_eq!((now.module.as_str(), now.name.as_str(), now.network), ("clean-data", "Clean Data", false));
+        assert_eq!((now.project.as_str(), now.name.as_str(), now.network), ("clean-data", "Clean Data", false));
         assert!(now.address.starts_with("http://127.0.0.1:") && now.address.ends_with('/'));
         let place = now.rect.unwrap();
         let window = ctx.content_rect();
         assert!(place.width() > 250.0 && place.height() > 300.0, "{place:?}");
         assert!(place.right() <= window.right() + 0.5 && place.left() > window.center().x, "on the right: {place:?}");
-        // The address holds the module's token: it is for the web view, and shown nowhere.
+        // The address holds the project's token: it is for the web view, and shown nowhere.
         use egui_kittest::kittest::Queryable;
         h.get_by_label("Clean Data");
         assert!(h.query_by_label_contains("127.0.0.1").is_none());
         assert!(opened.borrow().is_empty(), "nothing was sent to the browser");
-        // A module that isn't trusted, or isn't there, is not docked in its place.
+        // A project that isn't trusted, or isn't there, is not docked in its place.
         create("Other").unwrap();
         assert!(dock(h.state(), &ctx, "other").unwrap_err().contains("not trusted"));
         assert!(dock(h.state(), &ctx, "nowhere").is_err());
-        assert_eq!(docked(&ctx).unwrap().module, "clean-data");
+        assert_eq!(docked(&ctx).unwrap().project, "clean-data");
     }
 
     #[test]
-    fn the_web_view_gives_way_to_what_the_window_draws_over_it_and_goes_with_the_modules_trust() {
+    fn the_web_view_gives_way_to_what_the_window_draws_over_it_and_goes_with_the_projects_trust() {
         let _s = Sandbox::new("dock-covered");
         let (app, _) = trusted();
         let mut h = harness(app);
@@ -257,7 +257,7 @@ mod tests {
         h.run_steps(3);
         assert!(wanted(&ctx).is_some());
         // A dialog, a message, the File view: the web view would hide them, so it is hidden.
-        h.state_mut().open_dialog(modules::NAME, json!({}));
+        h.state_mut().open_dialog(projects::NAME, json!({}));
         h.run_steps(3);
         assert!(wanted(&ctx).is_none() && docked(&ctx).is_some_and(|now| now.covered));
         h.state_mut().dialog = None;
@@ -276,7 +276,7 @@ mod tests {
         h.state_mut().backstage = None;
         h.run_steps(3);
         assert!(wanted(&ctx).is_some());
-        // The module's trust is taken back: its panel stops being served, and the pane goes.
+        // The project's trust is taken back: its panel stops being served, and the pane goes.
         panels::stop(&ctx, "clean-data");
         h.run_steps(3);
         assert!(docked(&ctx).is_none());
@@ -302,7 +302,7 @@ mod tests {
         h.run_steps(3);
         assert_eq!(opened.borrow().len(), 1);
         assert_eq!(h.state_mut().message.take().map(|(_, text)| text).as_deref(), Some(crate::aniefork::presence::BY_HAND));
-        // Closing the pane takes the view out of the window; the module is still served.
+        // Closing the pane takes the view out of the window; the project is still served.
         undock(&ctx);
         h.run_steps(3);
         assert!(docked(&ctx).is_none() && wanted(&ctx).is_none());

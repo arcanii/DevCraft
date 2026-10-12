@@ -37,13 +37,13 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
-| **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development, the MCP server, the development kits, and under the Anie Development Kit its projects, as workbook code or libraries. Each has a part of its own, and a new project is made in the kit's part. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, changes in `development.rs`, `devpage.rs`, `modules.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
+| **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development, the MCP server, the development kits, and under the Anie Development Kit its projects, as workbook code or libraries. Each has a part of its own, and a new project is made in the kit's part. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, changes in `development.rs`, `devpage.rs`, `projects.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
 | **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding; Developer ▸ Macros shows it beside the macros. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs`; `crates/ui-egui/src/aniefork/macros.rs` | Not offered; a direction of the fork's own |
 | **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
-| **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted module's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a module without `network` is kept to its own address there. Developer ▸ Development creates a showcase module whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
+| **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted project's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a project without `network` is kept to its own address there. Developer ▸ Development creates a showcase project whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
-| **Modules, trust, Python, panels, events, a console and the workbook as objects** (the Development subsystem, phases 1a to 2b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what modules print and log; a script can work on the sheet itself, and panels and scripts share one set of objects for the workbook. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
+| **Projects, trust, Python, panels, events, a console and the workbook as objects** (the Development subsystem, phases 1a to 2b): projects are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a project or not, in Developer ▸ Projects, confirmed by the operating system; a trusted project's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what projects print and log; a script can work on the sheet itself, and panels and scripts share one set of objects for the workbook. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`projects.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
 
 ## What upstream took in, and what it built itself
 
@@ -199,82 +199,89 @@ and no larger than the cell however long the text gets.
 
 ## The Developer tab and the Development subsystem
 
+**One word (2026-10-13): what was a *module* is a *project*.** The owner asked for it once
+the Development window said project. It is the word everywhere now: in the windows, in
+`project.toml`, in the Development server's tools and their arguments, in `developer.projects`,
+in the folder `projects` and `trusted-projects.json`, and in the code. This section says
+project throughout; the log below, and ADR-0001's text from before that day, say module as
+they were written.
+
 A ribbon tab for people who extend and automate GridCraft, hidden until File ▸ Options ▸ "Show the
 Developer tab" turns it on, as Excel's is. Today it gathers what already exists for that audience:
 the command palette, the action journal, how agents connect, and Options.
 
-It is the entry to the **Development subsystem**: modules a user installs that add web panels and
+It is the entry to the **Development subsystem**: projects a user installs that add web panels and
 Python to GridCraft. That is designed in [`docs/decisions-aniefork.md`](docs/decisions-aniefork.md)
 (ADR-0001), which the owner **accepted on 2026-10-11**: panels in the browser first and docked
 later, the user's own Python, fork-only until it is proven and then offered upstream in phases.
-Whether a workbook can carry a module is left open. Letting agents help was on the backlog
+Whether a workbook can carry a project is left open. Letting agents help was on the backlog
 until the owner took it up on 2026-10-12 (phase 2e, below). The record also sets out how the
-model is exposed to modules and how the user gives or refuses trust; those two are still
+model is exposed to projects and how the user gives or refuses trust; those two are still
 proposals.
 
-**Phase 1a is built: modules and trust, with nothing running.**
+**Phase 1a is built: projects and trust, with nothing running.**
 
-- **A module is a folder** in `modules`, beside the user's settings, holding a `module.toml` (id,
-  name, version, what it asks to be allowed), a panel and scripts. Developer ▸ Modules lists what
-  is there; "New module" writes a starter from templates compiled into the app.
-- **Every module starts untrusted, and an untrusted module is inert.** Review… shows what it asks
+- **A project is a folder** in `projects`, beside the user's settings, holding a `project.toml` (id,
+  name, version, what it asks to be allowed), a panel and scripts. Developer ▸ Projects lists what
+  is there; "New project" writes a starter from templates compiled into the app.
+- **Every project starts untrusted, and an untrusted project is inert.** Review… shows what it asks
   for in plain words (running Python is marked as the one that cannot be limited), its files and
   its fingerprint; then the user trusts it or doesn't.
-- **Trust is given to a fingerprint**, a SHA-256 over every file in the module. A changed file
-  makes it untrusted again. For a module they are writing, the user can choose to keep trusting it
+- **Trust is given to a fingerprint**, a SHA-256 over every file in the project. A changed file
+  makes it untrusted again. For a project they are writing, the user can choose to keep trusting it
   as it changes; that never grants more than was granted.
-- **Only the user gives trust.** There is no command for it. `developer.modules` reports the list
+- **Only the user gives trust.** There is no command for it. `developer.projects` reports the list
   to agents and nothing else; the dialog has no OK command for an agent to confirm; and what is
   trusted is the fingerprint that was on screen, so files swapped during the review are refused.
-- **It fails closed.** A module that can't be read whole (no manifest, a path that leaves it, a
+- **It fails closed.** A project that can't be read whole (no manifest, a path that leaves it, a
   link, an unknown permission, too large) can't be trusted. A damaged trust file trusts nothing.
-- The decisions are in `trusted-modules.json` beside the settings, and a run without settings
-  (the web build, `GRIDCRAFT_NO_PREFS`) has no modules.
+- The decisions are in `trusted-projects.json` beside the settings, and a run without settings
+  (the web build, `GRIDCRAFT_NO_PREFS`) has no projects.
 
-**Phase 1b is built: a trusted module's Python scripts run.**
+**Phase 1b is built: a trusted project's Python scripts run.**
 
-- **A script is a file in the module's `python` folder with a `main(data)` function.** GridCraft
-  starts the user's own Python (the one named in Developer ▸ Modules, or the first found) with a
-  small runner. The process stays alive between calls, so a module's imports are paid for once,
-  and is started again when the module's files change. Each module has its own.
-- **Nothing runs without trust.** Every call reads the module and the user's decisions from disk
-  and refuses, before any process exists, a module that is untrusted, changed since it was
-  trusted or not granted `python`, and a script that is not one of the module's own files.
+- **A script is a file in the project's `python` folder with a `main(data)` function.** GridCraft
+  starts the user's own Python (the one named in Developer ▸ Projects, or the first found) with a
+  small runner. The process stays alive between calls, so a project's imports are paid for once,
+  and is started again when the project's files change. Each project has its own.
+- **Nothing runs without trust.** Every call reads the project and the user's decisions from disk
+  and refuses, before any process exists, a project that is untrusted, changed since it was
+  trusted or not granted `python`, and a script that is not one of the project's own files.
 - **The process protects GridCraft from the script.** A script that raises is reported with its
   traceback; one that runs past its time limit (60 s) is stopped; one that dies costs only its
   process; what it prints can't garble its reply. Scripts run off the UI thread and can be
   stopped. It does not limit what the script does to the computer: that is what trust is for.
 - **Giving trust now needs the operating system's own confirmation**, a native yes/no dialog that
-  states the module's name, everything it will be allowed and how many files it has. Synthetic
-  clicks from the control channel can't answer it, and a build without one can't trust modules.
-- **Developer ▸ Modules runs a script by hand**: "Run on the selection" hands the script the
+  states the project's name, everything it will be allowed and how many files it has. Synthetic
+  clicks from the control channel can't answer it, and a build without one can't trust projects.
+- **Developer ▸ Projects runs a script by hand**: "Run on the selection" hands the script the
   selected cells as `{range, sheet, rows}` and shows what it returned, what it printed, or why it
   failed. The sheet is not changed: writing back belongs to panels, in phase 1c. The dialog also
-  says which Python is used and lets the user name another, and opens the modules folder.
+  says which Python is used and lets the user name another, and opens the projects folder.
 
-**Phase 1c is built: a trusted module's panel opens in the browser and calls GridCraft.**
+**Phase 1c is built: a trusted project's panel opens in the browser and calls GridCraft.**
 
-- **Open Panel**, on a trusted module in Developer ▸ Modules, serves the module's panel folder
+- **Open Panel**, on a trusted project in Developer ▸ Projects, serves the project's panel folder
   from a small server inside GridCraft and opens it in the user's browser. The server listens on
-  the loopback address only, on a port of the module's own, behind a secret token made for that
+  the loopback address only, on a port of the project's own, behind a secret token made for that
   run. The address goes to the browser and is shown nowhere else.
 - **The panel gets a `spreadsheet` object** from `spreadsheet.js`, served beside its page:
   `run(id, params)` for every command of the engine, `batch([...])` for several commands as one
   undo step (all of them, or none), `runPython(script, data)`, and `selection()`, `read()` and
   `write()` as shorthands. `spreadsheet.d.ts`, served beside it, lists every command for
-  TypeScript. The starter module's panel now does the whole round: the selection, through its
+  TypeScript. The starter project's panel now does the whole round: the selection, through its
   Python script, back into the sheet, undone with one Undo.
-- **A module runs only what it was granted.** A command that only reports needs `read`, any
+- **A project runs only what it was granted.** A command that only reports needs `read`, any
   other `write`, one that touches a file `files`. GridCraft's own settings folder is out of
   reach even with `files`. A panel without `network` is served with a policy that makes the
   browser refuse its requests to anywhere else.
-- **Trust is checked on every request.** A module whose files changed, or whose trust was taken
+- **Trust is checked on every request.** A project whose files changed, or whose trust was taken
   back, is served and answered nothing more, at once, with the panel still open.
-- **Commands never open dialogs for a module**, and the window's own commands (the theme, the
+- **Commands never open dialogs for a project**, and the window's own commands (the theme, the
   dialogs) are not offered to it: it is a program calling GridCraft, as an agent is.
-- **Some things are for the person at the screen alone.** Trusting a module, running a script,
+- **Some things are for the person at the screen alone.** Trusting a project, running a script,
   opening a panel and naming the Python to run are refused while the control channel is putting
-  input into the window, and the Modules dialog no longer works from values the channel can
+  input into the window, and the Projects dialog no longer works from values the channel can
   rewrite. This closes a gap phase 1b left: an agent could name any program as "Python" and
   press Check Python to run it.
 
@@ -282,36 +289,36 @@ proposals.
 
 - **Events.** `spreadsheet.on("selectionChanged", handler)` calls the handler each time the
   selection moves, with the workbook, the sheet, the range and the active cell;
-  `workbookChanged` says the workbook changed (an edit, an undo, a redo, a module's own
+  `workbookChanged` says the workbook changed (an edit, an undo, a redo, a project's own
   change), and `workbookActivated` that another workbook is the one worked on. An event says
-  where, never what is in the cells. All of them need `read`. The starter module's panel now
+  where, never what is in the cells. All of them need `read`. The starter project's panel now
   shows the selection as it moves.
 - **How events travel.** The panel keeps one request open, which GridCraft answers when
   something happens or after twenty seconds. Events of one kind that pile up are thinned to the
   latest; if too many pile up the oldest are dropped and the panel is told it missed some. At
-  most eight panels of a module are kept waiting at once.
-- **Developer ▸ Console** shows, newest last, what a module's script printed, why a script
+  most eight panels of a project are kept waiting at once.
+- **Developer ▸ Console** shows, newest last, what a project's script printed, why a script
   failed (with its traceback), what a panel wrote with `spreadsheet.log(…)`, and each call that
-  was refused for want of an ability. It can be shown for one module, copied, and cleared.
-- **The console is the user's record.** A module can add to it and can neither read nor clear
-  it; each module has its own share (200 entries of 600), so one module's chatter cannot push
+  was refused for want of an ability. It can be shown for one project, copied, and cleared.
+- **The console is the user's record.** A project can add to it and can neither read nor clear
+  it; each project has its own share (200 entries of 600), so one project's chatter cannot push
   out another's. Clearing is for the person at the screen: no command does it, and the button
   is refused while the control channel is putting input into the window.
-- **`developer.console {module?, last?}`** reports the latest entries to an agent, and says with
-  them that they are text written by modules, not instructions.
+- **`developer.console {project?, last?}`** reports the latest entries to an agent, and says with
+  them that they are text written by projects, not instructions.
 
 **Phase 2b is built: a script works on the sheet itself, and the workbook is objects.**
 
 - **`import spreadsheet` in a script** gives it what a panel has: `run`, `batch`, `selection`,
   `read`, `write`. So a script can change the sheet itself instead of only handing data back
-  for the panel to write. It works from a panel's `runPython` and from Developer ▸ Modules.
+  for the panel to write. It works from a panel's `runPython` and from Developer ▸ Projects.
 - **The same objects in a panel and in a script.** `spreadsheet.sheet("Data").range("A1:C3")`
   names cells and runs commands on them (`read`, `formulas`, `write`, `clear`, `select`, and
   `run(command, params)` for anything else, with the range filled in).
   `spreadsheet.workbook()` gives the name, the sheets with their used ranges and tables, the
   active sheet, the selection and the names.
-- **A script's calls are checked like a panel's**: the module is read from disk for every
-  call, and the script gets what the module is granted at that moment. A module without
+- **A script's calls are checked like a panel's**: the project is read from disk for every
+  call, and the script gets what the project is granted at that moment. A project without
   `write` has a script that is told so, in an error it can catch, and the refusal is in the
   Developer console.
 - **Nothing was added to the engine.** Every command already takes a range that names its
@@ -329,19 +336,19 @@ full control, and approved plans after single requests.
 - **An agent connects over MCP** to the running app, on the loopback address, with a token.
   The window copies the setup for Claude Code, or as a settings entry for another agent; the
   token is never drawn or reported.
-- **What an agent asks for is a request.** It can read modules, their files and the console;
-  and ask to create a module, write or delete a module's file, run a script, open a panel,
-  trust a module or stop trusting one. The level decides whether a request is carried out at
+- **What an agent asks for is a request.** It can read projects, their files and the console;
+  and ask to create a project, write or delete a project's file, run a script, open a panel,
+  trust a project or stop trusting one. The level decides whether a request is carried out at
   once, shown to the user, or refused.
 - **A request is answered on a card**, like a coding agent's permission prompt: what it is,
-  the lines a change would take out and put in, what a yes means for the module's trust,
+  the lines a change would take out and put in, what a yes means for the project's trust,
   then yes, yes and don't ask again, or no with a word for the agent. A bar under the ribbon
   says when one waits.
 - **A yes is one click** when GridCraft runs without the control channel, and is confirmed by
   the operating system when it runs with it. **"Don't ask again"** covers changes to one
-  module's files, or running its code, until GridCraft closes; the window lists what is not
+  project's files, or running its code, until GridCraft closes; the window lists what is not
   asked about.
-- **What modules wrote reaches an agent fenced**, as data. Each request and its outcome is in
+- **What projects wrote reaches an agent fenced**, as data. Each request and its outcome is in
   the Developer console and in `agent-log.jsonl` beside the settings.
 - **`developer.agents`** reports how it stands. No command sets the level, the port or the
   token, or answers a request; and the control channel can no longer read or write
@@ -351,17 +358,17 @@ full control, and approved plans after single requests.
 The owner asked on 2026-10-12 for Svelte and the web view to be showcased in the Developer
 section.
 
-- **Developer ▸ Modules ▸ Dock Panel** shows a trusted module's panel beside the sheet, in
+- **Developer ▸ Projects ▸ Dock Panel** shows a trusted project's panel beside the sheet, in
   the system's web view (WebView2), on Windows. It is the page a browser would be given,
   from the same bridge. Without `network` the page is kept to its own address: that is the
   part of `network` a browser could not enforce.
 - **The view gives way** to dialogs, messages, menus and the File view, which it would
   otherwise hide.
-- **Developer ▸ Development ▸ Create Showcase** makes a module whose panel is a Svelte app:
+- **Developer ▸ Development ▸ Create Showcase** makes a project whose panel is a Svelte app:
   it follows the selection, sums it up, draws its numbers as bars, and writes to the sheet.
-  It is created untrusted like any module; once trusted, "Dock Showcase" shows it. Its
-  Svelte source is in the module, with how to rebuild it.
-- **`GRIDCRAFT_DOCK=<module>`** docks a trusted module's panel as GridCraft starts.
+  It is created untrusted like any project; once trusted, "Dock Showcase" shows it. Its
+  Svelte source is in the project, with how to rebuild it.
+- **`GRIDCRAFT_DOCK=<project>`** docks a trusted project's panel as GridCraft starts.
 
 **Phase 2e, second slice, is built: approved plans.** The owner asked for them next, on
 2026-10-12. The shape is Anie_Maint's D25.
@@ -370,11 +377,11 @@ section.
   of the things it could ask for singly. It is followed through before anyone is asked, so a
   plan that could not be carried out is refused with the step and the reason.
 - **The person answers once, on one card** that shows every step whole, each as it will find
-  things once the steps before it are done, and says by itself what trusts a module or runs
+  things once the steps before it are done, and says by itself what trusts a project or runs
   code. A yes approves the plan and does nothing else.
 - **The agent then carries the steps out** (`run_plan_step`), in order, by the plan's number
   and the step's and nothing more: what a step does is GridCraft's own copy of what was
-  shown. No step asks again. Each is checked when it is to be done, and waits if its module
+  shown. No step asks again. Each is checked when it is to be done, and waits if its project
   is not as the plan's earlier steps left it.
 - **The window shows the plan**, where each step stands, how long it has, and **Stop Plan**.
   A plan also ends when a step fails, when its time runs out (60 minutes unless it says, 240
@@ -398,7 +405,7 @@ asked for it as a new window in Svelte, and whether in Electron (2026-10-12).
 - `GRIDCRAFT_DEVELOPMENT=1` opens it as GridCraft starts.
 
 **Macros (VBA) can be read.** The owner asked for a viewer as the next slice, towards
-rebuilding what a workbook's macros do as a module (2026-10-12).
+rebuilding what a workbook's macros do as a project (2026-10-12).
 
 - **Developer ▸ Macros** lists the modules of the VBA project the workbook carries and shows
   each one's source: what kind it is, its procedures, which of them Excel would run by
@@ -408,14 +415,14 @@ rebuilding what a workbook's macros do as a module (2026-10-12).
 - **GridCraft still runs no macro**, and keeps the project byte for byte.
 - **Excel was asked what it keeps** (ADR-0001 has the table): anything added to
   `vbaProject.bin` is lost the moment a macro is edited in Excel; a custom XML part is kept.
-  So nothing will be written into a project, and a module that is to travel with a workbook
-  has a place that Excel keeps.
+  So nothing will be written into a VBA project, and a project of ours that is to travel
+  with a workbook has a place that Excel keeps.
 - **Decided (2026-10-13):** the phases V1 to V3 in ADR-0001 stand, and with them no file
   format of GridCraft's own.
 
 **An agent rebuilds a workbook's macros as a project** (phase V1, 2026-10-13).
 
-- **A project says which workbook it is the code of** (`workbook = "…"` in `module.toml`,
+- **A project says which workbook it is the code of** (`workbook = "…"` in `project.toml`,
   a file's name), and keeps a note of what became of each procedure: `rebuilt.toml`, with
   rebuilt, partly or left, the script and a line of why.
 - **The note is shown as the project's own word**: beside the macros in Developer ▸ Macros,
@@ -440,7 +447,7 @@ rebuilding what a workbook's macros do as a module (2026-10-12).
 - Both windows show it: GridCraft's own, and the page, redrawn around the list.
 
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
-per-module Python environments, and the rest of **2d**: macOS and Linux.
+per-project Python environments, and the rest of **2d**: macOS and Linux.
 
 The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
 own.
@@ -460,7 +467,7 @@ own.
 - A script's time limit goes on running while one of its calls waits for the window, and each
   call waits at most thirty seconds.
 - **"A workbook is about to be saved" is not an event yet.** It needs a place in the save path
-  where a module is waited for, and a decision on whether a module may hold a save up.
+  where a project is waited for, and a decision on whether a project may hold a save up.
 - An event says a workbook changed, not which cells: telling the range needs the engine to say
   what a command touched.
 - The Developer console is kept in memory for the run. It is not written to a file; what
@@ -475,9 +482,9 @@ own.
   record what is done through GridCraft.
 - **Plans:** a step that fails ends its plan (no recovery steps, no declared
   expectations); a plan is sent in the call, not kept as a file to review first; one at a
-  time. A step that trusts a module does so without a question of its own: the plan's card
+  time. A step that trusts a project does so without a question of its own: the plan's card
   is where that is read. Any client holding the token can run or stop an approved plan.
-- The Development server reaches modules and the console. The command palette, the action
+- The Development server reaches projects and the console. The command palette, the action
   journal and recorded scripts are not on it.
 - The Development window keeps the height of its tallest card until it is closed (GridCraft's
   own; the page scrolls).
@@ -490,12 +497,13 @@ own.
   was tried once, on one small procedure.
 - **Kits: one, and no way to load another.** How one would be loaded is not decided
   (ADR-0001 has what is known). The kit can't be turned off as a whole.
-- **Two words for one thing.** The Development window says project; `module.toml`, the
-  server's tools, a request's card, Modules and the levels' words say module. Renaming them
-  is a commit of its own, not made.
+- **What was made while a project was called a module is read where it is**: a
+  `module.toml`, a `modules` folder, `trusted-modules.json`. Nothing is renamed for the
+  person. An agent set up with the server's older tool names (`create_module` and the like)
+  finds them gone: they are `create_project` and the like now.
 - **A project names its workbook by the file's name**: two workbooks of one name are the
   same to it.
-- Reviewing, trusting and running a project is still done in Modules, not in its own part
+- Reviewing, trusting and running a project is still done in Projects, not in its own part
   of the Development window.
 - **The Development window as a page is Windows only**, and a second thing to keep alike:
   what the two windows say is shared, how they are laid out is not. Its place and size are
@@ -510,7 +518,7 @@ own.
   of the same objects is tested, where the machine has a Python.
 - A script's process is not confined, and stopping it stops only the Python GridCraft started,
   not processes the script started itself.
-- The trust check hashes the whole module on every request. Fine for small modules; a large one
+- The trust check hashes the whole project on every request. Fine for small projects; a large one
   will want the fingerprint cached against its files' times.
 - A call that arrives while GridCraft shows a system dialog waits, and is given up after 30
   seconds.
@@ -532,8 +540,8 @@ still there:
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
 | `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
-| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls modules' panels made, and sees to what agents asked of the Development server |
-| `crates/ui-egui/src/lib.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a module's docked panel, before the grid takes what is left |
+| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls projects' panels made, and sees to what agents asked of the Development server |
+| `crates/ui-egui/src/lib.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a project's docked panel, before the grid takes what is left |
 | `apps/gridcraft/src/main.rs`, the `mod` lines | `mod aniefork;`: the fork's part of the shell |
 | `apps/gridcraft/src/main.rs`, `App::ui`, after `self.0.ui(ui);` | `aniefork::frame(&mut self.0, ui.ctx(), _frame);` puts the docked panel's web view in its place |
 | `apps/gridcraft/Cargo.toml`, the Windows dependencies | `wry = { version = "0.57", default-features = false }`: the system web view |
@@ -612,6 +620,27 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-13 (module becomes project):** The owner asked for one word. Renamed, in the
+  fork's code and nowhere else: the words in every window and on a request's card; the
+  manifest, `project.toml`; the Development server's tools (`list_projects`,
+  `read_project_file`, `create_project`, `write_project_file`, `delete_project_file`,
+  `trust_project`, `stop_trusting_project`), their argument `project`, the `reference` topic
+  and the keys of `development_status`; `developer.projects` and the Projects window;
+  `developer.console {project?}`; the key `project` a panel's `spreadsheet.info()` gives; the
+  folder `projects` and `trusted-projects.json`; and the types and files of the code
+  (`project.rs`, `projects.rs`). Kept, because they mean something else: a VBA module (and
+  `module = "…"` in `rebuilt.toml`), a Python module, a source file of the code. **What was
+  made before is read where it is**: a project whose manifest is `module.toml`, a settings
+  folder with `modules` and `trusted-modules.json`, a trust file that says `modules`; a
+  folder with both manifests is refused. Nothing is renamed for the person, since renaming a
+  file changes the fingerprint they trusted. The page and the showcase were rebuilt from
+  their renamed sources. Five comments of the fork's hooks in upstream files say project
+  (no hook added or moved). Found by a test on the way: the rename had turned the key of a
+  VBA module into `project` in one place. Checked by 3 more tests (the two manifests, the
+  older names in the settings folder, an older trust file) with the rest following the
+  names, and in the real window on both layouts: a settings folder from before the rename,
+  whose project is listed and still trusted, and a fresh one, where an agent's
+  `create_project` was approved and wrote `projects/…/project.toml`.
 - **2026-10-13 (the Development window by kit and project):** The owner gave the
   Development window its shape: Development at the top, the MCP server under it, the
   development kits, and in ours (named by the owner: the Anie Development Kit) a list of

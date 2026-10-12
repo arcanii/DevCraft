@@ -4,7 +4,7 @@
 //! the project the workbook carries (kept byte for byte, and written back only into `.xlsm`)
 //! and their source. It is the first step of bringing what a workbook's macros do into
 //! GridCraft (ADR-0001): a person, and an agent helping them, can read what is there before
-//! any of it is rebuilt as a module.
+//! any of it is rebuilt as a project.
 //!
 //! The project is read by `gridcraft_aniefork_dev::vba`, which treats it as what it is: a file
 //! anyone may have made. It is read once for each workbook, not once a frame.
@@ -403,7 +403,7 @@ pub(crate) mod tests {
 
     #[test]
     fn what_a_project_says_it_rebuilt_is_shown_beside_the_macros_and_a_request_can_be_copied() {
-        use crate::aniefork::modules::tests::{Sandbox, app_with};
+        use crate::aniefork::projects::tests::{Sandbox, app_with};
 
         let s = Sandbox::new("macros-rebuilt");
         let mut a = app_with(None);
@@ -416,12 +416,12 @@ pub(crate) mod tests {
         // one by a script it holds, one by a script that is not there.
         let title = a.session.active().unwrap().title.clone();
         let write = |path: &str, text: &str| {
-            let file = s.0.join("modules/budget").join(path);
+            let file = s.0.join("projects/budget").join(path);
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, text).unwrap();
         };
         write(
-            "module.toml",
+            "project.toml",
             &format!(
                 "id = \"budget\"\nname = \"Budget Macros\"\nversion = \"1\"\npermissions = [\"python\"]\nworkbook = \"{title}\"\n\n[python]\nscripts = \"python\"\n"
             ),

@@ -1,26 +1,26 @@
-//! The Development subsystem of the aniefork fork of GridCraft: **modules** a user installs to
+//! The Development subsystem of the aniefork fork of GridCraft: **projects** a user installs to
 //! give GridCraft new abilities (web panels, Python). Designed in `docs/decisions-aniefork.md`
 //! (ADR-0001).
 //!
-//! It finds modules, reads their manifests, fingerprints exactly what they contain, keeps the
-//! user's decisions to trust them, and runs a trusted module's Python scripts. Whatever runs or
-//! serves anything of a module asks first, here, whether the module is trusted and what it was
+//! It finds projects, reads their manifests, fingerprints exactly what they contain, keeps the
+//! user's decisions to trust them, and runs a trusted project's Python scripts. Whatever runs or
+//! serves anything of a project asks first, here, whether the project is trusted and what it was
 //! granted.
 //!
 //! - [`kit`]: the development kits that are loaded (this is the Anie Development Kit), and
 //!   the two kinds of project: the code of one workbook, and a library.
-//! - [`manifest`]: `module.toml`, and the permissions a module can ask for.
-//! - [`module`]: modules on disk and their fingerprints.
+//! - [`manifest`]: `project.toml`, and the permissions a project can ask for.
+//! - [`project`]: projects on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
-//! - [`python`]: running a trusted module's scripts in a process of their own.
-//! - [`bridge`]: serving a trusted module's panel to the browser, carrying its calls, and telling
+//! - [`python`]: running a trusted project's scripts in a process of their own.
+//! - [`bridge`]: serving a trusted project's panel to the browser, carrying its calls, and telling
 //!   it what happens in GridCraft.
-//! - [`console`]: the Developer console: what modules printed and logged, and what failed.
+//! - [`console`]: the Developer console: what projects printed and logged, and what failed.
 //! - [`agents`]: the Development server, a second MCP server for agents that help with
 //!   development work, as far as the user lets them go.
-//! - [`starter`]: "New Module".
-//! - [`showcase`]: a module whose panel is a Svelte app, to show a web toolkit at work.
-//! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
+//! - [`starter`]: "New Project".
+//! - [`showcase`]: a project whose panel is a Svelte app, to show a web toolkit at work.
+//! - [`paths`], [`settings`]: where projects, decisions and the subsystem's settings are kept.
 //! - [`vba`]: looking inside a workbook's VBA project, to read it. Nothing of it is ever run.
 //! - [`rebuilt`]: a project's note of what it rebuilds of a workbook's macros.
 //!
@@ -36,8 +36,8 @@ pub mod console;
 mod http;
 pub mod kit;
 pub mod manifest;
-pub mod module;
 pub mod paths;
+pub mod project;
 pub mod python;
 pub mod rebuilt;
 pub mod settings;
@@ -51,13 +51,13 @@ pub mod vba;
 use serde_json::{Value as Json, json};
 
 pub use manifest::{Manifest, Permission};
-pub use module::Module;
+pub use project::Project;
 pub use trust::{Status, TrustStore};
 
-/// A module and where it stands, as the Modules dialog shows it and `developer.modules` reports it.
-pub fn describe(module: &Module, store: &TrustStore) -> Json {
-    let status = store.status(module);
-    let manifest = module.manifest.as_ref();
+/// A project and where it stands, as the Projects dialog shows it and `developer.projects` reports it.
+pub fn describe(project: &Project, store: &TrustStore) -> Json {
+    let status = store.status(project);
+    let manifest = project.manifest.as_ref();
     let asks: Vec<Json> = manifest
         .map(|m| m.permissions.iter().map(|p| json!({"permission": p.code(), "means": p.meaning(), "unlimited": p.is_unlimited()})).collect())
         .unwrap_or_default();
@@ -66,8 +66,8 @@ pub fn describe(module: &Module, store: &TrustStore) -> Json {
         _ => vec![],
     };
     json!({
-        "id": module.id,
-        "name": module.name(),
+        "id": project.id,
+        "name": project.name(),
         "version": manifest.map(|m| m.version.as_str()).unwrap_or(""),
         "author": manifest.map(|m| m.author.as_str()).unwrap_or(""),
         "description": manifest.map(|m| m.description.as_str()).unwrap_or(""),
@@ -75,53 +75,53 @@ pub fn describe(module: &Module, store: &TrustStore) -> Json {
         "kind": kit::ProjectKind::of(manifest).code(),
         "workbook": manifest.and_then(|m| m.workbook.as_deref()),
         // What it says it rebuilds of a workbook's macros: its own word.
-        "rebuilt": rebuilt::describe(module),
+        "rebuilt": rebuilt::describe(project),
         "status": status.code(),
         "problem": match &status { Status::Problem(why) => Json::String(why.clone()), _ => Json::Null },
         "asks": asks,
         "granted": granted,
-        "followsChanges": store.follows_changes(&module.id),
+        "followsChanges": store.follows_changes(&project.id),
         "panel": manifest.and_then(|m| m.panel.as_deref()),
         "python": manifest.and_then(|m| m.python.as_deref()),
-        "files": module.files,
-        "fingerprint": module.fingerprint,
+        "files": project.files,
+        "fingerprint": project.fingerprint,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::tests::{TempDir, sample};
+    use crate::project::tests::{TempDir, sample};
 
     #[test]
-    fn a_module_is_described_with_what_it_asks_for_and_what_it_was_granted() {
+    fn a_project_is_described_with_what_it_asks_for_and_what_it_was_granted() {
         let t = TempDir::new("describe");
-        let m = module::load(&sample(&t));
-        let mut store = TrustStore::load(&t.0.join("trusted-modules.json"));
+        let m = project::load(&sample(&t));
+        let mut store = TrustStore::load(&t.0.join("trusted-projects.json"));
         let before = describe(&m, &store);
         assert_eq!(
             (before["id"].as_str(), before["name"].as_str(), before["status"].as_str()),
             (Some("clean-data"), Some("Clean Data"), Some("untrusted"))
         );
-        assert_eq!(before["granted"], json!([]), "nothing is granted to an untrusted module");
+        assert_eq!(before["granted"], json!([]), "nothing is granted to an untrusted project");
         let asks: Vec<&str> = before["asks"].as_array().unwrap().iter().filter_map(|a| a["permission"].as_str()).collect();
         assert_eq!(asks, ["read", "python"]);
         assert_eq!(before["asks"][1]["unlimited"], json!(true), "Python is marked as the one that can't be limited");
         assert!(before["asks"].as_array().unwrap().iter().all(|a| a["means"].as_str().is_some_and(|text| !text.is_empty())));
-        assert_eq!(before["files"], json!(["module.toml", "panel/index.html", "python/clean.py"]));
+        assert_eq!(before["files"], json!(["panel/index.html", "project.toml", "python/clean.py"]));
         assert_eq!((&before["kind"], &before["workbook"], &before["rebuilt"]), (&json!("library"), &Json::Null, &Json::Null));
         store.trust(&m, false).unwrap();
         let after = describe(&m, &store);
         assert_eq!((after["status"].as_str(), &after["granted"]), (Some("trusted"), &json!(["read", "python"])));
         // One that names a workbook is that workbook's code, and its note is reported with it.
-        t.write("budget/module.toml", "id = \"budget\"\nname = \"Budget\"\nversion = \"1\"\nworkbook = \"Budget.xlsm\"\n");
+        t.write("budget/project.toml", "id = \"budget\"\nname = \"Budget\"\nversion = \"1\"\nworkbook = \"Budget.xlsm\"\n");
         t.write("budget/rebuilt.toml", "[[procedure]]\nmodule = \"Totals\"\nname = \"AddUp\"\nstate = \"left\"\n");
-        let code = describe(&module::load(&t.0.join("budget")), &store);
+        let code = describe(&project::load(&t.0.join("budget")), &store);
         assert_eq!((&code["kind"], &code["workbook"], &code["rebuilt"]["left"]), (&json!("workbook"), &json!("Budget.xlsm"), &json!(1)));
-        // A broken module says why.
+        // A broken project says why.
         t.write("broken/readme.txt", "x");
-        let broken = describe(&module::load(&t.0.join("broken")), &store);
+        let broken = describe(&project::load(&t.0.join("broken")), &store);
         assert_eq!(broken["status"], json!("problem"));
-        assert!(broken["problem"].as_str().is_some_and(|why| why.contains("module.toml")));
+        assert!(broken["problem"].as_str().is_some_and(|why| why.contains("project.toml")));
     }
 }

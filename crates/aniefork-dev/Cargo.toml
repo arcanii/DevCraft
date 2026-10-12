@@ -3,7 +3,7 @@ name = "gridcraft-aniefork-dev"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GridCraft Development subsystem (aniefork): modules, the user's trust in them, their Python scripts and their panels"
+description = "GridCraft Development subsystem (aniefork): projects, the user's trust in them, their Python scripts and their panels"
 
 [lints]
 workspace = true

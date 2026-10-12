@@ -13,8 +13,8 @@
 //! ```
 //!
 //! A **kit** is a way of building on GridCraft (`gridcraft_aniefork_dev::kit`); a **project**
-//! is what the kit's files and the Development server's tools call a module. The MCP server
-//! is not a kit's: it stands beside them, at the top.
+//! is a folder of the kit's, with a `project.toml`. The MCP server is not a kit's: it stands
+//! beside them, at the top.
 //!
 //! Like a request's card (`card.rs`), what is said here is said once, as JSON, and drawn by
 //! both windows: GridCraft's own (`development.rs`) and the page (`devpage.rs`). The page is
@@ -28,10 +28,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gridcraft_aniefork_dev::kit::{self, ProjectKind};
-use gridcraft_aniefork_dev::{Module, TrustStore, describe, manifest, module, rebuilt, settings, showcase, vba};
+use gridcraft_aniefork_dev::{Project, TrustStore, describe, manifest, project, rebuilt, settings, showcase, vba};
 use serde_json::{Value as Json, json};
 
-use super::{agents, card, macros, modules};
+use super::{agents, card, macros, projects};
 use crate::SheetApp;
 
 /// The window's name for its top, and for the two things under it.
@@ -41,7 +41,8 @@ pub(super) const KITS: &str = "Development Kits";
 /// Said under the kits: there is one, and no way to another yet.
 pub(super) const KITS_NOTE: &str = "Only the kit that is built into GridCraft can be used so far: there is no way to load another yet.";
 /// Said where projects are listed: what a project is, in the words the rest of GridCraft uses.
-pub(super) const PROJECTS_NOTE: &str = "A project is a folder with a module.toml: GridCraft's other windows, and an agent's tools, call it a module. It does nothing until you trust it.";
+pub(super) const PROJECTS_NOTE: &str =
+    "A project is a folder with a project.toml, Python scripts and a web panel. It does nothing until you trust it.";
 pub(super) const NO_WORKBOOK: &str = "No workbook is open.";
 /// The most projects of one kind listed down the side. The kit's own part lists them all.
 const LISTED: usize = 40;
@@ -87,8 +88,8 @@ impl Pane {
 /// The projects on disk, as they were last read.
 #[derive(Clone)]
 pub(super) struct Found {
-    pub modules: Arc<Vec<Module>>,
-    /// Each of them described, in the order of `modules`.
+    pub on_disk: Arc<Vec<Project>>,
+    /// Each of them described, in the order of `projects`.
     pub projects: Arc<Vec<Json>>,
     pub folder: String,
     /// Another number each time they are read again.
@@ -106,22 +107,22 @@ thread_local! {
 
 /// The projects, read from disk at most once a moment. `None` in a run that keeps no settings.
 pub(super) fn found() -> Option<Found> {
-    let at = modules::places()?;
+    let at = projects::places()?;
     let now = crate::now_ms();
     KEPT.with(|kept| {
         let mut kept = kept.borrow_mut();
         if let Some((read_at, of, found)) = &*kept
-            && *of == at.modules
+            && *of == at.projects
             && (0.0..KEEP_MS).contains(&(now - read_at))
         {
             return Some(found.clone());
         }
         let store = TrustStore::load(&at.trust);
-        let all = module::scan(&at.modules);
+        let all = project::scan(&at.projects);
         let projects: Vec<Json> = all.iter().map(|project| describe(project, &store)).collect();
         let stamp = kept.as_ref().map_or(0, |(_, _, before)| before.stamp).wrapping_add(1);
-        let found = Found { modules: Arc::new(all), projects: Arc::new(projects), folder: at.modules.display().to_string(), stamp };
-        *kept = Some((now, at.modules.clone(), found.clone()));
+        let found = Found { on_disk: Arc::new(all), projects: Arc::new(projects), folder: at.projects.display().to_string(), stamp };
+        *kept = Some((now, at.projects.clone(), found.clone()));
         Some(found)
     })
 }
@@ -143,7 +144,7 @@ fn text<'a>(of: &'a Json, key: &str) -> &'a str {
     of.get(key).and_then(Json::as_str).unwrap_or("")
 }
 
-/// A project's standing in a word or two, as Modules says it.
+/// A project's standing in a word or two, as Projects says it.
 pub(super) fn status_label(code: &str) -> &'static str {
     match code {
         "trusted" => "Trusted",
@@ -217,7 +218,7 @@ pub(super) fn coverage(app: &SheetApp) -> Option<Arc<Coverage>> {
             Err(why) => Coverage { title: read.title.clone(), summary: Err(why.clone()), procedures: 0, spoken_for: 0 },
             Ok(project) => {
                 let mut summary = vba::summary(project);
-                let claims = found.as_ref().map(|found| rebuilt::claims(&found.modules, &read.title)).unwrap_or_default();
+                let claims = found.as_ref().map(|found| rebuilt::claims(&found.on_disk, &read.title)).unwrap_or_default();
                 let (procedures, spoken_for) = rebuilt::mark(&mut summary, &claims);
                 Coverage { title: read.title.clone(), summary: Ok(summary), procedures, spoken_for }
             }
@@ -408,10 +409,10 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context) -> Json {
     let kit = kit::ANIE;
     let head =
         json!({"kind": "kit", "title": kit.name, "above": [TOP, KITS], "madeOf": kit.made_of, "standing": "Built in  ·  loaded", "says": kit.says});
-    let (Some(found), Some(at)) = (found(), modules::places()) else {
+    let (Some(found), Some(at)) = (found(), projects::places()) else {
         let mut told = head;
         told["available"] = json!(false);
-        told["unavailable"] = json!(card::NO_MODULES);
+        told["unavailable"] = json!(card::NO_PROJECTS);
         return told;
     };
     let open = open_workbook(app);
@@ -445,7 +446,7 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context) -> Json {
                 "text": match standing {
                     None => "A project whose panel is a Svelte app, docked beside the sheet.",
                     Some(true) => "Svelte Showcase is ready.",
-                    Some(false) => "Svelte Showcase is not trusted yet: review and trust it in Modules, then come back.",
+                    Some(false) => "Svelte Showcase is not trusted yet: review and trust it in Projects, then come back.",
                 },
                 "canDock": super::dock::available(ctx),
                 "canBrowse": app.services.open_url.is_some(),
@@ -544,7 +545,7 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
         "asksNothing": "Show its panel, and nothing more.",
         "parts": parts,
         "rebuilt": rebuilt,
-        "manage": "Reviewing, trusting and running it is done in Modules.",
+        "manage": "Reviewing, trusting and running it is done in Projects.",
         "canOpenFolder": app.services.open_url.is_some(),
     }))
 }
@@ -565,10 +566,10 @@ pub(super) fn pane(app: &SheetApp, ctx: &egui::Context, pane: &Pane, now: &agent
 mod tests {
     use super::*;
     use crate::aniefork::macros::tests::{carry, sample};
-    use crate::aniefork::modules::tests::{Sandbox, app_with};
+    use crate::aniefork::projects::tests::{Sandbox, app_with};
 
     fn write(s: &Sandbox, path: &str, text: &str) {
-        let file = s.0.join("modules").join(path);
+        let file = s.0.join("projects").join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, text).unwrap();
     }
@@ -577,7 +578,7 @@ mod tests {
     fn budget(s: &Sandbox, workbook: &str) {
         write(
             s,
-            "budget/module.toml",
+            "budget/project.toml",
             &format!(
                 "id = \"budget\"\nname = \"Budget Macros\"\nversion = \"1\"\npermissions = [\"read\", \"python\"]\nworkbook = \"{workbook}\"\n\n[python]\nscripts = \"python\"\n"
             ),
@@ -603,7 +604,7 @@ mod tests {
     #[test]
     fn the_list_has_the_server_at_the_top_and_the_projects_under_their_kit_by_kind() {
         let s = Sandbox::new("kits-nav");
-        modules::create("Clean Data").unwrap();
+        projects::create("Clean Data").unwrap();
         let mut a = app_with(None);
         let title = a.session.active().unwrap().title.clone();
         budget(&s, &title);
@@ -659,7 +660,7 @@ mod tests {
     #[test]
     fn the_kit_lists_its_projects_by_kind_and_a_project_says_what_it_is_for() {
         let s = Sandbox::new("kits-panes");
-        modules::create("Clean Data").unwrap();
+        projects::create("Clean Data").unwrap();
         let a = app_with(None);
         let ctx = egui::Context::default();
         let title = a.session.active().unwrap().title.clone();
@@ -718,7 +719,7 @@ mod tests {
         let told = kit_pane(&a, &ctx);
         assert_eq!(
             (&told["title"], &told["available"], &told["unavailable"]),
-            (&json!("Anie Development Kit"), &json!(false), &json!(card::NO_MODULES))
+            (&json!("Anie Development Kit"), &json!(false), &json!(card::NO_PROJECTS))
         );
         let rows = nav(&a, &Pane::Overview, &agents::snapshot());
         assert_eq!(rows.as_array().unwrap().len(), 4, "the top, the server, the heading and the kit");

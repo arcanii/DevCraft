@@ -3,7 +3,7 @@
 //! keeps it byte for byte.
 //!
 //! This is the first step of bringing what a workbook's macros do into GridCraft (ADR-0001 in
-//! `docs/decisions-aniefork.md`): before anything can be rebuilt as a module, a person and an
+//! `docs/decisions-aniefork.md`): before anything can be rebuilt as a project, a person and an
 //! agent have to be able to read what is there.
 //!
 //! A project is a compound file (the container Office documents used before they were zip

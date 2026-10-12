@@ -1,7 +1,7 @@
-//! A module's manifest, `module.toml`: who it is and what it asks to be allowed.
+//! A project's manifest, `project.toml`: who it is and what it asks to be allowed.
 //!
 //! ```toml
-//! id = "clean-data"                  # the module's folder name
+//! id = "clean-data"                  # the project's folder name
 //! name = "Clean Data"
 //! version = "0.1.0"
 //! author = "Ada Lovelace"            # optional
@@ -17,17 +17,42 @@
 //! ```
 //!
 //! A manifest is written by a stranger: everything in it is checked, and anything not understood
-//! where it matters (a permission, a path that leaves the module) makes the manifest invalid
+//! where it matters (a permission, a path that leaves the project) makes the manifest invalid
 //! rather than being guessed at.
 
 use serde::{Deserialize, Serialize};
 
-/// The file's name in a module's folder.
-pub const FILE: &str = "module.toml";
+/// The file's name in a project's folder.
+pub const FILE: &str = "project.toml";
+/// The name it had while a project was called a module. A folder that has it, and no
+/// `project.toml`, is read as before: renaming the file for the person would change what
+/// they trusted.
+pub const LEGACY_FILE: &str = "module.toml";
+
+/// Which of a project's files is its manifest: `project.toml`, or the older name where that
+/// is all there is. A folder with both is refused: nobody could tell which of them counts.
+pub fn file_among<'a>(files: impl IntoIterator<Item = &'a str>) -> Result<&'static str, String> {
+    let (mut now, mut before) = (false, false);
+    for file in files {
+        now |= file == FILE;
+        before |= file == LEGACY_FILE;
+    }
+    match (now, before) {
+        (true, false) => Ok(FILE),
+        (false, true) => Ok(LEGACY_FILE),
+        (true, true) => Err(format!("it has both a {FILE} and a {LEGACY_FILE}, and only one of them may say what it is")),
+        (false, false) => Err(format!("it has no {FILE}")),
+    }
+}
+
+/// Whether a path inside a project is its manifest, under either name.
+pub fn is_manifest(path: &str) -> bool {
+    path == FILE || path == LEGACY_FILE
+}
 /// The largest manifest read (bytes).
 pub const MAX_BYTES: u64 = 64 * 1024;
 
-/// Something a module asks to be allowed to do. The user grants them together, by trusting it.
+/// Something a project asks to be allowed to do. The user grants them together, by trusting it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Permission {
@@ -67,7 +92,7 @@ impl Permission {
         }
     }
 
-    /// Granting it is the same as running a program from the module's author.
+    /// Granting it is the same as running a program from the project's author.
     pub fn is_unlimited(self) -> bool {
         self == Permission::Python
     }
@@ -83,12 +108,12 @@ pub struct Manifest {
     pub description: String,
     /// What it asks for: sorted, each once.
     pub permissions: Vec<Permission>,
-    /// The panel's page, as a path inside the module (`/` separators).
+    /// The panel's page, as a path inside the project (`/` separators).
     pub panel: Option<String>,
-    /// The folder of scripts its panel may run, as a path inside the module.
+    /// The folder of scripts its panel may run, as a path inside the project.
     pub python: Option<String>,
     /// The workbook it is the code of, by its file's name. `None`: it is a library, for any
-    /// workbook. It only says what the module is for: nothing is allowed or run because of it.
+    /// workbook. It only says what the project is for: nothing is allowed or run because of it.
     pub workbook: Option<String>,
 }
 
@@ -115,7 +140,7 @@ struct RawPython {
     scripts: Option<String>,
 }
 
-/// A module's id: lowercase letters, digits and hyphens, starting with a letter or digit, at most
+/// A project's id: lowercase letters, digits and hyphens, starting with a letter or digit, at most
 /// 64 characters. It is also the folder's name and part of URLs, so nothing else is allowed.
 pub fn valid_id(id: &str) -> bool {
     let mut chars = id.chars();
@@ -139,8 +164,8 @@ fn text(value: Option<String>, what: &str, max: usize, required: bool) -> Result
     Ok(value.to_string())
 }
 
-/// A path inside the module: relative, `/` separators, plain names only. Nothing that could name a
-/// file outside the module's folder on any system.
+/// A path inside the project: relative, `/` separators, plain names only. Nothing that could name a
+/// file outside the project's folder on any system.
 pub fn inner_path(path: &str) -> Result<String, String> {
     let bad = |why: &str| Err(format!("the path {path:?} {why}"));
     if path.is_empty() || path.len() > 200 {
@@ -163,7 +188,7 @@ pub fn inner_path(path: &str) -> Result<String, String> {
 /// The longest name of a workbook a manifest may give (characters).
 pub const MAX_WORKBOOK: usize = 255;
 
-/// The name of the workbook a module is the code of: a file's name, not a path, since a path
+/// The name of the workbook a project is the code of: a file's name, not a path, since a path
 /// is another on every computer. Empty is none.
 pub fn workbook_name(name: &str) -> Result<Option<String>, String> {
     let name = name.trim();
@@ -247,8 +272,8 @@ scripts = "python"
         // The least a manifest can say: it asks for nothing and has no panel or scripts.
         let m = parse("id = \"x\"\nname = \"X\"\nversion = \"1\"", "x").unwrap();
         assert!(m.permissions.is_empty() && m.panel.is_none() && m.python.is_none() && m.author.is_empty());
-        assert_eq!(m.workbook, None, "a module that names no workbook is a library");
-        // Keys it doesn't know are ignored: a newer module still loads.
+        assert_eq!(m.workbook, None, "a project that names no workbook is a library");
+        // Keys it doesn't know are ignored: a newer project still loads.
         assert!(parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nfuture = true\n[panel]\nwidth = 300", "x").is_ok());
     }
 
@@ -256,7 +281,7 @@ scripts = "python"
     fn refuses_what_it_does_not_understand_or_trust() {
         let with = |from: &str, to: &str| GOOD.replace(from, to);
         let bad = [
-            ("the folder is another module's", GOOD.to_string(), "other"),
+            ("the folder is another project's", GOOD.to_string(), "other"),
             ("an unknown permission", with("\"python\"", "\"everything\""), "clean-data"),
             ("a path that climbs out", with("panel/index.html", "../secrets.html"), "clean-data"),
             ("an absolute path", with("panel/index.html", "/etc/passwd"), "clean-data"),
@@ -276,7 +301,7 @@ scripts = "python"
     }
 
     #[test]
-    fn a_module_can_name_the_workbook_it_is_the_code_of() {
+    fn a_project_can_name_the_workbook_it_is_the_code_of() {
         let named = |name: &str| parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\nworkbook = {name}"), "x");
         assert_eq!(named("\"Budget.xlsm\"").unwrap().workbook.as_deref(), Some("Budget.xlsm"));
         assert_eq!(named("\"  Q3 report (v2).xlsm \"").unwrap().workbook.as_deref(), Some("Q3 report (v2).xlsm"));
@@ -288,6 +313,18 @@ scripts = "python"
         assert!(named(&format!("\"{}\"", "n".repeat(MAX_WORKBOOK + 1))).is_err(), "a name too long");
         assert!(same_workbook("Budget.xlsm", " budget.XLSM ") && same_workbook("Übersicht.xlsm", "übersicht.xlsm"));
         assert!(!same_workbook("Budget.xlsm", "Budget.xlsx") && !same_workbook("Budget.xlsm", ""));
+    }
+
+    #[test]
+    fn the_manifest_is_project_toml_or_the_name_it_had_and_never_both() {
+        assert_eq!(file_among(["panel/index.html", "project.toml", "python/clean.py"]), Ok(FILE));
+        assert_eq!(file_among(["module.toml", "panel/index.html"]), Ok(LEGACY_FILE), "what was made before the name changed is read");
+        assert!(file_among(["module.toml", "project.toml"]).unwrap_err().contains("both a project.toml and a module.toml"));
+        assert_eq!(file_among(["panel/index.html"]).unwrap_err(), "it has no project.toml");
+        assert_eq!(file_among([]).unwrap_err(), "it has no project.toml");
+        // Only at the top of the folder, and only these two spellings.
+        assert!(file_among(["panel/project.toml", "Project.toml", "project.toml.bak"]).is_err());
+        assert!(is_manifest("project.toml") && is_manifest("module.toml") && !is_manifest("panel/project.toml") && !is_manifest("rebuilt.toml"));
     }
 
     #[test]

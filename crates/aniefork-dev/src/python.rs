@@ -1,14 +1,14 @@
-//! Running a trusted module's Python scripts, in a process of their own.
+//! Running a trusted project's Python scripts, in a process of their own.
 //!
-//! `run` is the only way in, and it decides for itself whether the module may run anything: it
-//! reads the module and the user's decisions fresh from disk on every call. A module that isn't
+//! `run` is the only way in, and it decides for itself whether the project may run anything: it
+//! reads the project and the user's decisions fresh from disk on every call. A project that isn't
 //! trusted with `python`, has changed since it was trusted, or names a script that isn't one of
 //! its own files, is refused before any process exists.
 //!
-//! A script is a file in the module's scripts folder with a `main(data)` function. GridCraft
+//! A script is a file in the project's scripts folder with a `main(data)` function. GridCraft
 //! starts the user's own Python with a small runner, which stays alive between calls (so a
-//! module's imports, pandas for instance, are paid for once) and speaks one line of JSON per
-//! request and per reply. Each module gets its own process, started again whenever the module's
+//! project's imports, pandas for instance, are paid for once) and speaks one line of JSON per
+//! request and per reply. Each project gets its own process, started again whenever the project's
 //! files change.
 //!
 //! The process is what keeps GridCraft safe from the script, not the other way round: a script
@@ -56,7 +56,7 @@ impl Interpreter {
 /// Why a script produced no result.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunError {
-    /// The module may not run this script. Nothing was started.
+    /// The project may not run this script. Nothing was started.
     Refused(String),
     /// There is no Python to run it with.
     NoPython(String),
@@ -124,7 +124,7 @@ mod web {
         #[allow(clippy::too_many_arguments)]
         pub fn run(
             &self,
-            _modules: &Path,
+            _projects: &Path,
             _trust: &Path,
             _python: &str,
             _id: &str,
@@ -138,7 +138,7 @@ mod web {
         #[allow(clippy::too_many_arguments)]
         pub fn run_with(
             &self,
-            _modules: &Path,
+            _projects: &Path,
             _trust: &Path,
             _python: &str,
             _id: &str,
@@ -150,7 +150,7 @@ mod web {
             Err(RunError::NoPython("Python is not available in the web build.".into()))
         }
 
-        pub fn stop(&self, _modules: &Path, _id: &str) {}
+        pub fn stop(&self, _projects: &Path, _id: &str) {}
 
         pub fn look_again(&self) {}
 
@@ -176,7 +176,7 @@ mod host {
 
     use crate::console::{self, Console};
     use crate::manifest::{self, Permission};
-    use crate::module;
+    use crate::project;
     use crate::trust::{Status, TrustStore};
 
     /// How long a new Python gets to start and say it is ready.
@@ -303,7 +303,7 @@ def _read(range=None, sheet=None, formulas=False, formatted=False):
     return Sheet(sheet).read(formulas, formatted)
 
 def _install():
-    module = types.ModuleType("spreadsheet", "GridCraft: what a module's script can ask of the spreadsheet. Made by GridCraft; not a file.")
+    module = types.ModuleType("spreadsheet", "GridCraft: what a project's script can ask of the spreadsheet. Made by GridCraft; not a file.")
     module.Error = SpreadsheetError
     module.run, module.batch, module.selection, module.read = _run, _batch, _selection, _read
     module.write = lambda range, rows, sheet=None: Range(range, sheet).write(rows)
@@ -366,16 +366,16 @@ _serve()
     }
 
     /// Writes a run to the Developer console: what the script printed, or why it gave no result.
-    fn record(module: &str, script: &str, result: &Result<Output, RunError>) {
+    fn record(project: &str, script: &str, result: &Result<Output, RunError>) {
         let console = Console::global();
         match result {
-            Ok(output) => console.push(module, script, console::Kind::Printed, &output.printed),
+            Ok(output) => console.push(project, script, console::Kind::Printed, &output.printed),
             Err(RunError::Script { error, trace }) => {
                 let text = if trace.trim().is_empty() { error.clone() } else { format!("{error}\n{trace}") };
-                console.push(module, script, console::Kind::Error, &text);
+                console.push(project, script, console::Kind::Error, &text);
             }
-            Err(RunError::Refused(why)) => console.push(module, script, console::Kind::Refused, why),
-            Err(other) => console.push(module, script, console::Kind::Error, &other.to_string()),
+            Err(RunError::Refused(why)) => console.push(project, script, console::Kind::Refused, why),
+            Err(other) => console.push(project, script, console::Kind::Error, &other.to_string()),
         }
     }
 
@@ -433,7 +433,7 @@ _serve()
         candidates
             .iter()
             .find_map(|(program, args)| probe(program, args))
-            .ok_or_else(|| "No Python was found. Install Python 3.8 or later, or say where it is in Developer ▸ Modules.".to_string())
+            .ok_or_else(|| "No Python was found. Install Python 3.8 or later, or say where it is in Developer ▸ Projects.".to_string())
     }
 
     enum Line {
@@ -442,7 +442,7 @@ _serve()
         Closed,
     }
 
-    /// One module's Python process.
+    /// One project's Python process.
     struct Worker {
         fingerprint: String,
         interpreter: Interpreter,
@@ -460,7 +460,7 @@ _serve()
             let failed = |what: String| RunError::Failed(format!("Python could not be started: {what}"));
             let mut cmd = command(&interpreter.program, &interpreter.args);
             // `-B`: Python keeps no compiled copy of what it imports. It would keep it inside the
-            // module, whose files would then no longer be the ones the user trusted.
+            // project, whose files would then no longer be the ones the user trusted.
             cmd.arg("-u").arg("-B").arg("-c").arg(RUNNER).arg(scripts).current_dir(scripts);
             cmd.env("PYTHONIOENCODING", "utf-8").env("PYTHONUNBUFFERED", "1").env("PYTHONDONTWRITEBYTECODE", "1");
             let mut child = cmd.spawn().map_err(|e| failed(e.to_string()))?;
@@ -650,12 +650,12 @@ _serve()
         }
     }
 
-    /// The Python processes of the modules that have run something, and the Pythons found.
+    /// The Python processes of the projects that have run something, and the Pythons found.
     #[derive(Default)]
     pub struct PythonHost {
         workers: Mutex<HashMap<PathBuf, Arc<Worker>>>,
         found: Mutex<HashMap<String, Result<Interpreter, String>>>,
-        /// How many times each module was told to stop: a process still starting when its module
+        /// How many times each project was told to stop: a process still starting when its project
         /// is stopped must not go on to run.
         stops: Mutex<HashMap<PathBuf, u64>>,
     }
@@ -687,19 +687,19 @@ _serve()
             lock(&self.found).clear();
         }
 
-        /// How many modules have a Python process right now.
+        /// How many projects have a Python process right now.
         pub fn running(&self) -> usize {
             lock(&self.workers).values().filter(|w| w.is_running()).count()
         }
 
-        /// Runs `script` of the module `id` with `data`, and returns what its `main` returned.
+        /// Runs `script` of the project `id` with `data`, and returns what its `main` returned.
         ///
-        /// Refused, with nothing started, unless the user trusts the module as it is on disk now
+        /// Refused, with nothing started, unless the user trusts the project as it is on disk now
         /// and granted it `python`, and `script` is one of the files in its scripts folder.
         #[allow(clippy::too_many_arguments)]
         pub fn run(
             &self,
-            modules: &Path,
+            projects: &Path,
             trust: &Path,
             python: &str,
             id: &str,
@@ -707,7 +707,7 @@ _serve()
             data: &Json,
             timeout: Duration,
         ) -> Result<Output, RunError> {
-            self.run_with(modules, trust, python, id, script, data, timeout, None)
+            self.run_with(projects, trust, python, id, script, data, timeout, None)
         }
 
         /// As [`PythonHost::run`], for a script that may call the spreadsheet while it runs:
@@ -716,7 +716,7 @@ _serve()
         #[allow(clippy::too_many_arguments)]
         pub fn run_with(
             &self,
-            modules: &Path,
+            projects: &Path,
             trust: &Path,
             python: &str,
             id: &str,
@@ -725,7 +725,7 @@ _serve()
             timeout: Duration,
             calls: Option<Calls<'_>>,
         ) -> Result<Output, RunError> {
-            let result = self.run_checked(modules, trust, python, id, script, data, timeout, calls);
+            let result = self.run_checked(projects, trust, python, id, script, data, timeout, calls);
             record(id, script, &result);
             result
         }
@@ -733,7 +733,7 @@ _serve()
         #[allow(clippy::too_many_arguments)]
         fn run_checked(
             &self,
-            modules: &Path,
+            projects: &Path,
             trust: &Path,
             python: &str,
             id: &str,
@@ -744,20 +744,20 @@ _serve()
         ) -> Result<Output, RunError> {
             let refused = |why: String| Err(RunError::Refused(why));
             if !manifest::valid_id(id) {
-                return refused("That is not a module.".into());
+                return refused("That is not a project.".into());
             }
-            let dir = modules.join(id);
-            // The module's files stay as they are checked here until the script has finished:
-            // nothing changes them through GridCraft meanwhile (see `module::in_use`).
-            let in_use = module::in_use(&dir);
+            let dir = projects.join(id);
+            // The project's files stay as they are checked here until the script has finished:
+            // nothing changes them through GridCraft meanwhile (see `project::in_use`).
+            let in_use = project::in_use(&dir);
             let _as_checked = in_use.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let found = module::load(&dir);
+            let found = project::load(&dir);
             let name = found.name().to_string();
             match TrustStore::load(trust).status(&found) {
                 Status::Trusted(granted) if granted.contains(&Permission::Python) => {}
                 Status::Trusted(_) => return refused(format!("{name} was not given permission to run Python.")),
-                Status::Untrusted => return refused(format!("{name} is not trusted. Review it in Developer ▸ Modules.")),
-                Status::Changed => return refused(format!("{name} has changed since you trusted it. Review it again in Developer ▸ Modules.")),
+                Status::Untrusted => return refused(format!("{name} is not trusted. Review it in Developer ▸ Projects.")),
+                Status::Changed => return refused(format!("{name} has changed since you trusted it. Review it again in Developer ▸ Projects.")),
                 Status::Problem(why) => return refused(format!("{name} can't be used: {why}.")),
             }
             let (Some(manifest), Some(fingerprint)) = (&found.manifest, &found.fingerprint) else {
@@ -771,8 +771,8 @@ _serve()
             let interpreter = self.interpreter(python).map_err(RunError::NoPython)?;
             let timeout = timeout.clamp(Duration::from_secs(1), MAX_TIMEOUT);
 
-            // The module's process: a new one if it has none, or if its files or the Python changed.
-            // Starting one takes a moment, and is done without holding up the other modules.
+            // The project's process: a new one if it has none, or if its files or the Python changed.
+            // Starting one takes a moment, and is done without holding up the other projects.
             let stops = |host: &PythonHost| lock(&host.stops).get(&dir).copied().unwrap_or(0);
             let stops_before = stops(self);
             let current =
@@ -786,8 +786,8 @@ _serve()
                 }
             };
             if stops(self) != stops_before {
-                // The module was stopped while its process was starting.
-                self.stop(modules, id);
+                // The project was stopped while its process was starting.
+                self.stop(projects, id);
                 return Err(RunError::Failed("The script was stopped.".into()));
             }
             let outcome = worker.call(script, data, timeout, calls);
@@ -802,9 +802,9 @@ _serve()
             outcome
         }
 
-        /// Stops the module's Python process, whatever it is doing. A call in progress fails.
-        pub fn stop(&self, modules: &Path, id: &str) {
-            let dir = modules.join(id);
+        /// Stops the project's Python process, whatever it is doing. A call in progress fails.
+        pub fn stop(&self, projects: &Path, id: &str) {
+            let dir = projects.join(id);
             *lock(&self.stops).entry(dir.clone()).or_insert(0) += 1;
             if let Some(worker) = lock(&self.workers).remove(&dir) {
                 worker.kill();
@@ -815,7 +815,7 @@ _serve()
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::module::tests::TempDir;
+        use crate::project::tests::TempDir;
 
         /// The Python on this machine, or `None` (with a note) when there is none: the tests that
         /// need one are then skipped, and the refusals are still tested.
@@ -833,15 +833,15 @@ _serve()
         }
 
         impl Fixture {
-            /// A module `m` with these scripts, asking for `permissions`, and trusted unless said otherwise.
+            /// A project `m` with these scripts, asking for `permissions`, and trusted unless said otherwise.
             fn new(tag: &str, permissions: &str, scripts: &[(&str, &str)], trusted: bool) -> Fixture {
                 let t = TempDir::new(tag);
                 t.write(
-                    "modules/m/module.toml",
+                    "projects/m/project.toml",
                     &format!("id = \"m\"\nname = \"M\"\nversion = \"1\"\npermissions = [{permissions}]\n\n[python]\nscripts = \"python\"\n"),
                 );
                 for (name, source) in scripts {
-                    t.write(&format!("modules/m/python/{name}"), source);
+                    t.write(&format!("projects/m/python/{name}"), source);
                 }
                 let f = Fixture { t, host: PythonHost::new() };
                 if trusted {
@@ -851,15 +851,15 @@ _serve()
             }
 
             fn trust(&self, follow_changes: bool) {
-                TrustStore::load(&self.trust_file()).trust(&module::load(&self.t.0.join("modules/m")), follow_changes).unwrap();
+                TrustStore::load(&self.trust_file()).trust(&project::load(&self.t.0.join("projects/m")), follow_changes).unwrap();
             }
 
             fn trust_file(&self) -> PathBuf {
-                self.t.0.join("trusted-modules.json")
+                self.t.0.join("trusted-projects.json")
             }
 
             fn run_for(&self, script: &str, data: Json, seconds: u64) -> Result<Output, RunError> {
-                self.host.run(&self.t.0.join("modules"), &self.trust_file(), "", "m", script, &data, Duration::from_secs(seconds))
+                self.host.run(&self.t.0.join("projects"), &self.trust_file(), "", "m", script, &data, Duration::from_secs(seconds))
             }
 
             fn run(&self, script: &str, data: Json) -> Result<Output, RunError> {
@@ -870,7 +870,7 @@ _serve()
         const ECHO: &str = "def main(data):\n    return data\n";
 
         #[test]
-        fn nothing_runs_for_a_module_that_may_not_run_python() {
+        fn nothing_runs_for_a_project_that_may_not_run_python() {
             let refused = |f: &Fixture, script: &str| match f.run(script, json!(1)) {
                 Err(RunError::Refused(why)) => why,
                 other => panic!("expected a refusal, got {other:?}"),
@@ -880,7 +880,7 @@ _serve()
             assert!(refused(&f, "echo.py").contains("not trusted"));
             // Trusted, then a file changed.
             f.trust(false);
-            f.t.write("modules/m/python/echo.py", "def main(data):\n    import os\n");
+            f.t.write("projects/m/python/echo.py", "def main(data):\n    import os\n");
             assert!(refused(&f, "echo.py").contains("changed since you trusted it"));
             // Trusted, but it never asked for (so was never granted) python.
             let f = Fixture::new("no-python", "\"read\", \"write\"", &[("echo.py", ECHO)], true);
@@ -896,18 +896,18 @@ _serve()
                 "notes.txt",
                 "echo",
                 "",
-                "../module.toml",
+                "../project.toml",
                 "echo.py/../echo.py",
             ] {
                 assert!(refused(&f, script).contains("is not one of"), "{script:?}");
             }
-            // A module id that isn't one, and a module that isn't there.
+            // A project id that isn't one, and a project that isn't there.
             for id in ["", "..", "../m", "M"] {
-                let r = f.host.run(&f.t.0.join("modules"), &f.trust_file(), "", id, "echo.py", &json!(1), DEFAULT_TIMEOUT);
+                let r = f.host.run(&f.t.0.join("projects"), &f.trust_file(), "", id, "echo.py", &json!(1), DEFAULT_TIMEOUT);
                 assert!(matches!(r, Err(RunError::Refused(_))), "{id:?}: {r:?}");
             }
             assert!(matches!(
-                f.host.run(&f.t.0.join("modules"), &f.trust_file(), "", "gone", "echo.py", &json!(1), DEFAULT_TIMEOUT),
+                f.host.run(&f.t.0.join("projects"), &f.trust_file(), "", "gone", "echo.py", &json!(1), DEFAULT_TIMEOUT),
                 Err(RunError::Refused(_))
             ));
             assert_eq!(f.host.running(), 0, "no refusal started a process");
@@ -919,7 +919,7 @@ _serve()
             let nowhere = host.interpreter("gridcraft-no-such-python-here");
             assert!(nowhere.is_err_and(|why| why.contains("did not answer")));
             let f = Fixture::new("no-interp", "\"python\"", &[("echo.py", ECHO)], true);
-            let r = f.host.run(&f.t.0.join("modules"), &f.trust_file(), "gridcraft-no-such-python-here", "m", "echo.py", &json!(1), DEFAULT_TIMEOUT);
+            let r = f.host.run(&f.t.0.join("projects"), &f.trust_file(), "gridcraft-no-such-python-here", "m", "echo.py", &json!(1), DEFAULT_TIMEOUT);
             assert!(matches!(r, Err(RunError::NoPython(_))), "{r:?}");
             assert_eq!(f.host.running(), 0);
         }
@@ -955,8 +955,8 @@ _serve()
             assert_eq!(f.host.running(), 1);
             // A script in a subfolder, importing a sibling from the scripts folder.
             assert_eq!(f.run("sub/deep.py", json!("x")).unwrap().result, json!(["x", "x"]));
-            // Running wrote nothing into the module: it is still the one that was trusted.
-            let found = module::load(&f.t.0.join("modules/m"));
+            // Running wrote nothing into the project: it is still the one that was trusted.
+            let found = project::load(&f.t.0.join("projects/m"));
             assert!(found.files.iter().all(|file| !file.contains("__pycache__") && !file.ends_with(".pyc")), "{:?}", found.files);
             assert!(TrustStore::load(&f.trust_file()).status(&found).is_trusted());
         }
@@ -1034,14 +1034,14 @@ _serve()
             assert_eq!(f.run("echo.py", json!("again")).unwrap().result, json!("again"));
             assert!(matches!(f.run("dies.py", Json::Null), Err(RunError::Failed(_))));
             assert_eq!(f.run("echo.py", json!("and again")).unwrap().result, json!("and again"));
-            // Stopping a module's process from outside fails the call in progress.
+            // Stopping a project's process from outside fails the call in progress.
             std::thread::scope(|s| {
                 let call = s.spawn(|| f.run_for("forever.py", Json::Null, 60));
                 while f.host.running() == 0 {
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 std::thread::sleep(Duration::from_millis(300));
-                f.host.stop(&f.t.0.join("modules"), "m");
+                f.host.stop(&f.t.0.join("projects"), "m");
                 assert!(matches!(call.join().unwrap(), Err(RunError::Failed(_))));
             });
             assert_eq!(f.host.running(), 0);
@@ -1055,8 +1055,8 @@ _serve()
                 return;
             }
             assert_eq!(f.run("v.py", Json::Null).unwrap().result, json!(1));
-            // The developer edits their own module: the new code runs, in a new process.
-            f.t.write("modules/m/python/v.py", "def main(data):\n    return 2\n");
+            // The developer edits their own project: the new code runs, in a new process.
+            f.t.write("projects/m/python/v.py", "def main(data):\n    return 2\n");
             assert_eq!(f.run("v.py", Json::Null).unwrap().result, json!(2));
             assert_eq!(f.host.running(), 1);
             // Taking trust back stops it from running at all.
@@ -1109,7 +1109,7 @@ _serve()
         impl Fixture {
             fn run_asking(&self, script: &str, data: Json, asked: &Asked) -> Result<Output, RunError> {
                 let calls = |call: &Json| asked.answer(call);
-                self.host.run_with(&self.t.0.join("modules"), &self.trust_file(), "", "m", script, &data, Duration::from_secs(30), Some(&calls))
+                self.host.run_with(&self.t.0.join("projects"), &self.trust_file(), "", "m", script, &data, Duration::from_secs(30), Some(&calls))
             }
         }
 
@@ -1152,7 +1152,7 @@ _serve()
             assert_eq!(lock(&asked.0).get(7).map(|call| call["n"].clone()), Some(json!(1)));
             // A script that asks a great deal is answered each time.
             f.t.write(
-                "modules/m/python/many.py",
+                "projects/m/python/many.py",
                 "import spreadsheet\n\ndef main(data):\n    return sum(spreadsheet.run('cell.get', {'cell': 'A1'})['cells'] for _ in range(300))\n",
             );
             f.trust(false);

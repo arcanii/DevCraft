@@ -10,6 +10,11 @@ Each record says what was decided, why, and what was turned down. Where a record
 
 ## ADR-0001: A Development subsystem (modules with web panels and Python)
 
+> **A module is called a project since 2026-10-13** (the owner's decision; "Development kits
+> and projects" below has it). This record is left as it was written: where it says module,
+> `module.toml`, `create_module` or Developer ▸ Modules, read project, `project.toml`,
+> `create_project` and Developer ▸ Projects. A VBA module is still a module.
+
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
@@ -951,11 +956,20 @@ Development                    the whole, at a glance
   connects (an agent). A kit as a process that speaks a small protocol would be of a piece
   with both. That is a proposal, not a decision.
 - **"Loaded" can't be undone**: the kit can't be turned off as a whole.
-- **Two words for one thing.** The Development window says *project*. The files
-  (`module.toml`), the server's tools (`create_module`), a request's card, Modules and the
-  levels' own words still say *module*: about 700 strings, and the tests that hold them.
-  The window says so where projects are listed. Renaming the rest is mechanical and belongs
-  in a commit of its own; it is the owner's to ask for.
+- **One word: decided and done (2026-10-13).** The owner: "rename module to project". It
+  is project everywhere now: the windows' words and a request's card; the manifest,
+  `project.toml`; the server's tools (`create_project`, `write_project_file`,
+  `trust_project` and the rest) and their argument `project`; `developer.projects`; the
+  folder `projects` and `trusted-projects.json`; the code. Three things keep the older
+  word because they are something else: a VBA module (and `module = "…"` in
+  `rebuilt.toml`), a Python module, a source file of the code.
+  **What a person made before is read where it is**, and nothing is renamed for them: a
+  project whose manifest is `module.toml` (renaming the file would change the fingerprint
+  they trusted), a settings folder with `modules` and `trusted-modules.json`, a trust file
+  whose list is named `modules`. A folder with both manifests is refused, since nobody
+  could tell which one counts. What is not kept: the server's older tool names. An agent
+  set up for `create_module` is told the tool is unknown; nothing had been released with
+  those names.
 - **Reviewing, trusting and running a project** is still done in Modules: the project's
   part has the way there.
 - **A project names its workbook by the file's name.** Two workbooks of one name are the

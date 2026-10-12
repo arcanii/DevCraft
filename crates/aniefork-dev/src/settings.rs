@@ -14,7 +14,7 @@ const MAX_BYTES: u64 = 64 * 1024;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
-    /// The Python that runs modules' scripts: a path or a command. Empty: GridCraft finds one.
+    /// The Python that runs projects' scripts: a path or a command. Empty: GridCraft finds one.
     pub python: String,
     /// The Development server: how far agents may go, and where it listens.
     pub agents: Agents,
@@ -64,7 +64,7 @@ pub fn save(path: &Path, settings: &Settings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::tests::TempDir;
+    use crate::project::tests::TempDir;
 
     #[test]
     fn settings_are_kept_and_a_damaged_file_gives_the_defaults() {

@@ -1,19 +1,19 @@
 //! Development kits: the ways of building on GridCraft that are loaded into it.
 //!
 //! A kit says what a project is made of and how it is run. The one this build has is the
-//! **Anie Development Kit**: a project is a folder with a `module.toml`, Python scripts and a
+//! **Anie Development Kit**: a project is a folder with a `project.toml`, Python scripts and a
 //! web panel (written with Svelte or any other web toolkit). Everything else in this crate is
-//! that kit at work: its projects on disk ([`crate::module`]), the trust in them
+//! that kit at work: its projects on disk ([`crate::project`]), the trust in them
 //! ([`crate::trust`]), their scripts ([`crate::python`]) and panels ([`crate::bridge`]).
 //!
 //! Kits are listed, not assumed to be one, so that another can stand beside this one. There
 //! is no way to load one yet: how a kit that isn't compiled into GridCraft would be loaded is
 //! not decided (ADR-0001).
 //!
-//! **A project** is what the kit's files and the Development server's tools call a module. It
-//! is one of two kinds, by what its `module.toml` says: the code of one workbook, which it
-//! names, or a library, which is for any workbook. The kind only says what the project is
-//! for: nothing is allowed or run because of it.
+//! **A project** is one of two kinds, by what its `project.toml` says: the code of one
+//! workbook, which it names, or a library, which is for any workbook. The kind only says what
+//! the project is for: nothing is allowed or run because of it. (Until 2026-10-13 a project
+//! was called a module, and its manifest `module.toml`: what was made then is still read.)
 
 use crate::manifest::Manifest;
 
@@ -48,7 +48,7 @@ pub fn loaded() -> &'static [Kit] {
 /// What a project is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectKind {
-    /// The code of one workbook, which its `module.toml` names.
+    /// The code of one workbook, which its `project.toml` names.
     WorkbookCode,
     /// For any workbook.
     Library,

@@ -914,7 +914,7 @@ impl SheetApp {
             ctx.request_repaint();
         }
         control::poll(self, ctx);
-        // The fork's work of every frame: its modules' panels (aniefork).
+        // The fork's work of every frame: its projects' panels (aniefork).
         aniefork::poll(self, ctx);
         // Files read asynchronously (web file picker, dropped files).
         let arrived: Vec<(String, Vec<u8>)> = self
@@ -981,7 +981,7 @@ impl SheetApp {
             tabs::sheet_tabs(self, ui);
             pivot_pane::show(self, ui);
             panes::show(self, ui);
-            // A module's panel docked in the window (aniefork).
+            // A project's panel docked in the window (aniefork).
             aniefork::dock::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.grid_bg)).show(ui, |ui| {
                 let g0 = now_ms();

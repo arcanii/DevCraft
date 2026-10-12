@@ -6,7 +6,7 @@
 //! in a window of its own that stays open while the person works. There are two halves, as
 //! with a docked panel:
 //!
-//! - **This module** says what the window shows ([`state`]): the list down its side and the
+//! - **This project** says what the window shows ([`state`]): the list down its side and the
 //!   one part beside it, as JSON, in the words `card.rs` and `kits.rs` give both windows. And
 //!   it takes what the person clicked there ([`handle`]),
 //!   which goes through the same [`development::act`] as a click in GridCraft's own window.
@@ -33,7 +33,7 @@ use serde_json::{Value as Json, json};
 
 use super::development::{self, Act, State};
 use super::kits::{self, Pane};
-use super::{agents, card, modules};
+use super::{agents, card, projects};
 use crate::SheetApp;
 use crate::theme::Tokens;
 
@@ -100,9 +100,9 @@ pub fn takes_over(ctx: &egui::Context) -> bool {
 }
 
 /// Where the page's web view keeps what it keeps: a folder of its own beside the settings,
-/// apart from the one modules' panels use.
+/// apart from the one projects' panels use.
 pub fn web_view_folder() -> Option<std::path::PathBuf> {
-    modules::places().map(|at| at.settings.with_file_name("webview-development"))
+    projects::places().map(|at| at.settings.with_file_name("webview-development"))
 }
 
 /// The person asked for the window: it is opened, or brought to the front.
@@ -231,7 +231,7 @@ fn server_part(now: &agents::Snapshot, state: &State) -> Json {
     if !now.available {
         return json!({"kind": "server", "title": kits::SERVER, "above": [kits::TOP], "available": false, "unavailable": card::NO_AGENTS});
     }
-    let at = modules::places();
+    let at = projects::places();
     let levels: Vec<Json> =
         Level::ALL.iter().map(|level| json!({"code": level.code(), "label": level.label(), "meaning": level.meaning()})).collect();
     let (kind, status) = card::serving(now);
@@ -270,7 +270,7 @@ fn server_part(now: &agents::Snapshot, state: &State) -> Json {
     let unasked: Vec<Json> = now
         .unasked
         .iter()
-        .map(|(module, kind)| json!({"module": module, "kind": if *kind == Kind::Edit { "edit" } else { "run" }, "covers": agents::covers(module, *kind)}))
+        .map(|(project, kind)| json!({"project": project, "kind": if *kind == Kind::Edit { "edit" } else { "run" }, "covers": agents::covers(project, *kind)}))
         .collect();
     json!({
         "kind": "server",
@@ -313,7 +313,7 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     let now = agents::snapshot();
     // A request being looked at takes the place of the rest, while it still waits.
     let looked_at = state.looking.and_then(|id| now.waiting.iter().find(|asked| asked.id == id));
-    let looking = match (looked_at, modules::places()) {
+    let looking = match (looked_at, projects::places()) {
         (Some(asked), Some(at)) => review(&at, asked, &mut state, agents::confirms(app)),
         _ => {
             state.looking = None;
@@ -399,14 +399,14 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
                 Some("run") => Some(Kind::Run),
                 _ => None,
             };
-            let module = message.get("module").and_then(Json::as_str).filter(|module| module.len() <= 64);
-            kind.zip(module).map(|(kind, module)| Act::AskAgain(module.to_string(), kind))
+            let project = message.get("project").and_then(Json::as_str).filter(|project| project.len() <= 64);
+            kind.zip(project).map(|(kind, project)| Act::AskAgain(project.to_string(), kind))
         }
         "stopPlan" => id().map(Act::StopPlan),
         // Another part of the window.
         "go" => message.get("to").and_then(Json::as_str).filter(|to| to.len() <= 80).and_then(Pane::parse).map(Act::Go),
         "open" => match message.get("name").and_then(Json::as_str) {
-            Some("modules") => Some(Act::Open(modules::NAME)),
+            Some("projects") => Some(Act::Open(projects::NAME)),
             Some("console") => Some(Act::Open(super::console::NAME)),
             Some("macros") => Some(Act::Open(super::macros::NAME)),
             _ => None,

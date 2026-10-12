@@ -1,9 +1,9 @@
-//! Modules on disk: finding them, reading them, and fingerprinting exactly what they contain.
+//! Projects on disk: finding them, reading them, and fingerprinting exactly what they contain.
 //!
-//! A module is a folder in the user's `modules` folder. Its **fingerprint** is a SHA-256 over
+//! A project is a folder in the user's `projects` folder. Its **fingerprint** is a SHA-256 over
 //! every file in it (each file's path, length and bytes, in a fixed order). Trust is given to a
 //! fingerprint, so the fingerprint has to cover everything that could ever be served or run:
-//! a module containing anything that isn't a plain file or folder (a link, which could point
+//! a project containing anything that isn't a plain file or folder (a link, which could point
 //! outside it) is not fingerprinted at all, and so can't be trusted.
 
 use std::collections::HashMap;
@@ -15,19 +15,19 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use crate::manifest::{self, Manifest};
 use crate::sha256::Sha256;
 
-/// The most modules listed from one folder.
-pub const MAX_MODULES: usize = 500;
-/// The most files a module may hold.
+/// The most projects listed from one folder.
+pub const MAX_PROJECTS: usize = 500;
+/// The most files a project may hold.
 pub const MAX_FILES: usize = 2_000;
-/// The most bytes a module may hold in all.
+/// The most bytes a project may hold in all.
 pub const MAX_BYTES: u64 = 64 * 1024 * 1024;
-/// How deep a module's folders may nest.
+/// How deep a project's folders may nest.
 const MAX_DEPTH: usize = 16;
 
-/// What keeps a module's files as they were checked for as long as they are being run.
+/// What keeps a project's files as they were checked for as long as they are being run.
 ///
-/// Whoever runs a module's code holds it shared, from before the trust check until the code
-/// has finished; whoever changes the module's files through GridCraft needs it alone, and is
+/// Whoever runs a project's code holds it shared, from before the trust check until the code
+/// has finished; whoever changes the project's files through GridCraft needs it alone, and is
 /// refused while it is held. Without it a file could be changed between the check and the
 /// moment Python reads it, and what ran would not be what the user trusted.
 pub fn in_use(dir: &Path) -> Arc<RwLock<()>> {
@@ -36,22 +36,22 @@ pub fn in_use(dir: &Path) -> Arc<RwLock<()>> {
     all.entry(dir.to_path_buf()).or_default().clone()
 }
 
-/// A module as found on disk. It may be broken: then `problem` says how, and it can't be trusted.
+/// A project as found on disk. It may be broken: then `problem` says how, and it can't be trusted.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Module {
-    /// The folder's name. For a sound module it is also the manifest's id.
+pub struct Project {
+    /// The folder's name. For a sound project it is also the manifest's id.
     pub id: String,
     pub dir: PathBuf,
     pub manifest: Option<Manifest>,
-    /// 64 hexadecimal digits over the module's whole contents; `None` when they couldn't be read.
+    /// 64 hexadecimal digits over the project's whole contents; `None` when they couldn't be read.
     pub fingerprint: Option<String>,
-    /// Every file in it, as paths inside the module with `/` separators, sorted.
+    /// Every file in it, as paths inside the project with `/` separators, sorted.
     pub files: Vec<String>,
     /// Why it can't be used, in words for the user.
     pub problem: Option<String>,
 }
 
-impl Module {
+impl Project {
     /// Sound enough to be trusted: a valid manifest and a fingerprint.
     pub fn is_sound(&self) -> bool {
         self.problem.is_none() && self.manifest.is_some() && self.fingerprint.is_some()
@@ -63,7 +63,7 @@ impl Module {
     }
 }
 
-/// Lists a module's files (paths inside it), refusing anything that isn't a plain file or folder.
+/// Lists a project's files (paths inside it), refusing anything that isn't a plain file or folder.
 fn walk(dir: &Path, prefix: &str, depth: usize, files: &mut Vec<(String, u64)>) -> Result<(), String> {
     if depth > MAX_DEPTH {
         return Err(format!("its folders nest more than {MAX_DEPTH} deep"));
@@ -85,7 +85,7 @@ fn walk(dir: &Path, prefix: &str, depth: usize, files: &mut Vec<(String, u64)>) 
                 return Err(format!("it holds more than {MAX_FILES} files"));
             }
         } else {
-            return Err(format!("{path} is a link or a special file, which modules may not contain"));
+            return Err(format!("{path} is a link or a special file, which projects may not contain"));
         }
     }
     Ok(())
@@ -122,57 +122,61 @@ fn fingerprint(dir: &Path, files: &[(String, u64)]) -> Result<String, String> {
     Ok(hash.hex())
 }
 
-/// Reads the module in `dir`. It never fails: a module that can't be read is returned with its
+/// Reads the project in `dir`. It never fails: a project that can't be read is returned with its
 /// `problem` set.
-pub fn load(dir: &Path) -> Module {
+pub fn load(dir: &Path) -> Project {
     let id = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-    let mut module = Module { id: id.clone(), dir: dir.to_path_buf(), manifest: None, fingerprint: None, files: vec![], problem: None };
+    let mut project = Project { id: id.clone(), dir: dir.to_path_buf(), manifest: None, fingerprint: None, files: vec![], problem: None };
     let mut files = Vec::new();
     if let Err(problem) = walk(dir, "", 0, &mut files) {
-        module.problem = Some(problem);
-        return module;
+        project.problem = Some(problem);
+        return project;
     }
     files.sort();
-    module.files = files.iter().map(|(path, _)| path.clone()).collect();
+    project.files = files.iter().map(|(path, _)| path.clone()).collect();
     match fingerprint(dir, &files) {
-        Ok(f) => module.fingerprint = Some(f),
+        Ok(f) => project.fingerprint = Some(f),
         Err(problem) => {
-            module.problem = Some(problem);
-            return module;
+            project.problem = Some(problem);
+            return project;
         }
     }
-    let Some((_, size)) = files.iter().find(|(path, _)| path == manifest::FILE) else {
-        module.problem = Some(format!("it has no {}", manifest::FILE));
-        return module;
+    // Its manifest: `project.toml`, or the name it had before, where that is all there is.
+    let named = match manifest::file_among(files.iter().map(|(path, _)| path.as_str())) {
+        Ok(named) => named,
+        Err(problem) => {
+            project.problem = Some(problem);
+            return project;
+        }
     };
-    if *size > manifest::MAX_BYTES {
-        module.problem = Some(format!("its {} is larger than {} KB", manifest::FILE, manifest::MAX_BYTES / 1024));
-        return module;
+    let size = files.iter().find(|(path, _)| path == named).map_or(0, |(_, size)| *size);
+    if size > manifest::MAX_BYTES {
+        project.problem = Some(format!("its {named} is larger than {} KB", manifest::MAX_BYTES / 1024));
+        return project;
     }
-    let checked = fs::read_to_string(dir.join(manifest::FILE))
-        .map_err(|e| format!("its {} can't be read: {e}", manifest::FILE))
-        .and_then(|text| manifest::parse(&text, &id));
+    let checked =
+        fs::read_to_string(dir.join(named)).map_err(|e| format!("its {named} can't be read: {e}")).and_then(|text| manifest::parse(&text, &id));
     match checked {
         Ok(m) => {
-            // What the manifest points at has to be in the module.
-            let missing_panel = m.panel.as_ref().filter(|entry| !module.files.contains(entry));
-            let missing_scripts = m.python.as_ref().filter(|folder| !module.files.iter().any(|f| f.starts_with(&format!("{folder}/"))));
+            // What the manifest points at has to be in the project.
+            let missing_panel = m.panel.as_ref().filter(|entry| !project.files.contains(entry));
+            let missing_scripts = m.python.as_ref().filter(|folder| !project.files.iter().any(|f| f.starts_with(&format!("{folder}/"))));
             if let Some(entry) = missing_panel {
-                module.problem = Some(format!("its panel, {entry}, is not in it"));
+                project.problem = Some(format!("its panel, {entry}, is not in it"));
             } else if let Some(folder) = missing_scripts {
-                module.problem = Some(format!("its scripts folder, {folder}, is empty or not in it"));
+                project.problem = Some(format!("its scripts folder, {folder}, is empty or not in it"));
             }
-            module.manifest = Some(m);
+            project.manifest = Some(m);
         }
-        Err(problem) => module.problem = Some(problem),
+        Err(problem) => project.problem = Some(problem),
     }
-    module
+    project
 }
 
-/// Every module in the user's modules folder, by folder name. A folder that isn't there yet holds
-/// no modules.
-pub fn scan(modules_dir: &Path) -> Vec<Module> {
-    let Ok(entries) = fs::read_dir(modules_dir) else { return vec![] };
+/// Every project in the user's projects folder, by folder name. A folder that isn't there yet holds
+/// no projects.
+pub fn scan(projects_dir: &Path) -> Vec<Project> {
+    let Ok(entries) = fs::read_dir(projects_dir) else { return vec![] };
     let mut dirs: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
@@ -180,7 +184,7 @@ pub fn scan(modules_dir: &Path) -> Vec<Module> {
         .map(|e| e.path())
         .collect();
     dirs.sort();
-    dirs.truncate(MAX_MODULES);
+    dirs.truncate(MAX_PROJECTS);
     dirs.iter().map(|dir| load(dir)).collect()
 }
 
@@ -216,24 +220,50 @@ pub(crate) mod tests {
 
     pub(crate) const MANIFEST: &str = "id = \"clean-data\"\nname = \"Clean Data\"\nversion = \"0.1.0\"\npermissions = [\"read\", \"python\"]\n\n[panel]\nentry = \"panel/index.html\"\n\n[python]\nscripts = \"python\"\n";
 
-    /// A sound module in `modules/clean-data`.
+    /// A sound project in `projects/clean-data`.
     pub(crate) fn sample(t: &TempDir) -> PathBuf {
-        t.write("clean-data/module.toml", MANIFEST);
+        t.write("clean-data/project.toml", MANIFEST);
         t.write("clean-data/panel/index.html", "<h1>Clean Data</h1>");
         t.write("clean-data/python/clean.py", "def main(data):\n    return data\n");
         t.0.join("clean-data")
     }
 
     #[test]
-    fn reads_a_module_and_lists_its_files() {
+    fn reads_a_project_and_lists_its_files() {
         let t = TempDir::new("read");
         let m = load(&sample(&t));
         assert!(m.is_sound(), "{:?}", m.problem);
         assert_eq!((m.id.as_str(), m.name()), ("clean-data", "Clean Data"));
-        assert_eq!(m.files, ["module.toml", "panel/index.html", "python/clean.py"]);
+        assert_eq!(m.files, ["panel/index.html", "project.toml", "python/clean.py"]);
         assert_eq!(m.fingerprint.as_ref().map(String::len), Some(64));
         assert_eq!(scan(&t.0), [m]);
-        assert!(scan(&t.0.join("nowhere")).is_empty(), "a folder that isn't there holds no modules");
+        assert!(scan(&t.0.join("nowhere")).is_empty(), "a folder that isn't there holds no projects");
+    }
+
+    #[test]
+    fn a_project_made_while_it_was_called_a_module_is_still_read() {
+        let t = TempDir::new("legacy");
+        // Its manifest has the older name: it is read as it is, and nothing is renamed for it.
+        t.write("clean-data/module.toml", MANIFEST);
+        t.write("clean-data/panel/index.html", "<h1>Clean Data</h1>");
+        t.write("clean-data/python/clean.py", "def main(data):\n    return data\n");
+        let before = load(&t.0.join("clean-data"));
+        assert!(before.is_sound(), "{:?}", before.problem);
+        assert_eq!(
+            (before.name(), before.files.as_slice()),
+            ("Clean Data", ["module.toml", "panel/index.html", "python/clean.py"].map(String::from).as_slice())
+        );
+        assert!(t.0.join("clean-data/module.toml").is_file() && !t.0.join("clean-data/project.toml").exists());
+        // With both names nobody could tell which one counts: it can't be used until one is gone.
+        t.write("clean-data/project.toml", &MANIFEST.replace("0.1.0", "9.9.9"));
+        let both = load(&t.0.join("clean-data"));
+        assert!(!both.is_sound() && both.manifest.is_none());
+        assert!(both.problem.unwrap().contains("both a project.toml and a module.toml"));
+        fs::remove_file(t.0.join("clean-data/module.toml")).unwrap();
+        let after = load(&t.0.join("clean-data"));
+        assert!(after.is_sound() && after.manifest.unwrap().version == "9.9.9");
+        // The fingerprint covers the file under the name it has: renaming it is a change.
+        assert_ne!(before.fingerprint, after.fingerprint);
     }
 
     #[test]
@@ -255,7 +285,7 @@ pub(crate) mod tests {
         fs::rename(dir.join("panel/index.html"), dir.join("panel/index2.html")).unwrap();
         assert_ne!(print(), original, "a renamed file");
         fs::rename(dir.join("panel/index2.html"), dir.join("panel/index.html")).unwrap();
-        t.write("clean-data/module.toml", &MANIFEST.replace("0.1.0", "0.1.1"));
+        t.write("clean-data/project.toml", &MANIFEST.replace("0.1.0", "0.1.1"));
         assert_ne!(print(), original, "the manifest is part of it");
         // Moving bytes from the end of one file to the start of the next changes it too.
         let s = TempDir::new("split");
@@ -268,16 +298,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_broken_module_says_what_is_wrong_and_is_not_sound() {
+    fn a_broken_project_says_what_is_wrong_and_is_not_sound() {
         let t = TempDir::new("broken");
         t.write("no-manifest/panel/index.html", "x");
-        t.write("bad-manifest/module.toml", "id = [");
-        t.write("wrong-id/module.toml", &MANIFEST.replace("[panel]\nentry = \"panel/index.html\"\n\n[python]\nscripts = \"python\"\n", ""));
-        t.write("no-panel/module.toml", &MANIFEST.replace("clean-data", "no-panel").replace("[python]\nscripts = \"python\"\n", ""));
-        t.write("no-scripts/module.toml", &MANIFEST.replace("clean-data", "no-scripts"));
+        t.write("bad-manifest/project.toml", "id = [");
+        t.write("wrong-id/project.toml", &MANIFEST.replace("[panel]\nentry = \"panel/index.html\"\n\n[python]\nscripts = \"python\"\n", ""));
+        t.write("no-panel/project.toml", &MANIFEST.replace("clean-data", "no-panel").replace("[python]\nscripts = \"python\"\n", ""));
+        t.write("no-scripts/project.toml", &MANIFEST.replace("clean-data", "no-scripts"));
         t.write("no-scripts/panel/index.html", "x");
-        t.write(".hidden/module.toml", MANIFEST);
-        t.write("just-a-file.txt", "not a module");
+        t.write(".hidden/project.toml", MANIFEST);
+        t.write("just-a-file.txt", "not a project");
         let found = scan(&t.0);
         let ids: Vec<&str> = found.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["bad-manifest", "no-manifest", "no-panel", "no-scripts", "wrong-id"], "folders only, hidden ones skipped, sorted");
@@ -285,7 +315,7 @@ pub(crate) mod tests {
             assert!(!m.is_sound() && m.problem.as_ref().is_some_and(|p| !p.is_empty()), "{}: {:?}", m.id, m.problem);
         }
         let problem = |id: &str| found.iter().find(|m| m.id == id).and_then(|m| m.problem.clone()).unwrap();
-        assert!(problem("no-manifest").contains("module.toml"));
+        assert!(problem("no-manifest").contains("project.toml"));
         assert!(problem("wrong-id").contains("folder"));
         assert!(problem("no-panel").contains("panel/index.html"));
         assert!(problem("no-scripts").contains("scripts folder"));
@@ -293,7 +323,7 @@ pub(crate) mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_module_containing_a_link_is_refused() {
+    fn a_project_containing_a_link_is_refused() {
         let t = TempDir::new("link");
         let dir = sample(&t);
         t.write("outside.py", "import os");

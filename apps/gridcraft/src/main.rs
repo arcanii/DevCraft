@@ -8,7 +8,7 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-// The fork's part of the shell: the web view for a module's docked panel (aniefork).
+// The fork's part of the shell: the web view for a project's docked panel (aniefork).
 mod aniefork;
 #[cfg(target_os = "macos")]
 mod apple_events;
@@ -53,7 +53,7 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
-        // A module's panel docked in the window is shown by the system web view (aniefork).
+        // A project's panel docked in the window is shown by the system web view (aniefork).
         aniefork::frame(&mut self.0, ui.ctx(), _frame);
     }
     fn on_exit(&mut self) {

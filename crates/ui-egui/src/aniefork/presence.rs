@@ -2,7 +2,7 @@
 //!
 //! The control channel clicks and types by putting input into the window as if it had come from
 //! the mouse and keyboard, so a button can't tell an agent's click from a person's. A few things
-//! in the Development subsystem are for the person alone: trusting a module, running its code,
+//! in the Development subsystem are for the person alone: trusting a project, running its code,
 //! opening its panel, naming the Python to run. Before doing one of those, the code asks here.
 //!
 //! [`watch`] runs once a frame, right after the control channel is polled. Input the channel

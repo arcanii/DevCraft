@@ -1,16 +1,16 @@
-//! "New Module": a starter module written from templates compiled into the app, so that a
+//! "New Project": a starter project written from templates compiled into the app, so that a
 //! developer begins from something that loads, and so that no sample panel or script has to be
 //! kept in the repository.
 //!
-//! The starter is an ordinary module: it is created untrusted, like any other.
+//! The starter is an ordinary project: it is created untrusted, like any other.
 
 use std::fs;
 use std::path::Path;
 
 use crate::manifest;
-use crate::module::{self, Module};
+use crate::project::{self, Project};
 
-/// A module id made from a name: "Clean Data!" becomes `clean-data`. Empty when the name has no
+/// A project id made from a name: "Clean Data!" becomes `clean-data`. Empty when the name has no
 /// letters or digits to make one from.
 pub fn slug(name: &str) -> String {
     let mut id = String::new();
@@ -32,7 +32,7 @@ fn plain(name: &str) -> String {
     name.trim().chars().filter(|c| !c.is_control() && !matches!(c, '"' | '\\' | '<' | '>' | '&')).take(80).collect::<String>().trim().to_string()
 }
 
-/// The line of a manifest that names the workbook the module is the code of. The name is
+/// The line of a manifest that names the workbook the project is the code of. The name is
 /// written so that nothing in it can end the quotes it sits in.
 fn workbook_line(workbook: Option<&str>) -> String {
     let Some(name) = workbook else { return String::new() };
@@ -46,14 +46,14 @@ fn workbook_line(workbook: Option<&str>) -> String {
 fn manifest_text(id: &str, name: &str, workbook: Option<&str>) -> String {
     let workbook = workbook_line(workbook);
     format!(
-        r#"# A GridCraft module. See docs/decisions-aniefork.md (ADR-0001).
+        r#"# A GridCraft project. See docs/decisions-aniefork.md (ADR-0001).
 id = "{id}"
 name = "{name}"
 version = "0.1.0"
 author = ""
-description = "A starter module: a panel, and a Python script it can run."
+description = "A starter project: a panel, and a Python script it can run."
 {workbook}
-# What this module asks to be allowed. The user sees this list before trusting it.
+# What this project asks to be allowed. The user sees this list before trusting it.
 #   read     see what is in the open workbooks
 #   write    change the open workbooks
 #   files    open, save and export files
@@ -141,14 +141,14 @@ fn panel_text(name: &str) -> String {
     )
 }
 
-const SCRIPT: &str = r#""""A script this module's panel can run:
+const SCRIPT: &str = r#""""A script this project's panel can run:
 
     const result = await spreadsheet.runPython("clean.py", data);
 
 GridCraft calls main() with the data the panel sent (whatever JSON can hold)
 and sends back what it returns.
 
-A script can also work on the sheet itself, with what the module was granted:
+A script can also work on the sheet itself, with what the project was granted:
 
     import spreadsheet
     spreadsheet.write(data["range"], cleaned)          # or spreadsheet.run(id, params)
@@ -164,18 +164,18 @@ def main(data):
     return {"rows": cleaned}
 "#;
 
-/// The id a starter module named `name` is given: empty when the name makes none.
+/// The id a starter project named `name` is given: empty when the name makes none.
 pub fn id_for(name: &str) -> String {
     slug(&plain(name))
 }
 
-/// What a starter module named `name` holds: its id, and its files (path and text). `None` when
+/// What a starter project named `name` holds: its id, and its files (path and text). `None` when
 /// the name makes no id.
 pub fn files(name: &str) -> Option<(String, Vec<(&'static str, String)>)> {
     files_for(name, None)
 }
 
-/// The same, for a module that is the code of the workbook named `workbook`.
+/// The same, for a project that is the code of the workbook named `workbook`.
 fn files_for(name: &str, workbook: Option<&str>) -> Option<(String, Vec<(&'static str, String)>)> {
     let shown = plain(name);
     let id = slug(&shown);
@@ -190,36 +190,36 @@ fn files_for(name: &str, workbook: Option<&str>) -> Option<(String, Vec<(&'stati
     Some((id, files))
 }
 
-/// Creates a starter module named `name` in `modules_dir` and returns it as read back from disk.
+/// Creates a starter project named `name` in `projects_dir` and returns it as read back from disk.
 /// Refuses a name that makes no id, and never touches a folder that already exists.
-pub fn create(modules_dir: &Path, name: &str) -> Result<Module, String> {
-    create_for(modules_dir, name, None)
+pub fn create(projects_dir: &Path, name: &str) -> Result<Project, String> {
+    create_for(projects_dir, name, None)
 }
 
-/// The same, for a module that is the code of the workbook named `workbook` (a library when
+/// The same, for a project that is the code of the workbook named `workbook` (a library when
 /// there is none). A name that can't be a workbook's is refused before anything is written.
-pub fn create_for(modules_dir: &Path, name: &str, workbook: Option<&str>) -> Result<Module, String> {
+pub fn create_for(projects_dir: &Path, name: &str, workbook: Option<&str>) -> Result<Project, String> {
     let workbook = match workbook {
-        Some(named) => manifest::workbook_name(named).map_err(|why| format!("The module can't be that workbook's code: {why}."))?,
+        Some(named) => manifest::workbook_name(named).map_err(|why| format!("The project can't be that workbook's code: {why}."))?,
         None => None,
     };
     let Some((id, files)) = files_for(name, workbook.as_deref()) else {
-        return Err("Give the module a name with at least one letter or digit.".into());
+        return Err("Give the project a name with at least one letter or digit.".into());
     };
-    let dir = modules_dir.join(&id);
+    let dir = projects_dir.join(&id);
     if dir.exists() {
-        return Err(format!("There is already a module folder named {id}."));
+        return Err(format!("There is already a project folder named {id}."));
     }
-    let failed = |e: std::io::Error| format!("The module could not be created: {e}");
+    let failed = |e: std::io::Error| format!("The project could not be created: {e}");
     for folder in ["panel", "python"] {
         fs::create_dir_all(dir.join(folder)).map_err(failed)?;
     }
     for (path, text) in files {
         fs::write(dir.join(path), text).map_err(failed)?;
     }
-    let created = module::load(&dir);
+    let created = project::load(&dir);
     match &created.problem {
-        Some(problem) => Err(format!("The module was created but can't be read back: {problem}")),
+        Some(problem) => Err(format!("The project was created but can't be read back: {problem}")),
         None => Ok(created),
     }
 }
@@ -228,7 +228,7 @@ pub fn create_for(modules_dir: &Path, name: &str, workbook: Option<&str>) -> Res
 mod tests {
     use super::*;
     use crate::manifest::Permission;
-    use crate::module::tests::TempDir;
+    use crate::project::tests::TempDir;
 
     #[test]
     fn names_become_ids() {
@@ -252,10 +252,13 @@ mod tests {
     fn what_a_starter_holds_is_known_before_it_is_written() {
         let t = TempDir::new("starter-files");
         let (id, listed) = files("Clean \"Data\"").unwrap();
-        assert_eq!((id.as_str(), id_for("Clean \"Data\"").as_str()), ("clean-data", "clean-data"), "the id is the one the module is created with");
+        assert_eq!((id.as_str(), id_for("Clean \"Data\"").as_str()), ("clean-data", "clean-data"), "the id is the one the project is created with");
         let made = create(&t.0, "Clean \"Data\"").unwrap();
         assert_eq!(made.id, id);
-        assert_eq!(made.files, listed.iter().map(|(path, _)| path.to_string()).collect::<Vec<_>>());
+        // A project's files are listed in order, whatever order they were written in.
+        let mut named: Vec<String> = listed.iter().map(|(path, _)| path.to_string()).collect();
+        named.sort();
+        assert_eq!(made.files, named);
         for (path, text) in listed {
             assert_eq!(std::fs::read_to_string(made.dir.join(path)).unwrap(), text, "{path}");
         }
@@ -263,16 +266,16 @@ mod tests {
     }
 
     #[test]
-    fn a_starter_module_loads_and_is_an_ordinary_module() {
+    fn a_starter_project_loads_and_is_an_ordinary_project() {
         let t = TempDir::new("starter");
         let m = create(&t.0, "Clean Data").unwrap();
         assert!(m.is_sound(), "{:?}", m.problem);
         assert_eq!((m.id.as_str(), m.name()), ("clean-data", "Clean Data"));
-        assert_eq!(m.files, ["module.toml", "panel/index.html", "python/clean.py"]);
+        assert_eq!(m.files, ["panel/index.html", "project.toml", "python/clean.py"]);
         let manifest = m.manifest.unwrap();
         assert_eq!(manifest.permissions, [Permission::Read, Permission::Write, Permission::Python]);
         assert_eq!((manifest.panel.as_deref(), manifest.python.as_deref()), (Some("panel/index.html"), Some("python")));
-        assert_eq!(module::scan(&t.0).len(), 1);
+        assert_eq!(project::scan(&t.0).len(), 1);
     }
 
     #[test]
@@ -302,11 +305,11 @@ mod tests {
         create(&t.0, "Clean Data").unwrap();
         std::fs::write(t.0.join("clean-data/python/clean.py"), "mine").unwrap();
         assert!(create(&t.0, "clean data").is_err(), "the same id");
-        assert_eq!(std::fs::read_to_string(t.0.join("clean-data/python/clean.py")).unwrap(), "mine", "the existing module is untouched");
+        assert_eq!(std::fs::read_to_string(t.0.join("clean-data/python/clean.py")).unwrap(), "mine", "the existing project is untouched");
         for name in ["", "   ", "!!!", "日本語", "\u{7}"] {
             assert!(create(&t.0, name).is_err(), "{name:?}");
         }
-        assert_eq!(module::scan(&t.0).len(), 1, "nothing else was created");
+        assert_eq!(project::scan(&t.0).len(), 1, "nothing else was created");
     }
 
     #[test]
@@ -314,7 +317,7 @@ mod tests {
         let t = TempDir::new("hostile");
         let m = create(&t.0, "Evil\" \npermissions = [\"python\"] <script>alert(1)</script> ..\\..\\x").unwrap();
         assert!(m.is_sound(), "{:?}", m.problem);
-        assert_eq!(m.dir.parent(), Some(t.0.as_path()), "created inside the modules folder");
+        assert_eq!(m.dir.parent(), Some(t.0.as_path()), "created inside the projects folder");
         let manifest = m.manifest.unwrap();
         assert_eq!(manifest.permissions, [Permission::Read, Permission::Write, Permission::Python], "the name added nothing to the manifest");
         let page = std::fs::read_to_string(m.dir.join("panel/index.html")).unwrap();

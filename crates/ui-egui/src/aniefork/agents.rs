@@ -18,9 +18,9 @@
 //! with the control channel: without it nothing but the person can click in the window, and the
 //! yes on the card is enough ([`confirms`]).
 //!
-//! With a yes the person may say not to be asked again, for changes to that module's files or
+//! With a yes the person may say not to be asked again, for changes to that project's files or
 //! for running its code, until GridCraft closes. The server keeps that; lowering the level
-//! ends it; and it is never offered for a module kept trusted as its files change.
+//! ends it; and it is never offered for a project kept trusted as its files change.
 //!
 //! The token is a secret: it is kept in a file of its own, handed to the clipboard when the
 //! person asks for the setup, and neither drawn in the window nor reported by anything. The
@@ -29,15 +29,15 @@
 //!
 //! **A plan is approved once** ([`approve`]). The person answers its card as they answer any
 //! request; a yes does nothing but approve it. Its steps then come in one by one, as the agent
-//! asks for them, and are carried out without another question: each only when the module it
+//! asks for them, and are carried out without another question: each only when the project it
 //! is about stands as the plan needs it ([`fits`]), which is as it stood when the plan was
-//! approved or as the plan's last step there left it. Anything else that changed the module
+//! approved or as the plan's last step there left it. Anything else that changed the project
 //! (the person, another program, a script) stops the step, not the plan.
 //!
-//! **A change nobody looked at ends the trust in a module.** When the level lets an agent change
-//! a module's files without asking, the change takes the module's trust back, whatever the
+//! **A change nobody looked at ends the trust in a project.** When the level lets an agent change
+//! a project's files without asking, the change takes the project's trust back, whatever the
 //! files hold afterwards ([`perform`]); and the crate refuses a change while one of the
-//! module's scripts is being checked or run. So what runs is what the person trusted.
+//! project's scripts is being checked or run. So what runs is what the person trusted.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -46,10 +46,10 @@ use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Client, Done, L
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::python::{Output, PythonHost, RunError};
 use gridcraft_aniefork_dev::trust::Status;
-use gridcraft_aniefork_dev::{TrustStore, module, settings, starter};
+use gridcraft_aniefork_dev::{TrustStore, project, settings, starter};
 use serde_json::{Value as Json, json};
 
-use super::{macros, modules, panels};
+use super::{macros, panels, projects};
 use crate::{Notice, NoticeKind, SheetApp};
 
 /// What the bar under the ribbon says while a request waits for the person.
@@ -71,7 +71,7 @@ const UNFIT: &str = "The plan no longer fits things as they are.";
 #[derive(Clone)]
 struct Job {
     request: u64,
-    module: String,
+    project: String,
     script: String,
     slot: Arc<Mutex<Option<Result<Output, RunError>>>>,
 }
@@ -189,7 +189,7 @@ pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     let mut now = running();
     if !now.settled {
         now.settled = true;
-        if let Some(at) = modules::places() {
+        if let Some(at) = projects::places() {
             let kept = settings::load(&at.settings).agents;
             now.level = kept.level;
             now.port = port_to_use(kept.port);
@@ -266,7 +266,7 @@ fn notice(app: &mut SheetApp, server: &Server, new: bool) {
 fn script_result(job: &Job, result: Result<Output, RunError>) -> Result<Done, String> {
     match result {
         Ok(out) => Ok(Done {
-            said: format!("{} of {} returned.", job.script, job.module),
+            said: format!("{} of {} returned.", job.script, job.project),
             data: Some(json!({"result": out.result, "printed": out.printed})),
         }),
         Err(RunError::Script { error, trace }) => Err(format!("{error}\n{}", trace.trim_end())),
@@ -274,31 +274,31 @@ fn script_result(job: &Job, result: Result<Output, RunError>) -> Result<Done, St
     }
 }
 
-/// Where a module stands now, in words for the agent.
+/// Where a project stands now, in words for the agent.
 fn standing(at: &Places, id: &str) -> String {
-    let found = module::load(&at.modules.join(id));
+    let found = project::load(&at.projects.join(id));
     match TrustStore::load(&at.trust).status(&found) {
         Status::Trusted(_) => format!("{id} is trusted as it is now."),
         Status::Untrusted => format!("{id} is not trusted: nothing in it runs until it is."),
-        Status::Changed => format!("{id} is no longer the module that was trusted: nothing in it runs until it is trusted again as it is now."),
-        Status::Problem(_) => format!("{id} can't be used as it is now: list_modules says what is wrong with it."),
+        Status::Changed => format!("{id} is no longer the project that was trusted: nothing in it runs until it is trusted again as it is now."),
+        Status::Problem(_) => format!("{id} can't be used as it is now: list_projects says what is wrong with it."),
     }
 }
 
 /// Starts a script an agent asked for. The trust check is the host's own, on the thread that
 /// runs it; what the script asks of the spreadsheet is carried out by this window, as a panel's
-/// calls are, with what the module was granted.
+/// calls are, with what the project was granted.
 fn run(app: &mut SheetApp, ctx: &egui::Context, at: &Places, request: u64, action: &Action) -> Result<Job, String> {
-    let Action::RunScript { module, script, data, on_selection, timeout } = action else { return Err("That is not a script to run.".into()) };
-    let data = if *on_selection { modules::selection_data(app)? } else { data.clone() };
+    let Action::RunScript { project, script, data, on_selection, timeout } = action else { return Err("That is not a script to run.".into()) };
+    let data = if *on_selection { projects::selection_data(app)? } else { data.clone() };
     let python = settings::load(&at.settings).python;
-    let job = Job { request, module: module.clone(), script: script.clone(), slot: Arc::new(Mutex::new(None)) };
-    let calls = panels::script_calls(ctx, at, module);
-    let (slot, repaint, at, module, script, timeout) = (job.slot.clone(), ctx.clone(), at.clone(), module.clone(), script.clone(), *timeout);
+    let job = Job { request, project: project.clone(), script: script.clone(), slot: Arc::new(Mutex::new(None)) };
+    let calls = panels::script_calls(ctx, at, project);
+    let (slot, repaint, at, project, script, timeout) = (job.slot.clone(), ctx.clone(), at.clone(), project.clone(), script.clone(), *timeout);
     std::thread::Builder::new()
         .name("gridcraft-agent-run".into())
         .spawn(move || {
-            let result = PythonHost::global().run_with(&at.modules, &at.trust, &python, &module, &script, &data, timeout, Some(&calls));
+            let result = PythonHost::global().run_with(&at.projects, &at.trust, &python, &project, &script, &data, timeout, Some(&calls));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
             repaint.request_repaint();
         })
@@ -306,11 +306,11 @@ fn run(app: &mut SheetApp, ctx: &egui::Context, at: &Places, request: u64, actio
     Ok(job)
 }
 
-/// Takes a module's trust back, and stops what of it is running or being served.
+/// Takes a project's trust back, and stops what of it is running or being served.
 fn take_trust_back(ctx: &egui::Context, at: &Places, id: &str) -> Result<(), String> {
     panels::stop(ctx, id);
     TrustStore::load(&at.trust).revoke(id)?;
-    PythonHost::global().stop(&at.modules, id);
+    PythonHost::global().stop(&at.projects, id);
     Ok(())
 }
 
@@ -318,49 +318,49 @@ fn take_trust_back(ctx: &egui::Context, at: &Places, id: &str) -> Result<(), Str
 /// (the level let it through), and the level is not full control.
 fn perform(app: &mut SheetApp, ctx: &egui::Context, at: &Places, action: &Action, unasked: bool) -> Result<Done, String> {
     let said = |said: String| Ok(Done { said, data: None });
-    // A change to a module's files that nobody looked at ends the trust in that module, whatever
+    // A change to a project's files that nobody looked at ends the trust in that project, whatever
     // the files hold afterwards. Trust is in contents the person chose to trust: putting the old
     // contents back must not bring it back, or a file could be swapped for the length of one
     // run and nobody the wiser.
     let untrusts = unasked && matches!(action, Action::WriteFile { .. } | Action::DeleteFile { .. });
     if untrusts {
-        take_trust_back(ctx, at, action.module())?;
+        take_trust_back(ctx, at, action.project())?;
     }
     let after = |id: &str| if untrusts { format!("{id} is not trusted: nothing in it runs until it is.") } else { standing(at, id) };
     match action {
-        Action::CreateModule { name } => {
-            std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
-            let made = starter::create(&at.modules, name)?;
+        Action::CreateProject { name } => {
+            std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
+            let made = starter::create(&at.projects, name)?;
             said(format!(
-                "{} was created as the module {}, with {} files. It is not trusted: nothing in it runs until it is.",
+                "{} was created as the project {}, with {} files. It is not trusted: nothing in it runs until it is.",
                 made.name(),
                 made.id,
                 made.files.len()
             ))
         }
-        Action::WriteFile { module, path, text } => {
-            let written = dev::write_file(at, module, path, text)?;
+        Action::WriteFile { project, path, text } => {
+            let written = dev::write_file(at, project, path, text)?;
             let how = if written.created { "created" } else { "written over" };
-            said(format!("{path} was {how} in {module} ({} bytes). {}", written.bytes, after(module)))
+            said(format!("{path} was {how} in {project} ({} bytes). {}", written.bytes, after(project)))
         }
-        Action::DeleteFile { module, path } => {
-            dev::delete_file(at, module, path)?;
-            said(format!("{path} was deleted from {module}. {}", after(module)))
+        Action::DeleteFile { project, path } => {
+            dev::delete_file(at, project, path)?;
+            said(format!("{path} was deleted from {project}. {}", after(project)))
         }
-        Action::OpenPanel { module } => panels::open(app, ctx, module).and_then(said),
-        Action::Trust { module, fingerprint } => {
-            let found = module::load(&at.modules.join(module));
+        Action::OpenPanel { project } => panels::open(app, ctx, project).and_then(said),
+        Action::Trust { project, fingerprint } => {
+            let found = project::load(&at.projects.join(project));
             // Trust goes to the contents that were asked about, and to no others.
             if found.fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                return Err(format!("{module} changed after this was asked: it was not trusted. Ask again for the module as it is now."));
+                return Err(format!("{project} changed after this was asked: it was not trusted. Ask again for the project as it is now."));
             }
             // Trusted as it is now: never "as it changes", which only the person chooses.
             TrustStore::load(&at.trust).trust(&found, false)?;
-            said(format!("{module} is trusted as it is now."))
+            said(format!("{project} is trusted as it is now."))
         }
-        Action::StopTrusting { module } => {
-            take_trust_back(ctx, at, module)?;
-            said(format!("{module} is no longer trusted."))
+        Action::StopTrusting { project } => {
+            take_trust_back(ctx, at, project)?;
+            said(format!("{project} is no longer trusted."))
         }
         Action::RunScript { .. } => Err("That is a script to run.".into()),
         Action::Plan { .. } => Err("That is a plan to approve.".into()),
@@ -368,9 +368,9 @@ fn perform(app: &mut SheetApp, ctx: &egui::Context, at: &Places, action: &Action
 }
 
 /// Approves the plan the request `id` proposes: nothing else is done now. It is approved for
-/// its modules as they stood when it was proposed, which is how its first step in each must
-/// find it: a module that has changed since is not the one the plan was proposed for, and the
-/// plan is not approved (as trust asked for by itself is not given to a module that changed).
+/// its projects as they stood when it was proposed, which is how its first step in each must
+/// find it: a project that has changed since is not the one the plan was proposed for, and the
+/// plan is not approved (as trust asked for by itself is not given to a project that changed).
 fn approve(at: &Places, server: &Server, id: u64, steps: &[Action], stood: &[(String, Option<String>)], minutes: u64) -> Result<Done, String> {
     dev::plan_fits(at, steps, stood).map_err(|why| format!("{UNFIT} {why}"))?;
     let plan = server.approve(id)?;
@@ -385,23 +385,23 @@ fn approve(at: &Places, server: &Server, id: u64, steps: &[Action], stood: &[(St
     })
 }
 
-/// Whether the module a plan's step is about stands as the plan needs it: as it stood when the
+/// Whether the project a plan's step is about stands as the plan needs it: as it stood when the
 /// plan was approved, or as the plan's last step there left it.
 fn fits(at: &Places, server: &Server, plan: u64, action: &Action) -> Result<(), String> {
-    let module = dev::step_module(action);
-    let Some(expected) = server.plan_expects(plan, &module) else { return Err(format!("Plan #{plan} has ended.")) };
-    // Trust goes to the module as the plan left it, and to no other: the fingerprint the step
+    let project = dev::step_project(action);
+    let Some(expected) = server.plan_expects(plan, &project) else { return Err(format!("Plan #{plan} has ended.")) };
+    // Trust goes to the project as the plan left it, and to no other: the fingerprint the step
     // names (the server read it when the step was asked for) is that one too.
     if let Action::Trust { fingerprint, .. } = action
         && expected.as_deref() != Some(fingerprint.as_str())
     {
-        return Err(format!("{module}'s files are not as the plan's steps left them: something else has changed them since the plan was approved."));
+        return Err(format!("{project}'s files are not as the plan's steps left them: something else has changed them since the plan was approved."));
     }
-    match (expected, dev::stands(at, &module)?) {
+    match (expected, dev::stands(at, &project)?) {
         (expected, stands) if expected == stands => Ok(()),
-        (None, _) => Err(format!("A folder named {module} is there now, which was not when the plan was approved.")),
-        (_, None) => Err(format!("{module} is no longer there.")),
-        _ => Err(format!("{module}'s files are not as the plan's steps left them: something else has changed them since the plan was approved.")),
+        (None, _) => Err(format!("A folder named {project} is there now, which was not when the plan was approved.")),
+        (_, None) => Err(format!("{project} is no longer there.")),
+        _ => Err(format!("{project}'s files are not as the plan's steps left them: something else has changed them since the plan was approved.")),
     }
 }
 
@@ -409,9 +409,9 @@ fn fits(at: &Places, server: &Server, plan: u64, action: &Action) -> Result<(), 
 /// Returns what to tell the person.
 fn carry_out(app: &mut SheetApp, ctx: &egui::Context, now: &mut Running, server: &Server, id: u64, asked_first: bool) -> Result<String, String> {
     let Some(asked) = server.begin(id, asked_first) else { return Err("That request is no longer waiting: it lapsed, or was answered.".into()) };
-    let Some(at) = modules::places() else {
-        server.finish(id, Err(modules::UNAVAILABLE.into()));
-        return Err(modules::UNAVAILABLE.into());
+    let Some(at) = projects::places() else {
+        server.finish(id, Err(projects::UNAVAILABLE.into()));
+        return Err(projects::UNAVAILABLE.into());
     };
     // A plan: approving it is all that is done now.
     if let Action::Plan { steps, minutes, stood, .. } = &asked.action {
@@ -426,7 +426,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, now: &mut Running, server:
             )
         });
     }
-    // A step of a plan: the module it is about must stand as the plan needs it.
+    // A step of a plan: the project it is about must stand as the plan needs it.
     if let Some((plan, _)) = asked.plan
         && let Err(why) = fits(&at, server, plan, &asked.action)
     {
@@ -458,8 +458,8 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, now: &mut Running, server:
         && result.is_ok()
         && asked.action.kind() == dev::Kind::Edit
     {
-        let module = dev::step_module(&asked.action);
-        server.plan_left(plan, &module, dev::stands(&at, &module).ok().flatten());
+        let project = dev::step_project(&asked.action);
+        server.plan_left(plan, &project, dev::stands(&at, &project).ok().flatten());
     }
     server.finish(id, result.clone());
     result.map(|done| done.said)
@@ -469,22 +469,22 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, now: &mut Running, server:
 /// asks, for what, and what it means.
 fn question(at: &Places, asked: &Asked) -> String {
     let who = if asked.client == "an agent" { "An agent".to_string() } else { format!("An agent that calls itself \"{}\"", asked.client) };
-    let follows = |module: &str| TrustStore::load(&at.trust).follows_changes(module);
-    let changes = |module: &str| {
-        if follows(module) {
-            format!("You chose to keep trusting {module} as its files change: what is written runs without your looking at it again.")
+    let follows = |project: &str| TrustStore::load(&at.trust).follows_changes(project);
+    let changes = |project: &str| {
+        if follows(project) {
+            format!("You chose to keep trusting {project} as its files change: what is written runs without your looking at it again.")
         } else {
-            format!("{module} stops being trusted when its files change: nothing in it runs until you review it again.")
+            format!("{project} stops being trusted when its files change: nothing in it runs until you review it again.")
         }
     };
     let means = match &asked.action {
-        Action::CreateModule { .. } => "The new module is not trusted: it does nothing until you trust it.".to_string(),
-        Action::WriteFile { module, .. } | Action::DeleteFile { module, .. } => changes(module),
+        Action::CreateProject { .. } => "The new project is not trusted: it does nothing until you trust it.".to_string(),
+        Action::WriteFile { project, .. } | Action::DeleteFile { project, .. } => changes(project),
         Action::RunScript { .. } => "A script can do anything a program you run can do.".to_string(),
-        Action::OpenPanel { .. } => "Its panel can do what you granted the module.".to_string(),
-        Action::Trust { module, .. } => {
-            let found = module::load(&at.modules.join(module));
-            return format!("{who} asks you to trust a module (request #{}).\n\n{}", asked.id, modules::question(&found, false));
+        Action::OpenPanel { .. } => "Its panel can do what you granted the project.".to_string(),
+        Action::Trust { project, .. } => {
+            let found = project::load(&at.projects.join(project));
+            return format!("{who} asks you to trust a project (request #{}).\n\n{}", asked.id, projects::question(&found, false));
         }
         Action::StopTrusting { .. } => "It does nothing after that until you trust it again.".to_string(),
         Action::Plan { title, purpose, steps, minutes, .. } => {
@@ -492,8 +492,8 @@ fn question(at: &Places, asked: &Asked) -> String {
             let trusts = steps.iter().any(|step| matches!(step, Action::Trust { .. }));
             let runs = steps.iter().any(|step| matches!(step, Action::RunScript { .. }));
             let weighs = match (trusts, runs) {
-                (true, true) => "It trusts a module and runs its code: a script can do anything a program you run can do.\n\n",
-                (true, false) => "It trusts a module: from then on its code can run.\n\n",
+                (true, true) => "It trusts a project and runs its code: a script can do anything a program you run can do.\n\n",
+                (true, false) => "It trusts a project: from then on its code can run.\n\n",
                 (false, true) => "It runs a script: a script can do anything a program you run can do.\n\n",
                 (false, false) => "",
             };
@@ -528,24 +528,24 @@ pub(super) fn confirms(app: &SheetApp) -> bool {
 pub(super) enum Said {
     /// Yes, this once.
     Yes,
-    /// Yes, and not to ask again for this kind of thing in this module until GridCraft closes.
+    /// Yes, and not to ask again for this kind of thing in this project until GridCraft closes.
     YesAndNotAgain,
     /// No, with a word (or none) on what the agent should do differently.
     No(String),
 }
 
 /// Whether "and don't ask again" can be said to this request: it is of a kind that can go
-/// unasked, and its module is not one kept trusted as its files change.
+/// unasked, and its project is not one kept trusted as its files change.
 pub(super) fn can_go_unasked(asked: &Asked) -> bool {
-    let unreviewed = modules::places().is_some_and(|at| dev::runs_unreviewed(&at, &asked.action));
-    dev::can_go_unasked(asked.action.kind()) && !asked.action.module().is_empty() && !unreviewed
+    let unreviewed = projects::places().is_some_and(|at| dev::runs_unreviewed(&at, &asked.action));
+    dev::can_go_unasked(asked.action.kind()) && !asked.action.project().is_empty() && !unreviewed
 }
 
 /// What "don't ask again" would cover for this request, in words that follow "for".
-pub(super) fn covers(module: &str, kind: dev::Kind) -> String {
+pub(super) fn covers(project: &str, kind: dev::Kind) -> String {
     match kind {
-        dev::Kind::Edit => format!("changes to {module}'s files"),
-        _ => format!("running {module}'s scripts or opening its panel"),
+        dev::Kind::Edit => format!("changes to {project}'s files"),
+        _ => format!("running {project}'s scripts or opening its panel"),
     }
 }
 
@@ -568,12 +568,12 @@ pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, said: Sai
         server.refuse(id, &format!("{SAID_NO} They tell you: \"{reason}\""), true);
         return Ok("The request was refused, and the agent was told why.".into());
     }
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
-    if let Action::Trust { module, fingerprint } = &asked.action
-        && module::load(&at.modules.join(module)).fingerprint.as_deref() != Some(fingerprint.as_str())
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+    if let Action::Trust { project, fingerprint } = &asked.action
+        && project::load(&at.projects.join(project)).fingerprint.as_deref() != Some(fingerprint.as_str())
     {
-        server.refuse(id, "The module's files changed after this was asked. Ask again for the module as it is now.", false);
-        return Err(format!("{module} changed after the agent asked. The request was dropped: the agent has to ask again."));
+        server.refuse(id, "The project's files changed after this was asked. Ask again for the project as it is now.", false);
+        return Err(format!("{project} changed after the agent asked. The request was dropped: the agent has to ask again."));
     }
     if not_again && !can_go_unasked(&asked) {
         return Err("That is asked about each time: it can't be allowed for the rest of the session.".into());
@@ -594,7 +594,7 @@ pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, said: Sai
         if not_again {
             text.push_str(&format!(
                 "\n\nAnd GridCraft will not ask you again for {} until it closes.",
-                covers(asked.action.module(), asked.action.kind())
+                covers(asked.action.project(), asked.action.kind())
             ));
         }
         if !confirm("Allow this request from an agent?", &text) {
@@ -603,7 +603,7 @@ pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, said: Sai
         }
     }
     if not_again {
-        server.allow_unasked(asked.action.module(), asked.action.kind());
+        server.allow_unasked(asked.action.project(), asked.action.kind());
     }
     let done = carry_out(app, ctx, &mut now, &server, id, true);
     keep(now);
@@ -622,10 +622,10 @@ pub(super) fn stop_plan(id: u64, by_hand: bool) -> Result<String, String> {
     }
 }
 
-/// The person wants to be asked again about this kind of thing in this module.
-pub(super) fn ask_again(module: &str, kind: dev::Kind) {
+/// The person wants to be asked again about this kind of thing in this project.
+pub(super) fn ask_again(project: &str, kind: dev::Kind) {
     if let Some(server) = &running().server {
-        server.ask_again(module, kind);
+        server.ask_again(project, kind);
     }
 }
 
@@ -650,7 +650,7 @@ pub(super) fn snapshot() -> Snapshot {
     let now = running();
     let server = now.server.as_ref();
     Snapshot {
-        available: modules::places().is_some(),
+        available: projects::places().is_some(),
         level: now.level,
         port: server.map_or(now.port, Server::port),
         serving: server.is_some(),
@@ -666,7 +666,7 @@ pub(super) fn snapshot() -> Snapshot {
 /// Sets how far agents may go. The person chose it, in the Development window: whoever calls
 /// this has made sure of that.
 pub(super) fn set_level(app: &mut SheetApp, ctx: &egui::Context, level: Level) -> Result<String, String> {
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
     let mut now = running();
     now.settled = true;
     // Full control is for this run: the settings keep what was chosen before it.
@@ -727,7 +727,7 @@ pub(super) fn set_level(app: &mut SheetApp, ctx: &egui::Context, level: Level) -
 
 /// Sets the port the server listens on, and moves a running server to it.
 pub(super) fn set_port(ctx: &egui::Context, port: u16) -> Result<String, String> {
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
     if port < 1024 {
         return Err("Choose a port from 1024 to 65535.".into());
     }
@@ -750,7 +750,7 @@ pub(super) fn set_port(ctx: &egui::Context, port: u16) -> Result<String, String>
 
 /// Makes a new token: an agent that holds the old one can no longer connect.
 pub(super) fn renew_token(ctx: &egui::Context) -> Result<String, String> {
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
     new_token(&at)?;
     let mut now = running();
     if now.level != Level::Off {
@@ -768,7 +768,7 @@ pub(super) fn renew_token(ctx: &egui::Context) -> Result<String, String> {
 /// the entry of an MCP settings file. **It holds the token.** It is handed to the person, by
 /// their own click, and to nothing else.
 pub(super) fn setup(as_json: bool) -> Result<String, String> {
-    let at = modules::places().ok_or(modules::UNAVAILABLE)?;
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
     let now = running();
     let Some(server) = &now.server else { return Err(if now.problem.is_empty() { OFF.to_string() } else { now.problem.clone() }) };
     let token = token(&at, false)?;
@@ -818,7 +818,7 @@ pub fn report() -> Json {
         "waiting": waiting,
         "recent": recent,
         "plans": plans,
-        "notAskedAgain": now.unasked.iter().map(|(module, kind)| json!({"module": module, "what": if *kind == dev::Kind::Edit { "changing its files" } else { "running its scripts, opening its panel" }})).collect::<Vec<_>>(),
+        "notAskedAgain": now.unasked.iter().map(|(project, kind)| json!({"project": project, "what": if *kind == dev::Kind::Edit { "changing its files" } else { "running its scripts, opening its panel" }})).collect::<Vec<_>>(),
         "note": "It only reports. How far agents may go, the port and the token are set by the person at the screen alone, in Developer ▸ Development, and requests are answered there. What a client calls itself, and what it asked for, are its own words.",
     })
 }

@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Before, Sight, StepState};
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::trust::TrustStore;
-use gridcraft_aniefork_dev::{module, starter};
+use gridcraft_aniefork_dev::{project, starter};
 use serde_json::{Value as Json, json};
 
 use super::agents;
@@ -38,7 +38,7 @@ pub(super) const INTRO: &str = "Your development kits and their projects, and ho
 pub(super) const AGENTS: &str =
     "An agent (Claude Code, for one) can connect to GridCraft's Development server, which speaks MCP, to help you build. You set how far it may go.";
 pub(super) const NO_AGENTS: &str = "Agents can't connect in this run, because it keeps no settings.";
-pub(super) const NO_MODULES: &str = "Modules are not available in this run, because it keeps no settings.";
+pub(super) const NO_PROJECTS: &str = "Projects are not available in this run, because it keeps no settings.";
 pub(super) const RECORD: &str = "The whole record is in the Developer console, and in agent-log.jsonl beside your settings.";
 
 /// One thing a card says or shows.
@@ -138,7 +138,7 @@ pub(super) fn agent(asked: &Asked) -> String {
 /// this of the disk; a card reads the file.)
 pub(super) fn writes_new(at: &Places, action: &Action) -> bool {
     match action {
-        Action::WriteFile { module, path, .. } => !at.modules.join(module).join(path).is_file(),
+        Action::WriteFile { project, path, .. } => !at.projects.join(project).join(path).is_file(),
         _ => false,
     }
 }
@@ -147,8 +147,8 @@ pub(super) fn writes_new(at: &Places, action: &Action) -> bool {
 /// through instead ([`dev::sights`]).
 pub(super) fn sight_now(at: &Places, action: &Action) -> Sight {
     match action {
-        Action::WriteFile { module, path, .. } | Action::DeleteFile { module, path } => {
-            Sight { before: Some(dev::file_now(at, module, path)), ..Sight::default() }
+        Action::WriteFile { project, path, .. } | Action::DeleteFile { project, path } => {
+            Sight { before: Some(dev::file_now(at, project, path)), ..Sight::default() }
         }
         _ => Sight::default(),
     }
@@ -162,14 +162,14 @@ pub(super) fn is_new(sight: &Sight) -> bool {
 /// What kind of thing a request is: the card's heading. `new`: the file it writes is not there.
 pub(super) fn kind(action: &Action, new: bool) -> &'static str {
     match action {
-        Action::CreateModule { .. } => "Create module",
+        Action::CreateProject { .. } => "Create project",
         Action::WriteFile { .. } if new => "Create file",
         Action::WriteFile { .. } => "Edit file",
         Action::DeleteFile { .. } => "Delete file",
         Action::RunScript { .. } => "Run script",
         Action::OpenPanel { .. } => "Open panel",
-        Action::Trust { .. } => "Trust module",
-        Action::StopTrusting { .. } => "Stop trusting module",
+        Action::Trust { .. } => "Trust project",
+        Action::StopTrusting { .. } => "Stop trusting project",
         Action::Plan { .. } => "Plan",
     }
 }
@@ -177,10 +177,10 @@ pub(super) fn kind(action: &Action, new: bool) -> &'static str {
 /// What a request is about: the first line of the card's block.
 pub(super) fn target(action: &Action) -> String {
     match action {
-        Action::CreateModule { name } => format!("{}/   ({name:?})", starter::id_for(name)),
-        Action::WriteFile { module, path, .. } | Action::DeleteFile { module, path } => format!("{module}/{path}"),
-        Action::RunScript { module, script, .. } => format!("{module}: {script}"),
-        Action::OpenPanel { module } | Action::Trust { module, .. } | Action::StopTrusting { module } => module.clone(),
+        Action::CreateProject { name } => format!("{}/   ({name:?})", starter::id_for(name)),
+        Action::WriteFile { project, path, .. } | Action::DeleteFile { project, path } => format!("{project}/{path}"),
+        Action::RunScript { project, script, .. } => format!("{project}: {script}"),
+        Action::OpenPanel { project } | Action::Trust { project, .. } | Action::StopTrusting { project } => project.clone(),
         Action::Plan { title, steps, .. } => format!("{title:?}  ·  {} step{}", steps.len(), plural(steps.len())),
     }
 }
@@ -190,14 +190,14 @@ pub(super) fn target(action: &Action) -> String {
 pub(super) fn question(asked: &Asked, new: bool) -> String {
     let agent = agent(asked);
     match &asked.action {
-        Action::CreateModule { .. } => format!("Do you want to let {agent} create this module?"),
+        Action::CreateProject { .. } => format!("Do you want to let {agent} create this project?"),
         Action::WriteFile { path, .. } if new => format!("Do you want to let {agent} create {path:?}?"),
         Action::WriteFile { path, .. } => format!("Do you want to let {agent} make this edit to {path:?}?"),
         Action::DeleteFile { path, .. } => format!("Do you want to let {agent} delete {path:?}?"),
         Action::RunScript { script, .. } => format!("Do you want to let {agent} run {script:?}?"),
-        Action::OpenPanel { module } => format!("Do you want to let {agent} open the panel of {module} in your browser?"),
-        Action::Trust { module, .. } => format!("Do you want to trust {module}, as {agent} asks?"),
-        Action::StopTrusting { module } => format!("Do you want to stop trusting {module}, as {agent} asks?"),
+        Action::OpenPanel { project } => format!("Do you want to let {agent} open the panel of {project} in your browser?"),
+        Action::Trust { project, .. } => format!("Do you want to trust {project}, as {agent} asks?"),
+        Action::StopTrusting { project } => format!("Do you want to stop trusting {project}, as {agent} asks?"),
         Action::Plan { .. } => format!("Do you want to approve this plan, as {agent} proposes it?"),
     }
 }
@@ -247,7 +247,7 @@ pub(super) fn too_long(action: &Action) -> bool {
 
 /// The card's second choice, when it has three.
 pub(super) fn yes_and(action: &Action) -> String {
-    format!("2. Yes, and don't ask again for {} until GridCraft closes", agents::covers(action.module(), action.kind()))
+    format!("2. Yes, and don't ask again for {} until GridCraft closes", agents::covers(action.project(), action.kind()))
 }
 
 /// The card's last line: who asks, and whether a yes is confirmed elsewhere.
@@ -260,7 +260,7 @@ pub(super) fn asker(asked: &Asked, confirms: bool) -> String {
     format!("{named}{}", if confirms { " A yes is confirmed by your operating system." } else { "" })
 }
 
-/// What a change to a module's files means for its trust.
+/// What a change to a project's files means for its trust.
 fn change_means(at: &Places, id: &str) -> Block<'static> {
     if TrustStore::load(&at.trust).follows_changes(id) {
         Block::Warn(format!("You chose to keep trusting {id} as its files change: what is written runs without your looking at it again."))
@@ -269,7 +269,7 @@ fn change_means(at: &Places, id: &str) -> Block<'static> {
     }
 }
 
-/// What a module would be allowed, one line each. `None` asked: it asks for nothing.
+/// What a project would be allowed, one line each. `None` asked: it asks for nothing.
 fn allowed(asks: &[gridcraft_aniefork_dev::manifest::Permission]) -> Vec<Block<'static>> {
     if asks.is_empty() {
         return vec![Block::Bullet { text: "Show its panel, and nothing more".into(), warn: false }];
@@ -277,7 +277,7 @@ fn allowed(asks: &[gridcraft_aniefork_dev::manifest::Permission]) -> Vec<Block<'
     asks.iter().map(|permission| Block::Bullet { text: permission.meaning().to_string(), warn: permission.is_unlimited() }).collect()
 }
 
-/// The files a module holds, the first few by name.
+/// The files a project holds, the first few by name.
 fn listed(files: &[String]) -> String {
     let shown: Vec<&str> = files.iter().map(String::as_str).take(8).collect();
     let more = files.len().saturating_sub(shown.len());
@@ -290,7 +290,7 @@ fn listed(files: &[String]) -> String {
 /// changes in it.
 pub(super) fn content<'a>(at: &Places, step: &'a Action, sight: &'a Sight, of_plan: bool, whole: bool) -> Vec<Block<'a>> {
     match step {
-        Action::CreateModule { .. } => vec![Block::Note("A starter module: a module.toml, a panel and a Python script.".into())],
+        Action::CreateProject { .. } => vec![Block::Note("A starter project: a project.toml, a panel and a Python script.".into())],
         Action::WriteFile { text, .. } => {
             let mut blocks = Vec::new();
             // What would not show is said first, and written out where it stands.
@@ -344,26 +344,26 @@ pub(super) fn content<'a>(at: &Places, step: &'a Action, sight: &'a Sight, of_pl
             blocks
         }
         Action::OpenPanel { .. } => vec![Block::Note("Its panel opens in your browser.".into())],
-        // In a plan: the module as the plan's steps leave it.
+        // In a plan: the project as the plan's steps leave it.
         Action::Trust { .. } if of_plan => {
             let mut blocks = vec![Block::Strong("It would be allowed to:".into())];
             match &sight.asks {
                 Some(Ok(asks)) => blocks.extend(allowed(asks)),
-                Some(Err(why)) => blocks.push(Block::Warn(format!("Its module.toml will not do ({why}): this step would fail."))),
+                Some(Err(why)) => blocks.push(Block::Warn(format!("Its project.toml will not do ({why}): this step would fail."))),
                 None => {}
             }
             blocks.push(Block::Small(format!("As the steps before this one leave it, it will contain {}.", listed(&sight.files))));
-            // Trust is in all of the module, not only in what the plan writes.
+            // Trust is in all of the project, not only in what the plan writes.
             blocks.push(Block::Small(
-                "Its files that this plan doesn't write are trusted as they are now. To read them first, say no, and review the module in Modules."
+                "Its files that this plan doesn't write are trusted as they are now. To read them first, say no, and review the project in Projects."
                     .into(),
             ));
             blocks
         }
-        Action::Trust { module, fingerprint } => {
-            let found = module::load(&at.modules.join(module));
+        Action::Trust { project, fingerprint } => {
+            let found = project::load(&at.projects.join(project));
             if found.fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                return vec![Block::Warn("The module changed after the agent asked. It has to ask again: this request can't be allowed.".into())];
+                return vec![Block::Warn("The project changed after the agent asked. It has to ask again: this request can't be allowed.".into())];
             }
             let asks = found.manifest.as_ref().map(|m| m.permissions.clone()).unwrap_or_default();
             let mut blocks = vec![Block::Strong("It would be allowed to:".into())];
@@ -417,28 +417,28 @@ pub(super) fn plan<'a>(
 /// What a yes would mean, under the card's block.
 pub(super) fn means(at: &Places, action: &Action) -> Vec<Block<'static>> {
     match action {
-        Action::CreateModule { .. } => vec![Block::Note("It is created untrusted: it does nothing until you trust it.".into())],
-        Action::WriteFile { module, .. } | Action::DeleteFile { module, .. } => vec![change_means(at, module)],
+        Action::CreateProject { .. } => vec![Block::Note("It is created untrusted: it does nothing until you trust it.".into())],
+        Action::WriteFile { project, .. } | Action::DeleteFile { project, .. } => vec![change_means(at, project)],
         Action::RunScript { .. } => vec![
-            Block::Note("It may change the workbook, with what its module was granted.".into()),
+            Block::Note("It may change the workbook, with what its project was granted.".into()),
             Block::Warn("A script can do anything a program you run can do.".into()),
         ],
-        Action::OpenPanel { .. } => vec![Block::Note("Its panel can do what you granted the module.".into())],
+        Action::OpenPanel { .. } => vec![Block::Note("Its panel can do what you granted the project.".into())],
         Action::Trust { .. } => {
-            vec![Block::Note("Trust is given to exactly these files. To read them first, say no, and review the module in Modules.".into())]
+            vec![Block::Note("Trust is given to exactly these files. To read them first, say no, and review the project in Projects.".into())]
         }
         Action::StopTrusting { .. } => vec![Block::Note("It does nothing after that until you trust it again.".into())],
         Action::Plan { steps, .. } => {
             let mut blocks = Vec::new();
-            // What in it trusts a module or runs code is said by itself.
+            // What in it trusts a project or runs code is said by itself.
             for (index, step) in steps.iter().enumerate() {
                 match step {
-                    Action::Trust { module, .. } => blocks.push(Block::Warn(format!(
-                        "Step {} trusts {module}: from then on its code can run, with what it asks to be allowed.",
+                    Action::Trust { project, .. } => blocks.push(Block::Warn(format!(
+                        "Step {} trusts {project}: from then on its code can run, with what it asks to be allowed.",
                         index + 1
                     ))),
-                    Action::RunScript { module, script, .. } => blocks.push(Block::Warn(format!(
-                        "Step {} runs {script:?} of {module}: a script can do anything a program you run can do.",
+                    Action::RunScript { project, script, .. } => blocks.push(Block::Warn(format!(
+                        "Step {} runs {script:?} of {project}: a script can do anything a program you run can do.",
                         index + 1
                     ))),
                     _ => {}
@@ -447,7 +447,7 @@ pub(super) fn means(at: &Places, action: &Action) -> Vec<Block<'static>> {
             let store = TrustStore::load(&at.trust);
             let mut told: Vec<&str> = Vec::new();
             for step in steps.iter().filter(|step| matches!(step, Action::WriteFile { .. } | Action::DeleteFile { .. })) {
-                let id = step.module();
+                let id = step.project();
                 if store.follows_changes(id) && !told.contains(&id) {
                     told.push(id);
                     blocks.push(Block::Warn(format!(
@@ -602,8 +602,8 @@ mod tests {
 
     #[test]
     fn a_change_too_long_to_show_as_its_changes_is_shown_whole() {
-        let at = Places { modules: "nowhere".into(), trust: "nowhere/trust.json".into(), settings: "nowhere/developer.json".into() };
-        let write = |text: &str| Action::WriteFile { module: "m".into(), path: "a.py".into(), text: text.to_string() };
+        let at = Places { projects: "nowhere".into(), trust: "nowhere/trust.json".into(), settings: "nowhere/developer.json".into() };
+        let write = |text: &str| Action::WriteFile { project: "m".into(), path: "a.py".into(), text: text.to_string() };
         let there = Sight { before: Some(Before::Text("old\n".into())), ..Sight::default() };
         // A change that can be shown line by line is, with the way to the whole file.
         let small = write("new\n");
@@ -630,8 +630,8 @@ mod tests {
         assert_eq!(visible("a\u{200b}b\u{feff}"), "a⟨U+200B⟩b⟨U+FEFF⟩");
         assert_eq!(hidden("a\r\nb\n\tc\n"), 0, "line breaks and tabs are not hidden");
         assert_eq!(hidden("a\rb\u{202e}c\r\n"), 2);
-        let at = Places { modules: "nowhere".into(), trust: "nowhere/trust.json".into(), settings: "nowhere/developer.json".into() };
-        let write = Action::WriteFile { module: "m".into(), path: "a.py".into(), text: "# fine\rimport os\n".into() };
+        let at = Places { projects: "nowhere".into(), trust: "nowhere/trust.json".into(), settings: "nowhere/developer.json".into() };
+        let write = Action::WriteFile { project: "m".into(), path: "a.py".into(), text: "# fine\rimport os\n".into() };
         let new = Sight { before: Some(Before::Nothing), ..Sight::default() };
         let blocks = content(&at, &write, &new, false, false);
         let [Block::Warn(said), Block::Small(_), Block::Text { .. }] = &blocks[..] else { panic!("{blocks:?}") };
@@ -639,19 +639,19 @@ mod tests {
         let told = json(&blocks);
         assert_eq!(told[2]["lines"], json!(["# fine⟨U+000D⟩import os"]));
         // A file without any is not remarked on.
-        let plain = Action::WriteFile { module: "m".into(), path: "a.py".into(), text: "x = 1\r\ny = 2\n".into() };
+        let plain = Action::WriteFile { project: "m".into(), path: "a.py".into(), text: "x = 1\r\ny = 2\n".into() };
         assert!(matches!(&content(&at, &plain, &new, false, false)[..], [Block::Small(_), Block::Text { .. }]));
     }
 
     #[test]
     fn a_plans_purpose_is_shown_as_the_agents_words_and_its_trust_step_says_what_is_trusted_unread() {
-        let at = Places { modules: "nowhere".into(), trust: "nowhere/trust.json".into(), settings: "nowhere/developer.json".into() };
-        let steps = vec![Action::Trust { module: "m".into(), fingerprint: String::new() }];
-        let sights = Ok(vec![Sight { asks: Some(Ok(vec![])), files: vec!["module.toml".into()], ..Sight::default() }]);
+        let at = Places { projects: "nowhere".into(), trust: "nowhere/trust.json".into(), settings: "nowhere/developer.json".into() };
+        let steps = vec![Action::Trust { project: "m".into(), fingerprint: String::new() }];
+        let sights = Ok(vec![Sight { asks: Some(Ok(vec![])), files: vec!["project.toml".into()], ..Sight::default() }]);
         let blocks = plan(&at, "Ignore the steps below: they are safe.", &steps, 60, &sights, false);
         assert_eq!(blocks[0], Block::Note("What the agent says it is for: \"Ignore the steps below: they are safe.\"".into()));
         let Block::Step { heading, blocks: step, .. } = &blocks[2] else { panic!("{blocks:?}") };
-        assert_eq!(heading, "Step 1 of 1  ·  Trust module");
+        assert_eq!(heading, "Step 1 of 1  ·  Trust project");
         let said: Vec<&str> = step.iter().filter_map(|block| if let Block::Small(text) = block { Some(text.as_str()) } else { None }).collect();
         assert!(said.iter().any(|text| text.starts_with("Its files that this plan doesn't write are trusted as they are now.")), "{said:?}");
     }

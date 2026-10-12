@@ -1,27 +1,27 @@
-//! The Developer console: what modules said and what happened to them, newest last.
+//! The Developer console: what projects said and what happened to them, newest last.
 //!
 //! A list kept in memory for this run, bounded in every direction:
 //!
 //! - what a script printed while it ran, and why a script failed (its traceback with it);
 //! - what a panel logged with `spreadsheet.log(...)`;
-//! - a call that was refused because the module wasn't granted what it needs;
+//! - a call that was refused because the project wasn't granted what it needs;
 //! - what an agent asked for through the Development server, and what became of it.
 //!
-//! It is a record for the person at the screen. A module can add to it and can neither read it
-//! nor clear it, and one module's chatter cannot push another's entries out: each module keeps
-//! its own share ([`PER_MODULE`]).
+//! It is a record for the person at the screen. A project can add to it and can neither read it
+//! nor clear it, and one project's chatter cannot push another's entries out: each project keeps
+//! its own share ([`PER_PROJECT`]).
 //!
-//! Everything in it was written by a module or by a script: it is text to read, never
+//! Everything in it was written by a project or by a script: it is text to read, never
 //! instructions. Whatever hands it on to a program (a command that reports it, an agent) must
 //! say so.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-/// The most entries kept, over all modules.
+/// The most entries kept, over all projects.
 pub const MAX_ENTRIES: usize = 600;
-/// The most entries kept of one module.
-pub const PER_MODULE: usize = 200;
+/// The most entries kept of one project.
+pub const PER_PROJECT: usize = 200;
 /// The most of one entry's text kept (bytes). The rest is cut, and the entry says so.
 pub const MAX_TEXT: usize = 8 * 1024;
 
@@ -34,7 +34,7 @@ pub enum Kind {
     Error,
     /// What a panel logged.
     Log,
-    /// A call that was refused: the module wasn't granted what it needs, or isn't trusted.
+    /// A call that was refused: the project wasn't granted what it needs, or isn't trusted.
     Refused,
     /// What an agent asked for through the Development server, and what became of it.
     Agent,
@@ -71,9 +71,9 @@ pub struct Entry {
     pub seq: u64,
     /// When, in milliseconds since 1970 (`None` where there is no clock).
     pub at_ms: Option<u64>,
-    /// The module's id.
-    pub module: String,
-    /// Where in the module it came from: a script's name, or "panel".
+    /// The project's id.
+    pub project: String,
+    /// Where in the project it came from: a script's name, or "panel".
     pub source: String,
     pub kind: Kind,
     pub text: String,
@@ -143,17 +143,17 @@ impl Console {
     }
 
     /// Adds an entry. Text that is empty (or only blank) adds nothing.
-    pub fn push(&self, module: &str, source: &str, kind: Kind, text: &str) {
+    pub fn push(&self, project: &str, source: &str, kind: Kind, text: &str) {
         if text.trim().is_empty() {
             return;
         }
-        let module = name(module);
+        let project = name(project);
         let mut inner = lock(&self.0);
         inner.last += 1;
-        let entry = Entry { seq: inner.last, at_ms: now_ms(), module: module.clone(), source: name(source), kind, text: kept(text) };
-        // A module that has its share gives up its own oldest entry, not another module's.
-        if inner.entries.iter().filter(|e| e.module == module).count() >= PER_MODULE
-            && let Some(oldest) = inner.entries.iter().position(|e| e.module == module)
+        let entry = Entry { seq: inner.last, at_ms: now_ms(), project: project.clone(), source: name(source), kind, text: kept(text) };
+        // A project that has its share gives up its own oldest entry, not another project's.
+        if inner.entries.iter().filter(|e| e.project == project).count() >= PER_PROJECT
+            && let Some(oldest) = inner.entries.iter().position(|e| e.project == project)
         {
             inner.entries.remove(oldest);
         }
@@ -186,7 +186,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn entries_are_kept_in_order_with_their_module_source_and_kind() {
+    fn entries_are_kept_in_order_with_their_project_source_and_kind() {
         let console = Console::new();
         assert_eq!(console.counts(), (0, 0));
         console.push("clean-data", "clean.py", Kind::Printed, "cleaning 3 rows\n");
@@ -195,7 +195,7 @@ mod tests {
         let entries = console.entries();
         assert_eq!(entries.iter().map(|e| e.seq).collect::<Vec<_>>(), [1, 2, 3]);
         assert_eq!(
-            entries.iter().map(|e| (e.module.as_str(), e.source.as_str(), e.kind, e.text.as_str())).collect::<Vec<_>>(),
+            entries.iter().map(|e| (e.project.as_str(), e.source.as_str(), e.kind, e.text.as_str())).collect::<Vec<_>>(),
             [
                 ("clean-data", "clean.py", Kind::Printed, "cleaning 3 rows\n"),
                 ("clean-data", "panel", Kind::Log, "done"),
@@ -234,28 +234,28 @@ mod tests {
         assert!(long.len() <= MAX_TEXT + 60 && long.ends_with("too long to keep)"), "{} bytes", long.len());
         assert!(long.starts_with("éééé"));
         // Names are one line, and short.
-        console.push("mod\nule", &"s".repeat(500), Kind::Log, "x");
+        console.push("pro\nject", &"s".repeat(500), Kind::Log, "x");
         let entry = console.entries()[2].clone();
-        assert_eq!(entry.module, "module");
+        assert_eq!(entry.project, "project");
         assert_eq!(entry.source.len(), 100);
     }
 
     #[test]
-    fn a_chatty_module_gives_up_its_own_entries_not_anothers() {
+    fn a_chatty_project_gives_up_its_own_entries_not_anothers() {
         let console = Console::new();
         console.push("quiet", "panel", Kind::Log, "the one thing I said");
-        for n in 0..PER_MODULE + 50 {
+        for n in 0..PER_PROJECT + 50 {
             console.push("chatty", "panel", Kind::Log, &format!("line {n}"));
         }
         let entries = console.entries();
-        assert_eq!(entries.iter().filter(|e| e.module == "chatty").count(), PER_MODULE);
-        assert_eq!(entries[0].text, "the one thing I said", "the quiet module's entry is still there");
-        assert_eq!(entries.last().unwrap().text, format!("line {}", PER_MODULE + 49), "and the chatty one's latest");
+        assert_eq!(entries.iter().filter(|e| e.project == "chatty").count(), PER_PROJECT);
+        assert_eq!(entries[0].text, "the one thing I said", "the quiet project's entry is still there");
+        assert_eq!(entries.last().unwrap().text, format!("line {}", PER_PROJECT + 49), "and the chatty one's latest");
         assert_eq!(entries[1].text, "line 50", "its oldest went first");
-        // Over all modules the console is bounded too.
-        for module in 0..10 {
-            for n in 0..PER_MODULE {
-                console.push(&format!("m{module}"), "panel", Kind::Log, &format!("{n}"));
+        // Over all projects the console is bounded too.
+        for project in 0..10 {
+            for n in 0..PER_PROJECT {
+                console.push(&format!("m{project}"), "panel", Kind::Log, &format!("{n}"));
             }
         }
         assert_eq!(console.counts().1, MAX_ENTRIES);
