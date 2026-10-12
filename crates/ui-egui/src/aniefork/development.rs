@@ -10,9 +10,12 @@
 //!
 //! **A request is answered on a card**, in the manner of a coding agent's permission prompt:
 //! what it is, the thing itself in a block of its own (for a file that is there, the lines it
-//! would take out and put in), what it means, and then yes, or no with a word for the agent
-//! on what to do differently. A yes is confirmed by the operating system's own question before
-//! anything is done, and can't be pressed in the card's first moment on screen, so that a
+//! would take out and put in), what it means, and then yes, yes and don't ask again (for that
+//! kind of thing in that module, until GridCraft closes), or no with a word for the agent on
+//! what to do differently. When GridCraft runs with the control channel a yes is confirmed by
+//! the operating system's own question before anything is done; without it, nothing but the
+//! person can click here, and the yes on the card is enough. A yes can't be pressed in the
+//! card's first moment on screen, so that a
 //! click meant for what was there before answers nothing. **What is on the card is what is
 //! answered**: only the person's own click puts a request's card on screen or takes it off
 //! (the window opens on a card by itself only when a single request waits, so there is no
@@ -29,7 +32,7 @@
 //! to a request) is refused while the channel is putting input into the window; see
 //! [`super::presence`].
 
-use gridcraft_aniefork_dev::agents::{Action, Asked, Level};
+use gridcraft_aniefork_dev::agents::{Action, Asked, Kind, Level};
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::trust::TrustStore;
 use gridcraft_aniefork_dev::{module, settings, starter};
@@ -59,7 +62,9 @@ const AROUND: usize = 3;
 const SETTLE_MS: f64 = if cfg!(test) { 60.0 } else { 900.0 };
 
 const YES: &str = "1. Yes, allow it once";
+/// No, when the card has two choices, and when it has the third between them.
 const NO: &str = "2. No";
+const NO_OF_THREE: &str = "3. No";
 const REASON: &str = "…and tell the agent what to do differently";
 const NOT_NOW: &str = "Not now";
 
@@ -74,7 +79,11 @@ enum Act {
     Look(u64),
     NotNow,
     Allow(u64),
+    /// Yes, and not to ask again for this kind of thing in this module until GridCraft closes.
+    AllowNotAgain(u64),
     Refuse(u64),
+    /// Ask again for this kind of thing in this module.
+    AskAgain(String, Kind),
     /// Show the whole of the file that would be written, or only what changes.
     Whole(bool),
     Open(&'static str),
@@ -460,7 +469,7 @@ fn card(ui: &mut egui::Ui, at: &Places, asked: &Asked, action: &mut Option<Act>)
 /// One request, in full, for the person to answer: what it is, the thing itself, what it
 /// means, and yes or no. It takes the place of the rest of the window, so that what is being
 /// decided is all there is to look at.
-fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driven: bool, action: &mut Option<Act>) {
+fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driven: bool, confirms: bool, action: &mut Option<Act>) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(kind(at, &asked.action)).strong().size(15.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -493,8 +502,17 @@ fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driv
     if ui.add_enabled(ready && !cut, egui::Button::new(YES)).clicked() {
         *action = Some(Act::Allow(asked.id));
     }
+    // And don't ask again: for what can go unasked, in a module whose files are looked at
+    // before they run.
+    let three = agents::can_go_unasked(asked);
+    if three {
+        let again = egui::Button::new(yes_and(&asked.action)).wrap_mode(egui::TextWrapMode::Wrap);
+        if ui.add_enabled(ready && !cut, again).clicked() {
+            *action = Some(Act::AllowNotAgain(asked.id));
+        }
+    }
     ui.horizontal(|ui| {
-        if ui.button(NO).clicked() {
+        if ui.button(if three { NO_OF_THREE } else { NO }).clicked() {
             *action = Some(Act::Refuse(asked.id));
         }
         // The word for the agent is the person's: only what they typed is kept.
@@ -513,7 +531,13 @@ fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driv
     } else {
         format!("Asked by an agent that calls itself \"{}\": the name is its own word.", asked.client)
     };
-    ui.label(small(format!("{named} A yes is confirmed by your operating system.")));
+    let confirmed = if confirms { " A yes is confirmed by your operating system." } else { "" };
+    ui.label(small(format!("{named}{confirmed}")));
+}
+
+/// The card's second choice, when it has three.
+fn yes_and(action: &Action) -> String {
+    format!("2. Yes, and don't ask again for {} until GridCraft closes", agents::covers(action.module(), action.kind()))
 }
 
 /// The Agents part: the level, how to connect, who connected, and what waits for an answer.
@@ -595,6 +619,19 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
             }
         }
     }
+    // What the person said not to ask about again.
+    if !now.unasked.is_empty() {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Not asked again until GridCraft closes").strong());
+        for (module, kind) in &now.unasked {
+            ui.horizontal(|ui| {
+                ui.label(agents::covers(module, *kind));
+                if ui.small_button("Ask again").clicked() {
+                    *action = Some(Act::AskAgain(module.clone(), *kind));
+                }
+            });
+        }
+    }
     // What was asked lately.
     if !now.recent.is_empty() {
         ui.add_space(4.0);
@@ -669,7 +706,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
     // A request being looked at takes the place of the rest, while it still waits.
     let looked_at = state.looking.and_then(|id| agents::snapshot().waiting.into_iter().find(|asked| asked.id == id));
     match (looked_at, modules::places()) {
-        (Some(asked), Some(at)) => review(ui, &at, &asked, &mut state, driven, &mut action),
+        (Some(asked), Some(at)) => review(ui, &at, &asked, &mut state, driven, agents::confirms(app), &mut action),
         _ => {
             state.looking = None;
             ui.label(INTRO);
@@ -716,7 +753,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, driven: bool, open: &mut bool) -> Result<String, String> {
     // Going to another of the fork's windows is anyone's. Everything else is the person's: what
     // is set, what is answered, and which request is under their eyes.
-    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder);
+    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder | Act::AskAgain(..));
     if !anyones && driven {
         return Err(presence::BY_HAND.to_string());
     }
@@ -760,21 +797,16 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, 
             state.whole = whole;
             Ok(String::new())
         }
-        Act::Allow(id) => {
-            // The card's first moment on screen: a click then was meant for something else. And
-            // only the request whose card is on screen is answered.
-            if crate::now_ms() - state.shown_at < SETTLE_MS || state.looking != Some(id) {
-                return Ok(String::new());
-            }
-            let outcome = agents::answer(app, ctx, id, true, "");
-            // On to the request that has waited longest, when another waits.
+        Act::Allow(id) => allow(app, ctx, state, id, agents::Said::Yes),
+        Act::AllowNotAgain(id) => allow(app, ctx, state, id, agents::Said::YesAndNotAgain),
+        Act::Refuse(id) => {
+            let outcome = agents::answer(app, ctx, id, agents::Said::No(state.reason.clone()));
             state.look_at(agents::snapshot().waiting.first().map(|asked| asked.id));
             outcome
         }
-        Act::Refuse(id) => {
-            let outcome = agents::answer(app, ctx, id, false, &state.reason);
-            state.look_at(agents::snapshot().waiting.first().map(|asked| asked.id));
-            outcome
+        Act::AskAgain(module, kind) => {
+            agents::ask_again(&module, kind);
+            Ok(format!("You will be asked again for {}.", agents::covers(&module, kind)))
         }
         Act::Open(name) => {
             app.open_dialog(name, json!({}));
@@ -790,6 +822,19 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, 
             _ => Err(modules::UNAVAILABLE.into()),
         },
     }
+}
+
+/// The person said yes on the card of the request `id`.
+fn allow(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, id: u64, said: agents::Said) -> Result<String, String> {
+    // The card's first moment on screen: a click then was meant for something else. And only
+    // the request whose card is on screen is answered.
+    if crate::now_ms() - state.shown_at < SETTLE_MS || state.looking != Some(id) {
+        return Ok(String::new());
+    }
+    let outcome = agents::answer(app, ctx, id, said);
+    // On to the request that has waited longest, when another waits.
+    state.look_at(agents::snapshot().waiting.first().map(|asked| asked.id));
+    outcome
 }
 
 #[cfg(test)]
@@ -808,8 +853,16 @@ mod tests {
 
     type Harness = egui_kittest::Harness<'static, SheetApp>;
 
-    /// An app in a window, as it is when GridCraft has just started.
-    fn harness(app: SheetApp) -> Harness {
+    /// An app in a window, as it is when GridCraft has just started with the control channel
+    /// open (`--control`): what clicks in the window may then be a program's doing.
+    fn harness(mut app: SheetApp) -> Harness {
+        let (_nobody, channel) = std::sync::mpsc::channel();
+        app.control_rx = Some(channel);
+        harness_alone(app)
+    }
+
+    /// The same without the control channel: nothing but the person can click in the window.
+    fn harness_alone(app: SheetApp) -> Harness {
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 900.0)).build_ui_state(
             |ui, app: &mut SheetApp| {
                 let ctx = ui.ctx().clone();
@@ -847,6 +900,14 @@ mod tests {
     fn say_yes(h: &mut Harness) {
         std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
         click(h, YES);
+    }
+
+    /// The person says no on the card, whichever number its no has.
+    fn say_no(h: &mut Harness) {
+        h.run_steps(3);
+        let label = if h.query_by_label(NO_OF_THREE).is_some() { NO_OF_THREE } else { NO };
+        h.get_by_label(label).click();
+        h.run_steps(4);
     }
 
     /// The person chooses a level in the window.
@@ -1115,7 +1176,7 @@ mod tests {
         choose(&mut h, Level::Ask);
         let id = asks(&mut h, "delete_module_file", json!({"module": "clean-data", "path": "python/clean.py"}));
         look(&mut h);
-        click(&mut h, NO);
+        say_no(&mut h);
         assert_eq!(asked.questions().len(), 1, "a no needs no confirming");
         assert!(s.0.join("modules/clean-data/python/clean.py").exists());
         let (failed, said) = stands(id);
@@ -1147,7 +1208,7 @@ mod tests {
         state = h.ctx.data(|d| d.get_temp(state_id())).unwrap();
         state.reason = "  Keep it:\trename it to tidy.py instead.  ".into();
         h.ctx.data_mut(|d| d.insert_temp(state_id(), state));
-        click(&mut h, NO);
+        say_no(&mut h);
         let (failed, said) = stands(id);
         let told = "was refused: The person at the screen said no. They tell you: \"Keep it:rename it to tidy.py instead.\"";
         assert!(failed && said.contains(told), "{said}");
@@ -1193,6 +1254,129 @@ mod tests {
         say_yes(&mut h);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), new);
         assert!(stands(id).1.contains("python/clean.py was written over in clean-data"));
+    }
+
+    #[test]
+    fn without_the_control_channel_a_yes_on_the_card_is_enough() {
+        let s = Sandbox::new("agents-one-click");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        assert!(!agents::confirms(h.state()));
+        open(&mut h);
+        // Letting agents go further is still confirmed by the operating system.
+        choose(&mut h, Level::Ask);
+        assert_eq!(asked.questions().len(), 1);
+        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/extra.py", "text": "x = 1\n"}));
+        look(&mut h);
+        h.get_by_label_contains("The agent gave no name.");
+        assert!(h.query_by_label_contains("confirmed by your operating system").is_none(), "the card promises no second question");
+        // One click, and it is done: nothing but the person can click here.
+        say_yes(&mut h);
+        assert_eq!(asked.questions().len(), 1, "no second question was put");
+        assert_eq!(std::fs::read_to_string(s.0.join("modules/clean-data/python/extra.py")).unwrap(), "x = 1\n");
+        assert!(stands(id).1.contains("was carried out"));
+        let id = asks(&mut h, "delete_module_file", json!({"module": "clean-data", "path": "python/extra.py"}));
+        look(&mut h);
+        say_yes(&mut h);
+        assert!(stands(id).1.contains("was carried out") && !s.0.join("modules/clean-data/python/extra.py").exists());
+        // A copy of GridCraft that can't put the operating system's question answers requests
+        // all the same, when nothing else can click in its window.
+        drop(h);
+        agents::forget();
+        let mut h = harness_alone(app_with(None));
+        let id = asks(&mut h, "create_module", json!({"name": "Another"}));
+        open(&mut h);
+        say_yes(&mut h);
+        assert!(stands(id).1.contains("Another was created as the module another"), "{}", stands(id).1);
+        assert_eq!(asked.questions().len(), 1);
+    }
+
+    #[test]
+    fn a_yes_can_say_not_to_ask_again_until_gridcraft_closes() {
+        let s = Sandbox::new("agents-not-again");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        open(&mut h);
+        choose(&mut h, Level::Ask);
+        let again = "2. Yes, and don't ask again for changes to clean-data's files until GridCraft closes";
+        let first = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/a.py", "text": "a = 1\n"}));
+        look(&mut h);
+        h.get_by_label(NO_OF_THREE);
+        std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
+        click(&mut h, again);
+        let question = asked.questions().pop().unwrap();
+        assert!(question.contains("And GridCraft will not ask you again for changes to clean-data's files until it closes."), "{question}");
+        assert!(stands(first).1.contains("was carried out"));
+        assert_eq!(asked.questions().len(), 3, "trusting, the level, and this yes");
+        // The next change to that module's files is not asked about: it is done, and on record.
+        let second = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/b.py", "text": "b = 2\n"}));
+        assert!(stands(second).1.contains("python/b.py was created in clean-data"), "{}", stands(second).1);
+        assert_eq!(std::fs::read_to_string(s.0.join("modules/clean-data/python/b.py")).unwrap(), "b = 2\n");
+        assert_eq!(asked.questions().len(), 3);
+        assert!(h.state().notice.is_none() && agents::snapshot().waiting.is_empty());
+        let said =
+            agents::snapshot().recent.iter().any(|line| line.request == second && line.detail == "without asking: the person said not to ask again");
+        assert!(said, "{:?}", agents::snapshot().recent);
+        // Nobody looked at that change: the module's trust went with it.
+        assert_eq!(list()["modules"][0]["status"], "untrusted");
+        // It covers that kind of thing in that module, and nothing else: trusting it asks.
+        let third = asks(&mut h, "trust_module", json!({"module": "clean-data"}));
+        assert!(stands(third).1.contains("is waiting for the person"));
+        look(&mut h);
+        h.get_by_label(NO);
+        assert!(h.query_by_label_contains("don't ask again").is_none(), "trusting is asked each time");
+        say_no(&mut h);
+        // The window says what is not asked about, and the report does.
+        h.get_by_label("Not asked again until GridCraft closes");
+        h.get_by_label("changes to clean-data's files");
+        let report = h.state_mut().run("developer.agents", json!({})).unwrap();
+        assert_eq!(report["notAskedAgain"], json!([{"module": "clean-data", "what": "changing its files"}]));
+        // The person can be asked again.
+        click(&mut h, "Ask again");
+        assert!(agents::snapshot().unasked.is_empty());
+        std::thread::sleep(Duration::from_millis(3_200));
+        let fourth = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/c.py", "text": "c = 3\n"}));
+        assert!(stands(fourth).1.contains("is waiting for the person"));
+        // And letting agents go less far ends it too.
+        look(&mut h);
+        std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
+        click(&mut h, again);
+        assert_eq!(agents::snapshot().unasked.len(), 1);
+        choose(&mut h, Level::Read);
+        assert!(agents::snapshot().unasked.is_empty());
+        choose(&mut h, Level::Ask);
+        let fifth = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/d.py", "text": "d = 4\n"}));
+        assert!(stands(fifth).1.contains("is waiting for the person"));
+        // GridCraft closing ends it: a server that starts knows of none.
+        drop(h);
+        agents::forget();
+        let _h = harness(app_with(Some(&asked)));
+        assert!(agents::snapshot().unasked.is_empty());
+    }
+
+    #[test]
+    fn dont_ask_again_is_not_offered_where_what_is_written_runs_unlooked_at() {
+        let _s = Sandbox::new("agents-not-again-follows");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        // The person keeps trusting this module as its files change.
+        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), true).unwrap();
+        open(&mut h);
+        choose(&mut h, Level::Ask);
+        let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/a.py", "text": "a = 1\n"}));
+        look(&mut h);
+        h.get_by_label_contains("what is written runs without your looking at it again");
+        h.get_by_label(NO);
+        assert!(h.query_by_label_contains("don't ask again").is_none());
+        // Nor can it be had by going round the card.
+        let ctx = h.ctx.clone();
+        let refused = agents::answer(h.state_mut(), &ctx, id, agents::Said::YesAndNotAgain);
+        assert!(refused.unwrap_err().contains("asked about each time"));
+        assert!(agents::snapshot().unasked.is_empty() && agents::snapshot().waiting.len() == 1);
     }
 
     #[test]
@@ -1256,7 +1440,7 @@ mod tests {
         say_yes(&mut h);
         assert_eq!(asked.questions().len(), 1, "the operating system's question isn't raised");
         assert!(stands(id).1.contains("is waiting for the person") && !s.0.join("modules/clean-data/python/long.py").exists());
-        click(&mut h, NO);
+        say_no(&mut h);
         assert!(stands(id).1.contains("was refused"));
     }
 
@@ -1339,7 +1523,7 @@ mod tests {
         assert_eq!(asked.questions().len(), 1, "the operating system's question isn't raised");
         assert!(stands(id).1.contains("is waiting for the person") && s.0.join("modules/clean-data/python/clean.py").exists());
         // No is never held back.
-        click(&mut h, NO);
+        say_no(&mut h);
         assert!(stands(id).1.contains("was refused"));
     }
 
@@ -1408,7 +1592,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
         // Nor can it answer the one they are looking at, or take its card away.
         drive(&mut h);
-        for label in [YES, NO, NOT_NOW, "Show whole file"] {
+        for label in [YES, NO_OF_THREE, NOT_NOW, "Show whole file"] {
             click(&mut h, label);
             assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND), "{label}");
             assert_eq!(agents::snapshot().waiting.len(), 1, "{label}: it still waits");
@@ -1451,7 +1635,7 @@ mod tests {
         // The person, once the channel is quiet, answers as before.
         quiet(&mut h);
         look(&mut h);
-        click(&mut h, NO);
+        say_no(&mut h);
         assert!(stands(id).1.contains("was refused"));
     }
 
@@ -1615,7 +1799,7 @@ mod tests {
         assert_eq!(list()["modules"][0]["status"], "trusted");
         look(&mut h);
         h.get_by_label("Stop trusting module");
-        click(&mut h, NO);
+        say_no(&mut h);
         assert_eq!(list()["modules"][0]["followsChanges"], true);
     }
 

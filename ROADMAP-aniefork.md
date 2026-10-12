@@ -330,7 +330,12 @@ full control, and approved plans after single requests.
   once, shown to the user, or refused.
 - **A request is answered on a card**, like a coding agent's permission prompt: what it is,
   the lines a change would take out and put in, what a yes means for the module's trust,
-  then yes, or no with a word for the agent. A bar under the ribbon says when one waits.
+  then yes, yes and don't ask again, or no with a word for the agent. A bar under the ribbon
+  says when one waits.
+- **A yes is one click** when GridCraft runs without the control channel, and is confirmed by
+  the operating system when it runs with it. **"Don't ask again"** covers changes to one
+  module's files, or running its code, until GridCraft closes; the window lists what is not
+  asked about.
 - **What modules wrote reaches an agent fenced**, as data. Each request and its outcome is in
   the Developer console and in `agent-log.jsonl` beside the settings.
 - **`developer.agents`** reports how it stands. No command sets the level, the port or the
@@ -367,9 +372,7 @@ own.
 - **An agent that already runs programs as the user** (Claude Code with its shell) is not
   confined by the levels: it could read the token and the settings itself. They bound and
   record what is done through GridCraft.
-- A yes to a request is two steps, the card and the operating system's question, also when
-  GridCraft runs without the control channel and one would do. The owner's to decide.
-- Approved plans, and "don't ask again until GridCraft closes", are not built.
+- Approved plans are not built.
 - The Development server reaches modules and the console. The command palette, the action
   journal and recorded scripts are not on it.
 - The Development window keeps the height of its tallest card until it is closed.
@@ -476,6 +479,14 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (the Development server: the owner's two answers on the card):** A yes to a
+  request is one click when GridCraft runs without the control channel, since nothing else
+  can click in its window then; with the channel it is still confirmed by the operating
+  system. And the card has a third choice, "yes, and don't ask again", for changes to one
+  module's files or for running its code, until GridCraft closes: kept by the server, listed
+  in the window with a way to be asked again, ended by lowering the level, never offered for
+  trusting a module or for a module kept trusted as it changes. Checked by 4 more tests (1 in
+  the crate, 3 in the UI).
 - **2026-10-12 (Development subsystem, phase 2e, first slice: the Development server and the
   Development window):** The owner decided the shape the same day: a second MCP server in the
   Development area, a management window, a level of agent access up to full control, plans

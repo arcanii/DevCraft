@@ -382,8 +382,20 @@ subsystem, with Anie_Maint's console as the model, the owner set four points:
 - **A request is answered on a card**, in the manner of a coding agent's permission prompt
   (the owner asked for that, 2026-10-12): what it is, the thing itself in a block (for a
   file that is there, the lines it would take out and put in, or the whole file), what a yes
-  would mean for the module's trust, and then yes, or no with a word for the agent on what
-  to do differently. A yes is confirmed by the operating system's own question.
+  would mean for the module's trust, and then yes, yes and don't ask again, or no with a
+  word for the agent on what to do differently.
+- **One click, or two** (the owner, 2026-10-12). A yes is confirmed by the operating system's
+  own question when GridCraft runs with the control channel, which can click in the window
+  as a person does. Without the channel nothing but the user can click there, and the yes
+  on the card is enough. Raising the level, and trusting a module by hand, ask the operating
+  system either way.
+- **"Yes, and don't ask again"** (the owner, 2026-10-12) covers one kind of thing in one
+  module until GridCraft closes: changes to that module's files, or running its scripts and
+  opening its panel. It is not offered for trusting a module, which is asked each time; nor
+  for a module kept trusted as its files change, where what is written runs with nobody
+  looking. A change that goes through unasked takes the module's trust back, as at "Build".
+  The window lists what is not asked about, with a way to be asked again; lowering the level
+  ends all of it.
 - **What is on the card is what is answered.** Only the user's own click puts a request's
   card on screen or takes it off; the window opens on a card by itself only when a single
   request waits. The card and the operating system's question name the request by its number
@@ -450,11 +462,7 @@ module is broken, which quotes its manifest, was told outside the fence.
 
 **Open.**
 
-- **Approved plans** (D25), as the owner staged. And, in the same family, "yes, and don't
-  ask again for this module until GridCraft closes", which a coding agent's prompt has.
-- **One click or two.** A yes is confirmed by the operating system because the control
-  channel can click in the window. When GridCraft runs without the control channel nothing
-  can, and one click on the card would do. Left as it is until the owner says.
+- **Approved plans** (D25), as the owner staged.
 - **A transport only the user's account can open** (above), and a relay for agents that only
   speak MCP over standard input and output.
 - **The other development tools.** The server reaches modules, their files, scripts and

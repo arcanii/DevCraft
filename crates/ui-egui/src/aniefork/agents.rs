@@ -13,8 +13,14 @@
 //! **How far agents may go is set by the person at the screen and by nothing else.** There is
 //! no command for the level, the port or the token (`developer.agents` only reports), and the
 //! Development window, where they are set, refuses while the control channel is putting input
-//! into the window. Raising the level, and saying yes to a request, end in a question drawn by
-//! the operating system, which the control channel's clicks cannot answer.
+//! into the window. Raising the level ends in a question drawn by the operating system, which
+//! the control channel's clicks cannot answer. So does a yes to a request, when GridCraft runs
+//! with the control channel: without it nothing but the person can click in the window, and the
+//! yes on the card is enough ([`confirms`]).
+//!
+//! With a yes the person may say not to be asked again, for changes to that module's files or
+//! for running its code, until GridCraft closes. The server keeps that; lowering the level
+//! ends it; and it is never offered for a module kept trusted as its files change.
 //!
 //! The token is a secret: it is kept in a file of its own, handed to the clipboard when the
 //! person asks for the setup, and neither drawn in the window nor reported by anything. The
@@ -193,8 +199,7 @@ pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     // What came in: carried out, kept for the person, or refused, by the level as it is now.
     let mut asking = false;
     for asked in server.take_new() {
-        let unreviewed = modules::places().is_some_and(|at| dev::runs_unreviewed(&at, &asked.action));
-        match dev::policy(server.level(), asked.action.kind(), unreviewed) {
+        match server.decides(&asked.action) {
             Policy::Allowed => {
                 let _ = carry_out(app, ctx, &mut now, &server, asked.id, false);
                 changed = true;
@@ -403,15 +408,50 @@ fn tag(asked: &Asked) -> String {
     }
 }
 
+/// Whether a yes to a request is confirmed by the operating system's own question. It is when
+/// GridCraft runs with the control channel, which can click in the window as a person does.
+/// Without the channel nothing but the person can click there, and the yes on the card is
+/// theirs.
+pub(super) fn confirms(app: &SheetApp) -> bool {
+    app.control_rx.is_some()
+}
+
+/// What the person answered a request with.
+pub(super) enum Said {
+    /// Yes, this once.
+    Yes,
+    /// Yes, and not to ask again for this kind of thing in this module until GridCraft closes.
+    YesAndNotAgain,
+    /// No, with a word (or none) on what the agent should do differently.
+    No(String),
+}
+
+/// Whether "and don't ask again" can be said to this request: it is of a kind that can go
+/// unasked, and its module is not one kept trusted as its files change.
+pub(super) fn can_go_unasked(asked: &Asked) -> bool {
+    let unreviewed = modules::places().is_some_and(|at| dev::runs_unreviewed(&at, &asked.action));
+    dev::can_go_unasked(asked.action.kind()) && !asked.action.module().is_empty() && !unreviewed
+}
+
+/// What "don't ask again" would cover for this request, in words that follow "for".
+pub(super) fn covers(module: &str, kind: dev::Kind) -> String {
+    match kind {
+        dev::Kind::Edit => format!("changes to {module}'s files"),
+        _ => format!("running {module}'s scripts or opening its panel"),
+    }
+}
+
 /// The person answered the request `id` in the Development window. A yes is confirmed by the
-/// operating system's own question before anything is done. A no may carry `reason`: a word
-/// from the person on what the agent should do differently, which the agent is told.
-pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, yes: bool, reason: &str) -> Result<String, String> {
+/// operating system's own question before anything is done, when the control channel is open
+/// ([`confirms`]). A no may carry a word from the person on what the agent should do
+/// differently, which the agent is told.
+pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, said: Said) -> Result<String, String> {
     let mut now = running();
     let server = now.server.clone().ok_or(OFF)?;
     let gone = "That request is no longer waiting: it lapsed, or was answered.";
     let asked = server.waiting().into_iter().find(|asked| asked.id == id).ok_or(gone)?;
-    if !yes {
+    let not_again = matches!(said, Said::YesAndNotAgain);
+    if let Said::No(reason) = &said {
         let reason: String = reason.chars().filter(|c| !c.is_control()).take(MAX_REASON).collect::<String>().trim().to_string();
         if reason.is_empty() {
             server.refuse(id, SAID_NO, true);
@@ -427,14 +467,36 @@ pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, yes: bool
         server.refuse(id, "The module's files changed after this was asked. Ask again for the module as it is now.", false);
         return Err(format!("{module} changed after the agent asked. The request was dropped: the agent has to ask again."));
     }
-    let Some(confirm) = &app.services.confirm else { return Err(NO_CONFIRM.into()) };
-    if !confirm("Allow this request from an agent?", &question(&at, &asked)) {
-        server.refuse(id, SAID_NO, true);
-        return Ok("The request was refused.".into());
+    if not_again && !can_go_unasked(&asked) {
+        return Err("That is asked about each time: it can't be allowed for the rest of the session.".into());
     }
-    let said = carry_out(app, ctx, &mut now, &server, id, true);
+    if confirms(app) {
+        let Some(confirm) = &app.services.confirm else { return Err(NO_CONFIRM.into()) };
+        let mut text = question(&at, &asked);
+        if not_again {
+            text.push_str(&format!(
+                "\n\nAnd GridCraft will not ask you again for {} until it closes.",
+                covers(asked.action.module(), asked.action.kind())
+            ));
+        }
+        if !confirm("Allow this request from an agent?", &text) {
+            server.refuse(id, SAID_NO, true);
+            return Ok("The request was refused.".into());
+        }
+    }
+    if not_again {
+        server.allow_unasked(asked.action.module(), asked.action.kind());
+    }
+    let done = carry_out(app, ctx, &mut now, &server, id, true);
     keep(now);
-    said
+    done
+}
+
+/// The person wants to be asked again about this kind of thing in this module.
+pub(super) fn ask_again(module: &str, kind: dev::Kind) {
+    if let Some(server) = &running().server {
+        server.ask_again(module, kind);
+    }
 }
 
 /// How the Development server stands, for the Development window.
@@ -448,6 +510,8 @@ pub(super) struct Snapshot {
     pub clients: Vec<Client>,
     pub waiting: Vec<Asked>,
     pub recent: Vec<Record>,
+    /// What the person said not to ask about again, until GridCraft closes.
+    pub unasked: Vec<(String, dev::Kind)>,
 }
 
 pub(super) fn snapshot() -> Snapshot {
@@ -462,6 +526,7 @@ pub(super) fn snapshot() -> Snapshot {
         clients: server.map(Server::clients).unwrap_or_default(),
         waiting: server.map(Server::waiting).unwrap_or_default(),
         recent: server.map(Server::recent).unwrap_or_default(),
+        unasked: server.map(Server::unasked).unwrap_or_default(),
     }
 }
 
@@ -487,7 +552,7 @@ pub(super) fn set_level(app: &mut SheetApp, ctx: &egui::Context, level: Level) -
             server.set_level(level);
             // What was waiting for an answer and is no longer allowed is refused now.
             for asked in server.waiting() {
-                if dev::policy(level, asked.action.kind(), dev::runs_unreviewed(&at, &asked.action)) == Policy::Refused {
+                if server.decides(&asked.action) == Policy::Refused {
                     server.refuse(asked.id, "Agent access was lowered.", false);
                 }
             }
@@ -594,6 +659,7 @@ pub fn report() -> Json {
         "clients": clients,
         "waiting": waiting,
         "recent": recent,
+        "notAskedAgain": now.unasked.iter().map(|(module, kind)| json!({"module": module, "what": if *kind == dev::Kind::Edit { "changing its files" } else { "running its scripts, opening its panel" }})).collect::<Vec<_>>(),
         "note": "It only reports. How far agents may go, the port and the token are set by the person at the screen alone, in Developer ▸ Development, and requests are answered there. What a client calls itself, and what it asked for, are its own words.",
     })
 }
