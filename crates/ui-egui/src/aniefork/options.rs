@@ -1,12 +1,20 @@
 //! The fork's settings, on upstream's Options page (File ▸ Options), and the commands behind them.
 //!
 //! Upstream's page holds the display theme, the interface language, the formula bar, AutoSave and
-//! the calculation mode. The fork adds the two settings of its own:
+//! the calculation mode. The fork adds to it:
 //!
 //! - **User name**: the author of the comments and notes the user adds. `app.userName {name?}`
 //!   sets it; without a name it only reports.
 //! - **Show the Developer tab**: `developer.tab {on?}` shows or hides the ribbon's Developer tab,
 //!   and toggles it without `on`.
+//! - **A Selection section**: how heavily the selection's outline is drawn
+//!   (`view.selectionOutline {weight?}`: standard, thin or hairline), and whether the selection is
+//!   hidden while another window is the active one, as Excel does
+//!   (`view.hideSelectionWhenInactive {on?}`). See [`super::selection`].
+//! - **An Animations section**, as the sister fork wordcraft has: the switch for the selection
+//!   outline's glide. The setting and its command (`view.animations`) are upstream's, and
+//!   upstream keeps its own checkbox for it on the ribbon's View tab; here it sits with the
+//!   other settings.
 //!
 //! A value that makes no sense is an error and changes nothing. Neither command opens anything.
 //!
@@ -16,7 +24,14 @@
 use serde_json::{Value as Json, json};
 
 use super::developer;
+use super::prefs::Outline;
 use crate::SheetApp;
+use crate::theme::{self, Tokens};
+
+/// The heading of the Animations section, and what its checkbox says: upstream's own words for
+/// the setting, so they follow the interface language with it.
+const ANIMATIONS: &str = "Animations";
+const GLIDE: &str = "Glide the selection outline to the cell you move to instead of jumping there";
 
 /// The longest user name kept (characters).
 const MAX_USER_NAME: usize = 100;
@@ -24,11 +39,11 @@ const MAX_USER_NAME: usize = 100;
 /// `developer.tab {on?: bool}`: shows or hides the ribbon's Developer tab. Returns `{on}`.
 pub fn developer_tab(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
     let on = match p.get("on") {
-        None | Some(Json::Null) => !app.ui.developer_tab,
+        None | Some(Json::Null) => !app.ui.aniefork.developer_tab,
         Some(Json::Bool(on)) => *on,
         Some(other) => return Err(format!("`on` must be true or false, not {other}")),
     };
-    app.ui.developer_tab = on;
+    app.ui.aniefork.developer_tab = on;
     if !on && app.ui.ribbon_tab == developer::TAB {
         app.ui.ribbon_tab = "Home".into();
     }
@@ -53,6 +68,47 @@ pub fn user_name(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
     }
     Ok(json!({"name": app.session.prefs.user_name}))
 }
+
+/// `view.selectionOutline {weight?}`: how heavily the selection's outline is drawn. Without a
+/// weight it only reports. Returns `{weight}`.
+pub fn selection_outline(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
+    match p.get("weight") {
+        None | Some(Json::Null) => {}
+        Some(Json::String(code)) => {
+            let Some(outline) = Outline::parse(code) else {
+                return Err(format!("unknown weight {code:?} (use \"standard\", \"thin\" or \"hairline\")"));
+            };
+            app.ui.aniefork.selection_outline = outline;
+        }
+        Some(other) => return Err(format!("`weight` must be text, not {other}")),
+    }
+    Ok(json!({"weight": app.ui.aniefork.selection_outline.code()}))
+}
+
+/// `view.hideSelectionWhenInactive {on?: bool}`: hides the selection while another window is the
+/// active one. Without `on` it toggles. Returns `{on}`.
+pub fn hide_selection_when_inactive(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
+    let on = match p.get("on") {
+        None | Some(Json::Null) => !app.ui.aniefork.hide_selection_when_inactive,
+        Some(Json::Bool(on)) => *on,
+        Some(other) => return Err(format!("`on` must be true or false, not {other}")),
+    };
+    app.ui.aniefork.hide_selection_when_inactive = on;
+    Ok(json!({"on": on}))
+}
+
+/// A section's heading, as upstream heads the page's own sections.
+fn heading(ui: &mut egui::Ui, text: &str) {
+    let color = Tokens::get(ui.ctx()).text;
+    ui.add_space(24.0);
+    ui.label(egui::RichText::new(text).font(theme::ui_bold(15.0)).color(color));
+    ui.add_space(8.0);
+}
+
+const SELECTION: &str = "Selection";
+const OUTLINE: &str = "Outline";
+const HIDE: &str = "Hide the selection while another window is active";
+const HIDE_HINT: &str = "As Excel does: the outline, the shading of a range and the fill handle come back when you return to GridCraft";
 
 fn draft_id() -> egui::Id {
     egui::Id::new("aniefork.options.userName")
@@ -85,9 +141,40 @@ pub fn page(app: &mut SheetApp, ui: &mut egui::Ui) {
         app.run_or_alert("app.userName", json!({"name": name}));
     }
     ui.add_space(6.0);
-    let mut shown = app.ui.developer_tab;
+    let mut shown = app.ui.aniefork.developer_tab;
     if ui.checkbox(&mut shown, "Show the Developer tab").on_hover_text("Tools for people who extend and automate GridCraft").changed() {
         app.run_or_alert("developer.tab", json!({"on": shown}));
+    }
+    let lang = app.ui.language;
+    // How the selection is drawn.
+    heading(ui, lang.tr(SELECTION));
+    let current = app.ui.aniefork.selection_outline;
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        let label = ui.label(lang.tr(OUTLINE));
+        let list =
+            egui::ComboBox::from_id_salt("aniefork_selection_outline").width(160.0).selected_text(lang.tr(current.label())).show_ui(ui, |ui| {
+                for outline in Outline::ALL {
+                    if ui.selectable_label(outline == current, lang.tr(outline.label())).clicked() {
+                        chosen = Some(outline);
+                    }
+                }
+            });
+        list.response.labelled_by(label.id);
+    });
+    if let Some(outline) = chosen {
+        app.run_or_alert("view.selectionOutline", json!({"weight": outline.code()}));
+    }
+    ui.add_space(6.0);
+    let mut hide = app.ui.aniefork.hide_selection_when_inactive;
+    if ui.checkbox(&mut hide, lang.tr(HIDE)).on_hover_text(lang.tr(HIDE_HINT)).changed() {
+        app.run_or_alert("view.hideSelectionWhenInactive", json!({"on": hide}));
+    }
+    // The switch for motion, in a section of its own as wordcraft has it.
+    heading(ui, lang.tr(ANIMATIONS));
+    let mut glide = app.ui.animations;
+    if ui.checkbox(&mut glide, lang.tr(GLIDE)).changed() {
+        app.run_or_alert("view.animations", json!({"on": glide}));
     }
 }
 
@@ -107,7 +194,7 @@ mod tests {
     fn the_developer_tab_is_shown_hidden_and_toggled_by_its_command() {
         let mut a = app();
         assert_eq!(a.run("developer.tab", json!({"on": true})), Ok(json!({"on": true})));
-        assert!(a.ui.developer_tab);
+        assert!(a.ui.aniefork.developer_tab);
         assert_eq!(a.run("developer.tab", json!({"on": true})), Ok(json!({"on": true})), "setting it twice changes nothing");
         // No parameters: it toggles, and opens nothing.
         assert_eq!(a.run("developer.tab", json!({})), Ok(json!({"on": false})));
@@ -115,7 +202,7 @@ mod tests {
         assert!(a.dialog.is_none() && a.message.is_none() && a.backstage.is_none());
         for bad in [json!({"on": "yes"}), json!({"on": 1}), json!({"on": []})] {
             assert!(a.run("developer.tab", bad.clone()).is_err(), "{bad}");
-            assert!(a.ui.developer_tab, "{bad} changed something");
+            assert!(a.ui.aniefork.developer_tab, "{bad} changed something");
         }
         // The saved preferences carry it.
         assert_eq!(serde_json::to_value(&a.ui).unwrap()["developerTab"], json!(true));
@@ -182,10 +269,10 @@ mod tests {
         h.run_steps(4);
         h.state_mut().open_dialog("options", json!({}));
         h.run_steps(4);
-        assert!(!h.state().ui.developer_tab);
+        assert!(!h.state().ui.aniefork.developer_tab);
         h.get_by_label("Show the Developer tab").click();
         h.run_steps(3);
-        assert!(h.state().ui.developer_tab);
+        assert!(h.state().ui.aniefork.developer_tab);
         h.get_by_label("User name").focus();
         h.run_steps(2);
         h.get_by_label("User name").type_text(" Jr");
@@ -196,5 +283,103 @@ mod tests {
         let named = h.state().session.prefs.user_name.clone();
         assert!(named != typed && named.contains("Jr"), "the name is set when the field is left: {typed:?} then {named:?}");
         assert!(h.state().backstage.is_some(), "the page stays");
+    }
+
+    #[test]
+    fn the_selections_outline_and_hiding_are_set_by_their_commands() {
+        let mut a = app();
+        assert_eq!(a.run("view.selectionOutline", json!({})), Ok(json!({"weight": "standard"})), "without a weight it only reports");
+        for (weight, outline) in [("thin", Outline::Thin), ("hairline", Outline::Hairline), ("standard", Outline::Standard)] {
+            assert_eq!(a.run("view.selectionOutline", json!({"weight": weight})), Ok(json!({"weight": weight})));
+            assert_eq!(a.ui.aniefork.selection_outline, outline);
+        }
+        a.run("view.selectionOutline", json!({"weight": "thin"})).unwrap();
+        for bad in
+            [json!({"weight": "enormous"}), json!({"weight": "Thin"}), json!({"weight": ""}), json!({"weight": 1}), json!({"weight": ["thin"]})]
+        {
+            assert!(a.run("view.selectionOutline", bad.clone()).is_err(), "{bad}");
+            assert_eq!(a.ui.aniefork.selection_outline, Outline::Thin, "{bad} changed something");
+        }
+        assert_eq!(a.run("view.hideSelectionWhenInactive", json!({"on": true})), Ok(json!({"on": true})));
+        assert!(a.ui.aniefork.hide_selection_when_inactive);
+        // No parameters: it toggles, and opens nothing.
+        assert_eq!(a.run("view.hideSelectionWhenInactive", json!({})), Ok(json!({"on": false})));
+        assert_eq!(a.run("view.hideSelectionWhenInactive", Json::Null), Ok(json!({"on": true})));
+        for bad in [json!({"on": "yes"}), json!({"on": 0})] {
+            assert!(a.run("view.hideSelectionWhenInactive", bad.clone()).is_err(), "{bad}");
+            assert!(a.ui.aniefork.hide_selection_when_inactive, "{bad} changed something");
+        }
+        assert!(a.dialog.is_none() && a.message.is_none() && a.backstage.is_none());
+        // The saved preferences carry both, beside upstream's.
+        let saved = serde_json::to_value(&a.ui).unwrap();
+        assert_eq!((&saved["selectionOutline"], &saved["hideSelectionWhenInactive"]), (&json!("thin"), &json!(true)));
+    }
+
+    /// File ▸ Options has a Selection section: the outline's weight and the hiding.
+    #[test]
+    fn the_options_page_has_a_selection_section() {
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SheetApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app(),
+        );
+        h.run_steps(4);
+        h.state_mut().open_dialog("options", json!({}));
+        h.run_steps(4);
+        h.get_by_label(SELECTION);
+        h.get_by_label(HIDE).click();
+        h.run_steps(3);
+        assert!(h.state().ui.aniefork.hide_selection_when_inactive, "the checkbox turns it on");
+        h.get_by_label(HIDE).click();
+        h.run_steps(3);
+        assert!(!h.state().ui.aniefork.hide_selection_when_inactive, "and off again");
+        // The outline's weight is picked from a list.
+        h.get_by_label(OUTLINE).click();
+        h.run_steps(3);
+        h.get_by_label("Hairline").click();
+        h.run_steps(3);
+        assert_eq!(h.state().ui.aniefork.selection_outline, Outline::Hairline);
+        h.get_by_label(OUTLINE).click();
+        h.run_steps(3);
+        h.get_by_label("Thin").click();
+        h.run_steps(3);
+        assert_eq!(h.state().ui.aniefork.selection_outline, Outline::Thin);
+    }
+
+    /// File ▸ Options has an Animations section whose checkbox is upstream's setting.
+    #[test]
+    fn the_options_page_has_an_animations_section() {
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SheetApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app(),
+        );
+        h.run_steps(4);
+        h.state_mut().open_dialog("options", json!({}));
+        h.run_steps(4);
+        h.get_by_label(ANIMATIONS);
+        assert!(h.state().ui.animations, "on unless turned off");
+        h.get_by_label(GLIDE).click();
+        h.run_steps(3);
+        assert!(!h.state().ui.animations, "the checkbox turns it off");
+        assert_eq!(serde_json::to_value(&h.state().ui).unwrap()["animations"], json!(false), "and the choice is saved");
+        h.get_by_label(GLIDE).click();
+        h.run_steps(3);
+        assert!(h.state().ui.animations, "and on again");
+        // The command behind it is upstream's, and it shows a change made elsewhere.
+        h.state_mut().run("view.animations", json!({"on": false})).unwrap();
+        h.run_steps(2);
+        assert!(!h.state().ui.animations);
+        // The section follows the interface language, in upstream's own words for the setting.
+        h.state_mut().run("app.language.set", json!({"language": "ja"})).unwrap();
+        h.run_steps(3);
+        h.get_by_label("アニメーション");
+        assert!(h.query_by_label(ANIMATIONS).is_none());
     }
 }

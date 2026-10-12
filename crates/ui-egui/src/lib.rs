@@ -57,8 +57,9 @@ pub struct UiState {
     pub status_bar: bool,
     /// Motion in the UI: the selection outline glides to a new selection (View ▸ Animations).
     pub animations: bool,
-    /// The ribbon shows the Developer tab (File ▸ Options; aniefork).
-    pub developer_tab: bool,
+    /// The fork's own preferences, saved beside upstream's (aniefork).
+    #[serde(flatten)]
+    pub aniefork: aniefork::Prefs,
     pub recent: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
@@ -101,7 +102,7 @@ impl Default for UiState {
             formula_bar_expanded: false,
             status_bar: true,
             animations: true,
-            developer_tab: false,
+            aniefork: aniefork::Prefs::default(),
             recent: vec![],
             keytip_invoke: None,
             language: i18n::Language::En,

@@ -8,7 +8,11 @@ pub mod developer;
 pub mod modules;
 pub mod options;
 pub mod panels;
+pub mod prefs;
 pub mod presence;
+pub mod selection;
+
+pub use prefs::Prefs;
 
 use serde_json::{Value as Json, json};
 
@@ -20,6 +24,16 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("developer.tab", "Developer Tab", "{on?: bool} shows or hides the ribbon's Developer tab (toggles without it) → {on}"),
     ("app.userName", "User Name", "{name?} sets the name that signs your comments and notes; without it only reports → {name}"),
     (
+        "view.selectionOutline",
+        "Selection Outline",
+        "{weight?: \"standard\"|\"thin\"|\"hairline\"} sets how heavily the selection's outline is drawn; without it only reports → {weight}",
+    ),
+    (
+        "view.hideSelectionWhenInactive",
+        "Hide Selection When Inactive",
+        "{on?: bool} hides the selection while another window is the active one, as Excel does (toggles without it) → {on}",
+    ),
+    (
         "developer.modules",
         "Modules",
         "→ {available, folder, modules: [{id, name, version, status: \"trusted\"|\"untrusted\"|\"changed\"|\"problem\", asks, granted, files, fingerprint…}]}. It only reports: trust is given by the user alone, in Developer ▸ Modules",
@@ -28,13 +42,16 @@ const COMMANDS: &[(&str, &str, &str)] = &[
 
 /// Hook of `SheetApp::run_ui_command`: runs `id` when it is one of the fork's commands.
 ///
-/// - `developer.tab {on?}` and `app.userName {name?}` are the fork's settings: see [`options`].
+/// - `developer.tab {on?}`, `app.userName {name?}`, `view.selectionOutline {weight?}` and
+///   `view.hideSelectionWhenInactive {on?}` are the fork's settings: see [`options`].
 /// - `developer.modules` reports the user's modules and whether each is trusted: see [`modules`].
 ///   There is no command that gives trust.
 pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json, String>> {
     match id {
         "developer.tab" => Some(options::developer_tab(app, p)),
         "app.userName" => Some(options::user_name(app, p)),
+        "view.selectionOutline" => Some(options::selection_outline(app, p)),
+        "view.hideSelectionWhenInactive" => Some(options::hide_selection_when_inactive(app, p)),
         "developer.modules" => Some(Ok(modules::list())),
         _ => None,
     }
@@ -107,7 +124,7 @@ mod tests {
     fn every_command_of_the_forks_is_listed_once_and_runs() {
         let mut a = app();
         let listed: Vec<String> = commands().filter_map(|c| c["id"].as_str().map(str::to_string)).collect();
-        assert_eq!(listed, ["developer.tab", "app.userName", "developer.modules"]);
+        assert_eq!(listed, ["developer.tab", "app.userName", "view.selectionOutline", "view.hideSelectionWhenInactive", "developer.modules"]);
         for id in &listed {
             assert!(run_command(&mut a, id, &json!({})).is_some(), "{id}");
             assert!(gridcraft_engine::find_command(id).is_none(), "{id} would shadow a command of the engine");

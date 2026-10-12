@@ -1386,8 +1386,10 @@ pub(crate) fn paint_selection(
     rows: (u32, u32),
     cols: (u32, u32),
 ) {
+    // The fork's options for the selection: hidden while inactive, a thinner outline (aniefork).
+    let look = crate::aniefork::selection::look(app, p.ctx());
     // Fill all areas except the active cell.
-    for rect in selection_fill_where(geo, sh, sel, outline, |r| range_in_pane(*r, rows, cols)) {
+    for rect in selection_fill_where(geo, sh, sel, outline, |r| look.shown && range_in_pane(*r, rows, cols)) {
         p.rect_filled(rect, 0.0, t.sel_fill);
     }
     let active_range = sh.merge_at(sel.active).unwrap_or_else(|| RangeRef::cell(sel.active));
@@ -1414,14 +1416,14 @@ pub(crate) fn paint_selection(
             }
         }
     }
-    if cur_here {
-        p.rect_stroke(outline.expand(0.5), 0.0, Stroke::new(2.0, t.sel_border), StrokeKind::Middle);
+    if cur_here && look.shown {
+        p.rect_stroke(outline.expand(0.5), 0.0, Stroke::new(look.width, t.sel_border), StrokeKind::Middle);
     }
-    if active_here && sel.ranges.len() > 1 {
+    if active_here && look.shown && sel.ranges.len() > 1 {
         p.rect_stroke(active, 0.0, Stroke::new(1.0, t.sel_border), StrokeKind::Inside);
     }
     // Fill handle (bottom-right of the current area).
-    if app.editor.is_none() && range_in_pane(RangeRef::cell(sel.current().end), rows, cols) {
+    if app.editor.is_none() && look.shown && range_in_pane(RangeRef::cell(sel.current().end), rows, cols) {
         let h = Rect::from_center_size(outline.right_bottom(), vec2(6.0, 6.0));
         p.rect_filled(h.expand(1.0), 0.0, Color32::WHITE);
         p.rect_filled(h, 0.0, t.sel_border);
@@ -2451,10 +2453,10 @@ fn in_cell_editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet, 
     let font = FontId::new(size, theme::cell_family(&st.font.name, st.font.bold, st.font.italic));
     let text_w = ui.painter().layout_no_wrap(ed.text.clone(), font.clone(), Color32::BLACK).size().x;
     let lines = ed.text.lines().count().max(1) as f32 + if ed.text.ends_with('\n') { 1.0 } else { 0.0 };
-    let w = (text_w + 14.0).max(rect.width()).min(geo.cells.right() - rect.left());
-    let h = (size * 1.3 * lines + 4.0).max(rect.height());
+    // The fork grows the editor a whole cell at a time, and not at all while its text fits (aniefork).
+    let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);
     // Grows to the left on a right-to-left sheet.
-    let erect = geo.mirror_rect(Rect::from_min_size(rect.min, vec2(w, h)));
+    let erect = geo.mirror_rect(Rect::from_min_size(rect.min, grown));
     let fill = match st.fill.pattern {
         PatternType::Solid => st.fill.fg.resolve(&wb.theme).map(theme::color32).unwrap_or(Color32::WHITE),
         _ => Color32::WHITE,
@@ -2466,8 +2468,8 @@ fn in_cell_editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet, 
     );
     let clip = ui.clip_rect().intersect(quadrant);
     let painter = ui.painter().with_clip_rect(clip);
-    painter.rect_filled(erect, 0.0, fill);
-    painter.rect_stroke(erect.expand(1.0), 0.0, Stroke::new(2.0, Tokens::get(ui.ctx()).sel_border), StrokeKind::Middle);
+    // The fork keeps the highlight on the cell, and the text clears the lines it runs over (aniefork).
+    crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);
     let id = egui::Id::new("gridcraft.cell_editor");
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(erect.shrink2(vec2(2.0, 1.0))));
     child.set_clip_rect(clip);

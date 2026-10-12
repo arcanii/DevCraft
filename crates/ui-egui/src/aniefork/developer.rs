@@ -18,7 +18,7 @@ pub const TAB: &str = "Developer";
 
 /// Hook of the ribbon's tab strip: the Developer tab follows upstream's tabs when it is turned on.
 pub fn tabs(app: &SheetApp, tabs: &mut Vec<&'static str>) {
-    if app.ui.developer_tab {
+    if app.ui.aniefork.developer_tab {
         tabs.push(TAB);
     }
 }
@@ -32,7 +32,7 @@ fn separator(ui: &mut egui::Ui) {
 
 /// Hook of the ribbon's content: the Developer tab's buttons.
 pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
-    if !app.ui.developer_tab {
+    if !app.ui.aniefork.developer_tab {
         // The tab was turned off (or a saved layout names it): there is nothing to show here.
         app.ui.ribbon_tab = "Home".into();
         return;
@@ -74,15 +74,15 @@ mod tests {
         let mut shown = vec!["Home", "View"];
         tabs(&a, &mut shown);
         assert_eq!(shown, ["Home", "View"], "hidden by default");
-        a.ui.developer_tab = true;
+        a.ui.aniefork.developer_tab = true;
         tabs(&a, &mut shown);
         assert_eq!(shown, ["Home", "View", TAB], "after upstream's tabs");
         // A `ui.json` from before the setting existed leaves it hidden; the choice is saved.
-        assert!(!UiState::default().developer_tab);
-        assert!(!serde_json::from_str::<UiState>(r#"{"dark": true}"#).unwrap().developer_tab);
+        assert!(!UiState::default().aniefork.developer_tab);
+        assert!(!serde_json::from_str::<UiState>(r#"{"dark": true}"#).unwrap().aniefork.developer_tab);
         let saved = serde_json::to_value(&a.ui).unwrap();
         assert_eq!(saved["developerTab"], json!(true));
-        assert!(serde_json::from_value::<UiState>(saved).unwrap().developer_tab);
+        assert!(serde_json::from_value::<UiState>(saved).unwrap().aniefork.developer_tab);
     }
 
     fn harness(app: SheetApp) -> egui_kittest::Harness<'static, SheetApp> {
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn the_tab_draws_in_every_language_and_theme() {
         let mut a = app();
-        a.ui.developer_tab = true;
+        a.ui.aniefork.developer_tab = true;
         a.ui.ribbon_tab = TAB.into();
         let mut h = harness(a);
         for language in crate::i18n::Language::ALL {
