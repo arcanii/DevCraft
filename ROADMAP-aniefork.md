@@ -47,9 +47,12 @@ The fork no longer carries these. They are kept here as the record of what happe
 | **File ▸ Options** as a dialog, and a `file.options` command | Upstream now has an Options page in its File view and a `file.options` command that opens it. The fork's dialog and command were retired at the merge; its two settings moved onto upstream's page. |
 
 ### Open
-- **A follow-up pull request the maintainers invited:** the recent list's "modified" column, read
-  on a thread of its own so a slow drive never holds up the page, on top of upstream's File page.
-  Cut it from `upstream/main`.
+- **The follow-up the maintainers invited** is offered as
+  [storytold/gridcraft#463](https://github.com/storytold/gridcraft/pull/463) (2026-10-12, branch
+  `recent-modified`): the recent list's "modified" column on upstream's File page, read on a
+  thread of its own so a slow drive never holds up the view, with its ten strings in upstream's
+  nine catalogs. The fork's `main` does not carry it: it arrives with the merge after upstream
+  takes it.
 - Following the system's reduced-motion setting, and measuring Excel's glide, are upstream's to
   take up now; a change would be a pull request there.
 
@@ -253,6 +256,11 @@ French catalog lacks "Different First Page"). They are upstream's to fix.
 
 Newest first.
 
+- **2026-10-12 (the modified column offered upstream):** Pull request #463, from the branch
+  `recent-modified` cut from `upstream/main`: the recent list on upstream's File page tells when
+  each workbook was last changed, asked of the file system on a thread of its own. It is the
+  part of the fork's File page that the maintainers asked for when they closed #337. Not in the
+  fork's `main`.
 - **2026-10-12 (merge of upstream, 352 commits):** Upstream had merged the clear active cell
   (#265) and the selection glide (#266), and had built its own File page with an Options page
   (#331), closing ours (#337) as a duplicate. At the merge the fork's copies of all four were
