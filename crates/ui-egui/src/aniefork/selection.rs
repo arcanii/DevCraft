@@ -5,8 +5,9 @@
 //!   past the gridlines they should cover and, on a display scaled 125% or 150%, leaves a grey
 //!   line showing inside them. Excel's outline covers the gridline and reaches outward from it,
 //!   on every side (measured: see `Bars`). This one is a fix, not an option.
-//! - **Its outline can be thinner** (File ▸ Options ▸ Selection). Upstream draws it two points
-//!   wide: three pixels on a display at 150%, where Excel draws two.
+//! - **Its outline is thinner, and its weight a choice** (File ▸ Options ▸ Selection). Upstream
+//!   draws it two points wide: three pixels on a display at 150%, where Excel draws two. The
+//!   fork's default, Thin, is Excel's two; Standard is upstream's.
 //! - **It can be hidden while another window is the active one**, as Excel does: the outline,
 //!   the shading of a range and the fill handle go, and come back when GridCraft is active
 //!   again. The marching ants around a copied range stay, as they do in Excel.
@@ -572,10 +573,12 @@ mod tests {
     }
 
     #[test]
-    fn the_selection_is_shown_at_upstreams_width_unless_the_options_say_otherwise() {
+    fn the_selection_is_shown_and_thin_unless_the_options_say_otherwise() {
         let mut a = app();
         let ctx = egui::Context::default();
-        assert_eq!(look(&a, &ctx), Look { shown: true, width: 2.0 });
+        assert_eq!(look(&a, &ctx), Look { shown: true, width: 1.5 });
+        a.ui.aniefork.selection_outline = Outline::Standard;
+        assert_eq!(look(&a, &ctx), Look { shown: true, width: 2.0 }, "upstream's weight is there for the choosing");
         a.ui.aniefork.selection_outline = Outline::Hairline;
         assert_eq!(look(&a, &ctx), Look { shown: true, width: 1.0 });
     }

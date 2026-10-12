@@ -32,7 +32,7 @@ merged; delete the row once a merge of upstream brings it back.
 | Change | Where | Upstream |
 |---|---|---|
 | **On upstream's Options page:** the user name (the author of comments and notes) and whether the ribbon shows the Developer tab, with a command for each (`app.userName`, `developer.tab`); and an Animations section holding upstream's switch for the selection glide, as wordcraft's Options has. | `crates/ui-egui/src/aniefork/options.rs`, a hook in `backstage.rs` | Not offered |
-| **Options for the selection:** its outline can be drawn thinner (standard, thin or hairline), and it can be hidden while another window is the active one, as Excel does. Both are off until chosen, on the Options page's Selection section. | `crates/ui-egui/src/aniefork/` (`selection.rs`, `prefs.rs`, `options.rs`), hooks in `grid.rs` and `lib.rs` | Not offered |
+| **Options for the selection:** the weight of its outline (thin by default, which is Excel's; standard is upstream's; hairline), and hiding it while another window is the active one, as Excel does, which is off until chosen. On the Options page's Selection section. | `crates/ui-egui/src/aniefork/` (`selection.rs`, `prefs.rs`, `options.rs`), hooks in `grid.rs` and `lib.rs` | Not offered |
 | **The selection's outline lies on the gridlines.** Upstream centres it half a point outside the cells, which puts its bottom and right sides a point past the gridlines they should cover; on a display at 125% or 150% a grey line shows inside them. Here each side covers its gridline and reaches outward from it, a whole number of device pixels wide, which is where Excel was measured to put it. | `Bars` and `paint_outline` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered yet: a fix upstream would want, and one #549 would then build on |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
@@ -82,8 +82,9 @@ A value that makes no sense is an error and changes nothing, and neither command
 
 Then a **Selection** section:
 
-- **Outline**: Standard (upstream's two points), Thin (one and a half) or Hairline (one).
-  `view.selectionOutline {weight?}` is the command: without a weight it only reports. The border
+- **Outline**: Thin (a point and a half, the default), Standard (upstream's two points) or
+  Hairline (one). `view.selectionOutline {weight?}` is the command: without a weight it only
+  reports. The border
   of a cell being typed into is drawn as heavy as the outline. The outline is always a whole
   number of device pixels wide, the nearest to its points: on a display at 150% that is three,
   two and two. **Thin is what Excel draws** there (below).
@@ -93,12 +94,20 @@ Then a **Selection** section:
   is the command: without `on` it toggles. A screenshot an agent takes of an inactive window
   shows no selection while this is on.
 
-Both are off until chosen, so the fork draws as upstream does by default and upstream's tests of
-the selection see what they expect.
+The outline is Thin unless chosen otherwise: it is what Excel draws, and the reason for the
+option. Hiding is off until chosen. Upstream's tests of the selection ask where the outline is,
+not how heavy, and pass with either.
 
 The fork's preferences are saved in `ui.json` beside upstream's, through one field of `UiState`
 (`aniefork`, flattened), so upstream's struct has one line for however many the fork adds. A
 saved value that makes no sense reads as its default and costs no other preference.
+
+**Only a choice is saved.** A value equal to its default is not written, so a default the fork
+changes later reaches everyone who never chose otherwise. The fork's first builds did write the
+default down (`"selectionOutline": "standard"` in every `ui.json` they saved), which would have
+kept those files on Standard when the default became Thin. The weight is therefore saved under
+a key of its own, `selectionOutlineWeight`; under the old key `"standard"` is not believed, and
+the other two weights, which could only have been chosen, still are.
 
 After that comes a section of its own, **Animations**, as the sister fork wordcraft has on its
 Options page: one checkbox, "Glide the selection outline to the cell you move to instead of
@@ -352,6 +361,11 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (Thin by default):** The selection's outline is Thin unless chosen otherwise:
+  Excel's two pixels on a display at 150%. Preferences equal to their default are no longer
+  written to `ui.json`, and the weight moved to the key `selectionOutlineWeight`, because the
+  first builds had written `"standard"` into every file whether or not anyone chose it. Checked
+  on a copy of such a file: it reads as Thin, with the Developer tab's setting kept.
 - **2026-10-12 (the outline on the gridlines):** A capture of Excel at 150% gave the measure:
   its outline is two device pixels, the gridline's own and the one outside it, on every side.
   Upstream's is three there and sits a pixel off the gridline at the bottom and right. The fork

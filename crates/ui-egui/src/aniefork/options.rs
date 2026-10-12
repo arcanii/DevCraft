@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn the_selections_outline_and_hiding_are_set_by_their_commands() {
         let mut a = app();
-        assert_eq!(a.run("view.selectionOutline", json!({})), Ok(json!({"weight": "standard"})), "without a weight it only reports");
+        assert_eq!(a.run("view.selectionOutline", json!({})), Ok(json!({"weight": "thin"})), "without a weight it only reports");
         for (weight, outline) in [("thin", Outline::Thin), ("hairline", Outline::Hairline), ("standard", Outline::Standard)] {
             assert_eq!(a.run("view.selectionOutline", json!({"weight": weight})), Ok(json!({"weight": weight})));
             assert_eq!(a.ui.aniefork.selection_outline, outline);
@@ -310,9 +310,12 @@ mod tests {
             assert!(a.ui.aniefork.hide_selection_when_inactive, "{bad} changed something");
         }
         assert!(a.dialog.is_none() && a.message.is_none() && a.backstage.is_none());
-        // The saved preferences carry both, beside upstream's.
+        // The saved preferences carry what was chosen, beside upstream's: Thin is the default,
+        // and is not written down.
         let saved = serde_json::to_value(&a.ui).unwrap();
-        assert_eq!((&saved["selectionOutline"], &saved["hideSelectionWhenInactive"]), (&json!("thin"), &json!(true)));
+        assert_eq!((saved.get("selectionOutlineWeight"), &saved["hideSelectionWhenInactive"]), (None, &json!(true)));
+        a.run("view.selectionOutline", json!({"weight": "standard"})).unwrap();
+        assert_eq!(serde_json::to_value(&a.ui).unwrap()["selectionOutlineWeight"], json!("standard"));
     }
 
     /// File ▸ Options has a Selection section: the outline's weight and the hiding.
