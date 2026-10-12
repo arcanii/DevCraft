@@ -20,9 +20,9 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-12, upstream `3926d21` (GridCraft 0.5.0 and 352 commits after it) |
+| Last merge of upstream | 2026-10-13, upstream `fc45b7f` (GridCraft 0.6.1: 6 commits since the merge before) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 7 changes upstream lacks (below) |
+| Fork carries | 13 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -71,9 +71,10 @@ The fork no longer carries these. They are kept here as the record of what happe
   a GPU, by tessellating what was painted (`tests/selection_outline.rs`), which the fork could
   take over from its own pixel test at the merge. When upstream takes it, the fork's `Bars`,
   `editor_size` and `paint_editor` reduce to the weight and the fill handle: at that merge, keep
-  upstream's code and pass it the fork's width. Its check is red for a reason outside it:
-  upstream's `main` fails two engine tests of its own, and the run stops there (#449 is open to
-  fix them). Upstream's #456
+  upstream's code and pass it the fork's width. Its check was red for a reason outside it
+  (upstream's `main` failed two engine tests of its own). Upstream fixed them in 0.6.0, and on
+  2026-10-13 this branch and #463's were brought up to upstream's `main` (0.6.1) by a merge,
+  after upstream's own gate passed on each result here. Neither has a review yet. Upstream's #456
   (and the pull requests stacked on it) changes the height line of the same function to cap the
   editor at five lines; it is not the same work, but whichever lands second needs a rebase.
 - Following the system's reduced-motion setting is now an open pull request of someone else's:
@@ -587,7 +588,9 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
   the hook back. The 0.5.0 merge conflicted at three: the module list in `lib.rs` (both sides
   added modules), the command listing in `control.rs` (upstream now filters it) and the View tab
   in `ribbon.rs` (upstream replaced the Dark Mode checkbox with a Display theme picker). The hooks
-  in `grid.rs`, `UiState` and `run_ui_command` merged by themselves.
+  in `grid.rs`, `UiState` and `run_ui_command` merged by themselves. The 0.6.1 merge conflicted
+  at one: `services()` in the app's `main.rs`, where upstream replaced the `print` service with
+  `printers` and `print_native`, on the lines right above the fork's `confirm`.
 - **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
   must list commands in the shape upstream's listing uses (0.5.0 added `params`), and
   `aniefork::tr` covers the interface languages upstream has: when upstream adds one, the fork's
@@ -602,24 +605,39 @@ The workspace says `rust-version = "1.90"`, but egui 0.36 needs Rust 1.95 or new
 toolchain fails with a dependency error (pdfcraft's fork found the same and carries a fix).
 `cargo xtask ci` also needs the `wasm32-unknown-unknown` target.
 
-On Windows the gate's last step fails on an untouched checkout: `cargo xtask parity --check`
+On Windows the gate's last two steps fail on an untouched checkout: `cargo xtask parity --check`
 compares the generated text with `docs/parity-checklist.md` (`docs/parity.md` before 0.5.0) byte
-for byte, and with `core.autocrlf=true` the checked-out file has CRLF line endings. It is not a
-sign that the catalog changed. The other steps (fmt, clippy, tests, assets, layers, wasm) are
+for byte, and `cargo xtask keytips --check` does the same for its two generated files; with
+`core.autocrlf=true` the checked-out files have CRLF line endings. It is not a sign that the
+catalog or the key tips changed. To check them there: run `cargo xtask parity` and
+`cargo xtask keytips`, look at `git diff --ignore-cr-at-eol` (nothing means they are up to
+date), and restore the files. The other steps (fmt, clippy, tests, assets, layers, wasm) are
 meaningful there.
 
-As merged on 2026-10-12, upstream's `main` (`3926d21`) fails three of its own tests on this
-machine, in files the fork doesn't touch, on an untouched checkout as well: two in the engine
-(`csv_save_keeps_the_separator_it_was_opened_with` and
-`saving_an_opened_semicolon_csv_keeps_semicolons`: a twelve-digit number is saved to CSV as
-`1.24412E+11`) and one in the UI crate (`translations_are_unique_and_preserve_unknown_text`: the
-French catalog lacks "Different First Page"). They are upstream's to fix: upstream's #449 is
-open to do so, and until it merges the gate is red on every pull request, ours included.
+As merged on 2026-10-13, upstream's `main` (`fc45b7f`, 0.6.1) passes every one of its tests
+on this machine, and so does the fork with it merged. The three that failed at the merge
+before (two in the engine's CSV saving, one for a line missing from the French catalog) were
+fixed upstream in 0.6.0; while they failed, the gate was red on every pull request, ours
+included.
 
 ## Log
 
 Newest first.
 
+- **2026-10-13 (merge of upstream 0.6.1):** The owner asked for the sync. Upstream `fc45b7f`,
+  6 commits: printing through its shared `craft-print` library, with printers found and jobs
+  sent from the app; the print commands listed on the control channel; delimited files that
+  keep a number whole (the fix for the two CSV tests); the 0.6.0 and 0.6.1 releases. One
+  conflict, in `apps/gridcraft/src/main.rs`: upstream replaced the `print` service with
+  `printers` and `print_native` on the lines above the fork's `confirm`. Resolved as the rule
+  says: upstream's code, and the hook put back after it. Every hook is there after the merge
+  (counted, file by file, before and after). What the hooks hand to upstream's code needed
+  nothing: the two new commands are listed in the shape the fork's are, and no interface
+  language was added. `Cargo.lock` gained upstream's new packages and the fork's crate its
+  new version. Checked: fmt, clippy, all 1568 tests of the workspace (none failing, for the
+  first time on this machine), assets, layers, wasm; the two generated-file checks by content
+  (see Building). The two open pull requests were brought up to upstream's `main` the same
+  day, each after upstream's own gate passed on the result: #463 and #549.
 - **2026-10-13 (module becomes project):** The owner asked for one word. Renamed, in the
   fork's code and nowhere else: the words in every window and on a request's card; the
   manifest, `project.toml`; the Development server's tools (`list_projects`,
