@@ -11,12 +11,11 @@ use std::borrow::Cow;
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Before, Sight, StepState};
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::trust::TrustStore;
-use gridcraft_aniefork_dev::{module, settings, showcase, starter};
+use gridcraft_aniefork_dev::{module, starter};
 use serde_json::{Value as Json, json};
 
+use super::agents;
 use super::diff::{self, Line, Row};
-use super::{agents, modules};
-use crate::SheetApp;
 
 /// The most of a file or of a script's data shown in a request (characters). What is cut says so.
 pub(super) const SHOWN: usize = 200_000;
@@ -35,9 +34,9 @@ pub(super) const REASON: &str = "…and tell the agent what to do differently";
 pub(super) const NOT_NOW: &str = "Not now";
 /// Said on a card that holds more than it can show whole.
 pub(super) const TOO_LONG: &str = "This is too long to show whole, so it can't be allowed here. Say no, and have the agent do it in smaller pieces.";
-pub(super) const INTRO: &str = "Your development tools, and how far an agent may help you with them.";
+pub(super) const INTRO: &str = "Your development kits and their projects, and how far an agent may help you with them.";
 pub(super) const AGENTS: &str =
-    "An agent (Claude Code, for one) can connect to GridCraft's Development server to help you build modules. You set how far it may go.";
+    "An agent (Claude Code, for one) can connect to GridCraft's Development server, which speaks MCP, to help you build. You set how far it may go.";
 pub(super) const NO_AGENTS: &str = "Agents can't connect in this run, because it keeps no settings.";
 pub(super) const NO_MODULES: &str = "Modules are not available in this run, because it keeps no settings.";
 pub(super) const RECORD: &str = "The whole record is in the Developer console, and in agent-log.jsonl beside your settings.";
@@ -581,48 +580,6 @@ pub(super) fn lately(now: &agents::Snapshot) -> Vec<String> {
         }
     }
     lines
-}
-
-/// The development tools, where each stands.
-pub(super) struct Tools {
-    pub modules: String,
-    pub console: String,
-    pub python: String,
-    pub folder: String,
-    pub can_open_folder: bool,
-    /// The showcase module: `None` when it isn't there; otherwise whether it is trusted.
-    pub showcase: Option<bool>,
-    pub showcase_says: &'static str,
-    pub can_dock: bool,
-    pub can_browse: bool,
-}
-
-/// The development tools as they stand. `None` in a run that keeps no settings.
-pub(super) fn tools(app: &SheetApp, ctx: &egui::Context) -> Option<Tools> {
-    let listing = modules::list();
-    if listing["available"] != true {
-        return None;
-    }
-    let all = listing["modules"].as_array().cloned().unwrap_or_default();
-    let trusted = all.iter().filter(|m| m["status"] == "trusted").count();
-    let console = super::console::report(&json!({"last": 1})).ok().and_then(|report| report["kept"].as_u64()).unwrap_or(0);
-    let python = modules::places().map(|at| settings::load(&at.settings).python).unwrap_or_default();
-    let showcase = all.iter().find(|m| m["id"] == showcase::ID).map(|m| m["status"] == "trusted");
-    Some(Tools {
-        modules: format!("{} installed, {trusted} trusted", all.len()),
-        console: format!("{console} entr{}", if console == 1 { "y" } else { "ies" }),
-        python: format!("Python: {}.", if python.is_empty() { "found automatically" } else { python.as_str() }),
-        folder: listing["folder"].as_str().unwrap_or("").to_string(),
-        can_open_folder: app.services.open_url.is_some(),
-        showcase,
-        showcase_says: match showcase {
-            None => "A panel that is a Svelte app, docked beside the sheet.",
-            Some(true) => "Svelte Showcase is ready.",
-            Some(false) => "Svelte Showcase is not trusted yet: review and trust it in Modules, then come back.",
-        },
-        can_dock: super::dock::available(ctx),
-        can_browse: app.services.open_url.is_some(),
-    })
 }
 
 #[cfg(test)]

@@ -37,7 +37,8 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
-| **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs` | Not offered; a direction of the fork's own |
+| **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development, the MCP server, the development kits, and under the Anie Development Kit its projects, as workbook code or libraries. Each has a part of its own, and a new project is made in the kit's part. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, changes in `development.rs`, `devpage.rs`, `modules.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
+| **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding; Developer ▸ Macros shows it beside the macros. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs`; `crates/ui-egui/src/aniefork/macros.rs` | Not offered; a direction of the fork's own |
 | **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
 | **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted module's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a module without `network` is kept to its own address there. Developer ▸ Development creates a showcase module whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
@@ -417,8 +418,26 @@ rebuilding what a workbook's macros do as a module (2026-10-12).
 - **A project says which workbook it is the code of** (`workbook = "…"` in `module.toml`,
   a file's name), and keeps a note of what became of each procedure: `rebuilt.toml`, with
   rebuilt, partly or left, the script and a line of why.
-- **The note is the project's own word**, and an agent is told of it in `list_macros`.
-- **The agent is told how** (`reference`, topic `macros`).
+- **The note is shown as the project's own word**: beside the macros in Developer ▸ Macros,
+  in the project's part of the Development window, and to an agent in `list_macros`.
+- **The agent is told how** (`reference`, topic `macros`), and a person hands it the task
+  with "Copy a Request for Your Agent" in Developer ▸ Macros.
+- **Tried once**, in a copy of GridCraft with settings of its own: an agent read the
+  macros of a workbook Excel made, proposed one plan of eight steps, and after one yes the
+  project was written, trusted and run, giving what the macro's sum gives. The agent was
+  the developer's own, not Claude Code set up by a person.
+
+**The Development window is laid out by kit and project** (the owner's design, 2026-10-13).
+
+- **Development** at the top: the whole at a glance.
+- **MCP Server** under it, beside the kits and not in one: the level, the connection, what
+  waits for an answer, the plans.
+- **Development Kits**: the kits that are loaded. This build has one, the **Anie
+  Development Kit** (Python and Svelte). There is no way to load another yet, and the
+  window says so.
+- **Projects** under the kit, by what they are for: **workbook code** and **libraries**. A
+  project has a part of its own; a new one is made in the kit's part.
+- Both windows show it: GridCraft's own, and the page, redrawn around the list.
 
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
 per-module Python environments, and the rest of **2d**: macOS and Linux.
@@ -467,9 +486,17 @@ own.
   only" now lets an agent read the open workbook's macros, with whatever their author left
   in them: whether that should be a level of its own is not decided.
 - **What a project says it rebuilt is a claim.** Nothing compares a script with the
-  procedure, and GridCraft can't run the macro to compare what the two give.
+  procedure, and GridCraft can't run the macro to compare what the two give. The rebuild
+  was tried once, on one small procedure.
+- **Kits: one, and no way to load another.** How one would be loaded is not decided
+  (ADR-0001 has what is known). The kit can't be turned off as a whole.
+- **Two words for one thing.** The Development window says project; `module.toml`, the
+  server's tools, a request's card, Modules and the levels' words say module. Renaming them
+  is a commit of its own, not made.
 - **A project names its workbook by the file's name**: two workbooks of one name are the
   same to it.
+- Reviewing, trusting and running a project is still done in Modules, not in its own part
+  of the Development window.
 - **The Development window as a page is Windows only**, and a second thing to keep alike:
   what the two windows say is shared, how they are laid out is not. Its place and size are
   not remembered. To change the page: `cargo test -p gridcraft -- --ignored
@@ -585,6 +612,19 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-13 (the Development window by kit and project):** The owner gave the
+  Development window its shape: Development at the top, the MCP server under it, the
+  development kits, and in ours (named by the owner: the Anie Development Kit) a list of
+  projects, as workbook code or libraries. Built: the window's list and parts, said once
+  for both windows (`kits.rs`); the page redrawn around the list (five new Svelte files,
+  the window a little wider); a new project made in the kit's part; Developer ▸ Macros
+  showing what was rebuilt and copying a request for an agent. No hook in an upstream file,
+  no new dependency. Found on the way: a separator between a list and what stands beside
+  it made GridCraft's own Development and Macros windows grow taller with every frame; the
+  line is painted now, and both windows are tested to keep their size. Checked by 6 more
+  tests in the UI (with older ones changed to follow the window), and in the real window:
+  a plan of eight steps proposed over the server's protocol, approved on its card with one
+  click, carried out, and the script's answer compared with what the macro's sum gives.
 - **2026-10-13 (an agent rebuilds macros, phase V1):** The owner said the phases for
   macros stand, and asked for the agent rebuild next. In the Development crate: a project's
   `workbook` line and its kind, workbook code or library (`manifest.rs`, and `kit.rs`,

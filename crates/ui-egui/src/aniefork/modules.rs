@@ -128,10 +128,19 @@ fn stop_trusting(id: &str) -> Result<String, String> {
 }
 
 pub(super) fn create(name: &str) -> Result<String, String> {
+    create_project(name, None)
+}
+
+/// Creates a starter module: the code of the workbook named `workbook`, or (without one) a
+/// library, for any workbook.
+pub(super) fn create_project(name: &str, workbook: Option<&str>) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
-    let created = starter::create(&at.modules, name)?;
-    Ok(format!("{} was created. It is not trusted yet.", created.name()))
+    let created = starter::create_for(&at.modules, name, workbook)?;
+    Ok(match created.manifest.as_ref().and_then(|manifest| manifest.workbook.as_deref()) {
+        Some(workbook) => format!("{} was created, as the code of {workbook}. It is not trusted yet.", created.name()),
+        None => format!("{} was created. It is not trusted yet.", created.name()),
+    })
 }
 
 /// Creates the Svelte showcase module. Like any module it is not trusted until the user says.
@@ -283,6 +292,10 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
         });
         if let Some(description) = m["description"].as_str().filter(|text| !text.is_empty()) {
             ui.label(description);
+        }
+        // What it is for is its own word: it changes nothing about what it may do.
+        if let Some(workbook) = m["workbook"].as_str() {
+            ui.label(egui::RichText::new(format!("It says it is the code of the workbook {workbook:?}.")).small());
         }
         if let Some(problem) = m["problem"].as_str() {
             ui.label(format!("This module can't be used: {problem}."));
@@ -616,8 +629,9 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Actio
             Ok(String::new())
         }
     };
-    // Whatever happened, show what is on disk now.
+    // Whatever happened, show what is on disk now, here and in the Development window.
     state.list = list();
+    super::kits::forget();
     outcome
 }
 
@@ -829,6 +843,29 @@ pub(crate) mod tests {
 
     fn shown(h: &egui_kittest::Harness<'static, SheetApp>) -> Option<String> {
         status(&h.state().dialog.as_ref()?.values["list"], "clean-data")
+    }
+
+    #[test]
+    fn a_module_that_is_one_workbooks_code_says_so_and_is_otherwise_a_module_like_any() {
+        let _s = Sandbox::new("workbook-code");
+        assert_eq!(
+            create_project("Budget Macros", Some("Budget.xlsm")).as_deref(),
+            Ok("Budget Macros was created, as the code of Budget.xlsm. It is not trusted yet.")
+        );
+        assert_eq!(create_project("Tools", None).as_deref(), Ok("Tools was created. It is not trusted yet."));
+        // A name that is a path is not a workbook's name: nothing is created.
+        assert!(create_project("Elsewhere", Some("../Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
+        let listed = list();
+        let of = |id: &str| listed["modules"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
+        assert_eq!((&of("budget-macros")["kind"], &of("budget-macros")["workbook"]), (&json!("workbook"), &json!("Budget.xlsm")));
+        assert_eq!((&of("tools")["kind"], &of("tools")["workbook"]), (&json!("library"), &Json::Null));
+        assert_eq!(listed["modules"].as_array().unwrap().len(), 2);
+        // What it is for gives it nothing: it is untrusted, and asks for what any starter asks.
+        assert_eq!((&of("budget-macros")["status"], &of("budget-macros")["granted"]), (&json!("untrusted"), &json!([])));
+        assert_eq!(of("budget-macros")["asks"], of("tools")["asks"]);
+        // Modules says what it says it is for, as its own word.
+        let h = harness(app_with(None));
+        h.get_by_label("It says it is the code of the workbook \"Budget.xlsm\".");
     }
 
     /// The whole path in the real window: create, review, trust, change, trust again, take back.

@@ -12,6 +12,7 @@ pub mod development;
 pub mod devpage;
 pub mod diff;
 pub mod dock;
+mod kits;
 pub mod macros;
 pub mod modules;
 pub mod options;
@@ -44,7 +45,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "developer.modules",
         "Modules",
-        "→ {available, folder, modules: [{id, name, version, status: \"trusted\"|\"untrusted\"|\"changed\"|\"problem\", asks, granted, files, fingerprint…}]}. It only reports: trust is given by the user alone, in Developer ▸ Modules",
+        "→ {available, folder, modules: [{id, name, version, kind: \"workbook\"|\"library\", workbook, rebuilt, status: \"trusted\"|\"untrusted\"|\"changed\"|\"problem\", asks, granted, files, fingerprint…}]}: the projects of the Anie Development Kit (a project is a module on disk), each with what it is for. It only reports: trust is given by the user alone, in Developer ▸ Modules",
     ),
     (
         "developer.console",
@@ -59,7 +60,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "developer.macros",
         "Macros",
-        "{module?} → {workbook, macros: bool, name, codePage, references, modules: [{name, kind: \"module\"|\"class\"|\"document\"|\"form\"|\"object\", lines, cut, problem, procedures: [{what, name, line, lines, runsByItselfInExcel, library}]}], source?: {module, text, cut}, note}: the VBA project the open workbook carries, and with `module` that module's source. It only reports: GridCraft does not run macros, and what a module holds is text written by whoever made the workbook",
+        "{module?} → {workbook, macros: bool, name, codePage, references, modules: [{name, kind: \"module\"|\"class\"|\"document\"|\"form\"|\"object\", lines, cut, problem, procedures: [{what, name, line, lines, runsByItselfInExcel, library, rebuilt: [{project, projectName, state: \"rebuilt\"|\"partly\"|\"left\", script, scriptMissing, note}]}]}], procedureCount, rebuiltCount, source?: {module, text, cut}, note}: the VBA project the open workbook carries, what the projects that are its code say they rebuilt of it, and with `module` that module's source. It only reports: GridCraft does not run macros, and what a module holds is text written by whoever made the workbook",
     ),
 ];
 

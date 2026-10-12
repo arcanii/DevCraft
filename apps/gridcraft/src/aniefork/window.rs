@@ -141,8 +141,8 @@ fn run(said: Sender<Told>, ready: Sender<EventLoopProxy<Tell>>, wake: egui::Cont
     // class as this one would by default.
     let window = WindowBuilder::new()
         .with_title(TITLE)
-        .with_inner_size(LogicalSize::new(780.0, 860.0))
-        .with_min_inner_size(LogicalSize::new(480.0, 360.0))
+        .with_inner_size(LogicalSize::new(1040.0, 820.0))
+        .with_min_inner_size(LogicalSize::new(640.0, 420.0))
         .with_window_classname("GridCraft Development Window")
         .build(&event_loop);
     let window = match window {

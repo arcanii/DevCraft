@@ -29,15 +29,20 @@
 //! nothing else; the window then shows the plan with where each step stands, and a way to stop
 //! it.
 //!
-//! **Tools.** The modules, the Developer console and the Python that runs scripts, each with
-//! where it stands and the way to its own window. And a showcase: a module whose panel is a
-//! Svelte app, which the window creates and, once the person has trusted it, docks beside the
-//! sheet in the system's web view ([`super::dock`]).
+//! **The window has a list down its side and one part beside it** ([`super::kits`] says what
+//! each holds). At the top, the whole at a glance. Under it the **MCP server**, which is the
+//! Agents part described above: it stands at the top because it is not any kit's. Then the
+//! **development kits**: the one this build has is the Anie Development Kit (Python and
+//! Svelte), and under it its **projects**, by kind: the code of one workbook, and libraries.
+//! The kit's part has the way to Modules and the Developer console, the Python that runs
+//! scripts, a new project, and a showcase: a project whose panel is a Svelte app, which the
+//! window creates and, once the person has trusted it, docks beside the sheet in the system's
+//! web view ([`super::dock`]).
 //!
-//! **What a card says is not worded here.** `card.rs` says it, as blocks, and this window
-//! draws them; where the shell can show a web page in a window of its own, the same blocks
-//! are drawn there instead (`devpage.rs`), and what is clicked there comes through [`act`]
-//! like a click here.
+//! **What the window says is not worded here.** `card.rs` says what a request's card holds,
+//! as blocks, and `kits.rs` the rest; this window draws them. Where the shell can show a web
+//! page in a window of its own, the same is drawn there instead (`devpage.rs`), and what is
+//! clicked there comes through [`act`] like a click here.
 //!
 //! The control channel can click and type in this window as a person does, and rewrite a
 //! dialog's values. So the window works from a state of its own that the channel can't reach,
@@ -49,11 +54,12 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::{settings, showcase};
+use gridcraft_aniefork_dev::{manifest, settings, showcase, starter};
 use serde_json::{Value as Json, json};
 
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
 use super::diff::{Line, Row};
+use super::kits::{self, Pane};
 use super::{agents, modules, presence};
 use crate::SheetApp;
 use crate::dialogs::Dialog;
@@ -87,8 +93,17 @@ pub(super) enum Act {
     StopPlan(u64),
     /// Show the whole of the file that would be written, or only what changes.
     Whole(bool),
+    /// Show another part of the window.
+    Go(Pane),
     Open(&'static str),
     OpenFolder,
+    /// Open the folder of one project.
+    OpenProjectFolder(String),
+    /// Create a starter project: the code of the workbook that is open, or a library.
+    CreateProject {
+        name: String,
+        for_workbook: bool,
+    },
     /// Create the Svelte showcase module (untrusted, like any new module).
     CreateShowcase,
     /// Show the showcase's panel: docked in the window, or in the browser.
@@ -115,6 +130,11 @@ pub(super) struct State {
     pub(super) said: String,
     /// The plan being looked at, followed through: for which request, when, and what was found.
     followed: Option<(u64, f64, Arc<Result<Vec<Sight>, String>>)>,
+    /// The part of the window that is shown.
+    pub(super) pane: Pane,
+    /// The name being typed for a new project, and whether it is to be the open workbook's code.
+    new_name: String,
+    new_for: bool,
 }
 
 fn state_id() -> egui::Id {
@@ -137,10 +157,15 @@ impl State {
     pub(super) fn fresh() -> State {
         let kept = modules::places().map(|at| settings::load(&at.settings).agents.port).unwrap_or_default();
         let mut state = State { port: kept.to_string(), ..State::default() };
-        let only = match agents::snapshot().waiting.as_slice() {
+        let waiting = agents::snapshot().waiting;
+        let only = match waiting.as_slice() {
             [only] => Some(only.id),
             _ => None,
         };
+        // While something waits for an answer, the window opens where the answers are given.
+        if !waiting.is_empty() {
+            state.pane = Pane::Server;
+        }
         state.look_at(only);
         state
     }
@@ -181,6 +206,7 @@ impl State {
             ("problem", json!(now.problem)),
             ("waiting", json!(waiting)),
             ("looking", json!(self.looking)),
+            ("part", json!(self.pane.code())),
             ("said", json!(self.said)),
             (OPENED, json!(true)),
         ] {
@@ -536,61 +562,387 @@ fn plan_card(ui: &mut egui::Ui, plan: &dev::Plan, action: &mut Option<Act>) {
     });
 }
 
-/// The Tools part: each development tool, where it stands, and the way to its own window.
-fn tools_part(app: &SheetApp, ui: &mut egui::Ui, action: &mut Option<Act>) {
-    let Some(tools) = card::tools(app, ui.ctx()) else {
-        ui.label(card::NO_MODULES);
-        return;
+/// The room between a list and what is shown beside it, in which a line is drawn.
+pub(super) const BETWEEN: f32 = 6.0;
+
+/// The line between a list (`side`) and what is shown beside it, as tall as the two (`whole`).
+/// It is painted: a separator there takes all the height there is, and the window would grow
+/// to give it.
+pub(super) fn between(ui: &egui::Ui, side: egui::Rect, whole: egui::Rect) {
+    let x = side.right() + ui.spacing().item_spacing.x + BETWEEN / 2.0;
+    ui.painter().vline(x, whole.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
+}
+
+/// The words under `key` of what a part says.
+fn said<'a>(told: &'a Json, key: &str) -> &'a str {
+    told.get(key).and_then(Json::as_str).unwrap_or("")
+}
+
+/// A small mark of how something stands: filled when it stands in some way, a ring when not.
+fn dot(ui: &mut egui::Ui, mark: &str) {
+    let t = Tokens::get(ui.ctx());
+    let colour = match mark {
+        "trusted" | "ok" => Some(t.accent),
+        "changed" => Some(ui.visuals().warn_fg_color),
+        "problem" | "error" => Some(ui.visuals().error_fg_color),
+        _ => None,
     };
-    ui.horizontal(|ui| {
-        if ui.button("Modules…").on_hover_text("Create, review, trust and run modules; name the Python that runs their scripts").clicked() {
-            *action = Some(Act::Open(modules::NAME));
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, ui.spacing().interact_size.y), egui::Sense::hover());
+    match colour {
+        Some(colour) => ui.painter().circle_filled(rect.center(), 3.5, colour),
+        None => ui.painter().circle_stroke(rect.center(), 3.0, egui::Stroke::new(1.0, t.text_dim)),
+    };
+}
+
+/// How a project stands, in its own colour.
+fn standing(ui: &egui::Ui, status: &str, label: &str) -> egui::RichText {
+    let t = Tokens::get(ui.ctx());
+    match status {
+        "trusted" => egui::RichText::new(label).color(t.accent).strong(),
+        "changed" => egui::RichText::new(label).color(ui.visuals().warn_fg_color).strong(),
+        "problem" => egui::RichText::new(label).color(ui.visuals().error_fg_color).strong(),
+        _ => egui::RichText::new(label).color(t.text_dim),
+    }
+}
+
+/// The list down the window's side: every part that can be shown (`kits::nav` lists them).
+fn nav_part(ui: &mut egui::Ui, rows: &Json, action: &mut Option<Act>) {
+    let t = Tokens::get(ui.ctx());
+    for row in rows.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let label = said(row, "label");
+        let indent = row["depth"].as_f64().unwrap_or(0.0) as f32 * 9.0;
+        match row["t"].as_str() {
+            Some("heading") => {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(indent);
+                    ui.label(egui::RichText::new(label).small().strong().color(t.text_dim));
+                });
+            }
+            Some("item") => {
+                ui.horizontal(|ui| {
+                    ui.add_space(indent);
+                    if let Some(mark) = row["mark"].as_str() {
+                        dot(ui, mark);
+                    }
+                    let text = if row["depth"] == 0 { egui::RichText::new(label).strong() } else { egui::RichText::new(label) };
+                    let shown = ui.add(egui::Button::selectable(row["selected"] == true, text).truncate());
+                    let shown = match said(row, "hint") {
+                        "" => shown,
+                        hint => shown.on_hover_text(hint),
+                    };
+                    if shown.clicked()
+                        && let Some(to) = row["go"].as_str().and_then(Pane::parse)
+                    {
+                        *action = Some(Act::Go(to));
+                    }
+                    // How many requests wait there.
+                    if let Some(badge) = row["badge"].as_str() {
+                        ui.label(egui::RichText::new(badge).small().strong().color(t.accent));
+                    }
+                });
+            }
+            Some("more") => {
+                ui.horizontal(|ui| {
+                    ui.add_space(indent);
+                    ui.label(small(label));
+                });
+            }
+            _ => {}
         }
-        ui.label(tools.modules.as_str());
-        ui.add_space(12.0);
-        if ui.button("Console…").on_hover_text("What your modules print and log, what failed, and what agents asked for").clicked() {
+    }
+}
+
+/// The top of the window: the MCP server, the kits and the open workbook, each at a glance
+/// with the way to its own part.
+fn overview_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
+    let t = Tokens::get(ui.ctx());
+    let warn = ui.visuals().warn_fg_color;
+    ui.label(said(told, "intro"));
+    ui.add_space(4.0);
+    // The MCP server.
+    let server = &told["server"];
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(kits::SERVER).strong().size(14.0));
+            ui.label(small(said(server, "level")));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Open MCP Server").on_hover_text("How far agents may go, how they connect, and what they ask for").clicked() {
+                    *action = Some(Act::Go(Pane::Server));
+                }
+            });
+        });
+        if server["available"] != true {
+            ui.label(said(server, "unavailable"));
+            return;
+        }
+        let status = egui::RichText::new(said(&server["status"], "text"));
+        ui.label(match said(&server["status"], "kind") {
+            "ok" => status.color(t.accent).strong(),
+            "error" => status.color(ui.visuals().error_fg_color).strong(),
+            _ => status.small(),
+        });
+        if let Some(waiting) = server["waiting"].as_str() {
+            ui.label(egui::RichText::new(waiting).color(warn).strong());
+        }
+        if let Some(plan) = server["plan"].as_str() {
+            ui.label(small(plan));
+        }
+    });
+    // The kits.
+    heading(ui, said(told, "kitsTitle"));
+    for kit in told["kits"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(said(kit, "name")).strong().size(14.0));
+                let made_of: Vec<&str> = kit["madeOf"].as_array().map(|all| all.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
+                ui.label(small(made_of.join(" · ")));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Open Kit").on_hover_text("Its projects, and what it needs to run them").clicked()
+                        && let Some(to) = kit["go"].as_str().and_then(Pane::parse)
+                    {
+                        *action = Some(Act::Go(to));
+                    }
+                    ui.label(small(said(kit, "standing")));
+                });
+            });
+            ui.label(said(kit, "says"));
+            if let Some(projects) = kit["projects"].as_str() {
+                ui.label(small(projects));
+            }
+        });
+    }
+    ui.label(small(said(told, "kitsNote")));
+    // The workbook that is open, and its macros.
+    heading(ui, "Open workbook");
+    let workbook = &told["workbook"];
+    ui.horizontal_wrapped(|ui| {
+        if let Some(title) = workbook["title"].as_str() {
+            ui.label(egui::RichText::new(title).strong());
+        }
+        let says = egui::RichText::new(said(workbook, "says"));
+        ui.label(if workbook["problem"] == true { says.color(warn).strong() } else { says });
+    });
+    if let Some(rebuilt) = workbook["rebuilt"].as_str() {
+        ui.label(small(rebuilt));
+    }
+    ui.horizontal(|ui| {
+        if workbook["macros"] == true
+            && ui.button("Macros…").on_hover_text("Read the macros this workbook carries. GridCraft does not run them.").clicked()
+        {
+            *action = Some(Act::Open(super::macros::NAME));
+        }
+        if ui.button("Console…").on_hover_text("What your projects print and log, what failed, and what agents asked for").clicked() {
             *action = Some(Act::Open(super::console::NAME));
         }
-        ui.label(tools.console.as_str());
+        ui.label(small(said(told, "console")));
+    });
+}
+
+/// The Anie Development Kit: what it needs to run, its projects by kind, a new project, and
+/// the showcase.
+fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Option<Act>) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(said(told, "title")).strong().size(15.0));
+        let made_of: Vec<&str> = told["madeOf"].as_array().map(|all| all.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
+        ui.label(small(made_of.join(" · ")));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(small(said(told, "standing"))));
+    });
+    ui.label(said(told, "says"));
+    if told["available"] != true {
+        ui.label(said(told, "unavailable"));
+        return;
+    }
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        if ui.button("Modules…").on_hover_text("Review, trust and run your projects; name the Python that runs their scripts").clicked() {
+            *action = Some(Act::Open(modules::NAME));
+        }
+        ui.label(said(told, "projectsSays"));
+        ui.add_space(12.0);
+        if ui.button("Console…").on_hover_text("What your projects print and log, what failed, and what agents asked for").clicked() {
+            *action = Some(Act::Open(super::console::NAME));
+        }
+        ui.label(said(told, "console"));
     });
     ui.horizontal(|ui| {
-        ui.label(small(tools.python.as_str()));
-        let folder = tools.folder.as_str();
-        ui.label(small("Modules folder:"));
+        ui.label(small(said(told, "python")));
+        let folder = said(told, "folder");
+        ui.label(small("Projects folder:"));
         ui.allocate_ui(egui::vec2((ui.available_width() - 110.0).clamp(80.0, 260.0), ui.spacing().interact_size.y), |ui| {
             ui.add(egui::Label::new(egui::RichText::new(folder).monospace().small()).truncate()).on_hover_text(folder);
         });
-        if tools.can_open_folder && ui.button("Open Folder").clicked() {
+        if told["canOpenFolder"] == true && ui.button("Open Folder").clicked() {
             *action = Some(Act::OpenFolder);
         }
     });
+    // Its projects, by what they are for.
+    heading(ui, said(told, "projectsTitle"));
+    ui.label(small(said(told, "projectsNote")));
+    for group in told["groups"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(said(group, "label")).strong());
+            ui.label(small(said(group, "says")));
+        });
+        let projects = group["projects"].as_array().map(Vec::as_slice).unwrap_or_default();
+        if projects.is_empty() {
+            ui.label(small(said(group, "empty")));
+        }
+        for project in projects {
+            ui.horizontal(|ui| {
+                dot(ui, said(project, "status"));
+                match project["go"].as_str().and_then(Pane::parse) {
+                    Some(to) => {
+                        if ui.link(said(project, "name")).on_hover_text("What it is for, what it asks, and what is in it").clicked() {
+                            *action = Some(Act::Go(to));
+                        }
+                    }
+                    None => {
+                        ui.label(said(project, "name"));
+                    }
+                }
+                if let Some(workbook) = project["workbook"].as_str() {
+                    ui.label(small(if project["open"] == true { format!("for {workbook}, which is open") } else { format!("for {workbook}") }));
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(standing(ui, said(project, "status"), said(project, "statusLabel")).small());
+                });
+            });
+            if !said(project, "says").is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    ui.label(small(said(project, "says")));
+                });
+            }
+        }
+    }
+    // A new one.
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let label = ui.label("New project:");
+        let size = egui::vec2(220.0, ui.spacing().interact_size.y);
+        ui.add_sized(size, egui::TextEdit::singleline(&mut state.new_name).hint_text("Its name")).labelled_by(label.id);
+        if ui.button("Create Project").on_hover_text("Creates a starter project. It does nothing until you trust it.").clicked() {
+            *action = Some(Act::CreateProject { name: state.new_name.clone(), for_workbook: state.new_for });
+        }
+    });
+    match told["newFor"].as_str() {
+        Some(workbook) => {
+            ui.checkbox(&mut state.new_for, format!("It is the code of {workbook:?}, the workbook that is open"));
+        }
+        None => state.new_for = false,
+    }
     // The showcase: a panel written with a web toolkit, shown inside the window.
+    let showcase = &told["showcase"];
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("Showcase").strong());
-        ui.label(tools.showcase_says);
-        match tools.showcase {
-            None => {
-                if ui.button("Create Showcase").on_hover_text("Creates the Svelte Showcase module. It does nothing until you trust it.").clicked() {
+        ui.label(said(showcase, "text"));
+        match said(showcase, "stands") {
+            "none" => {
+                if ui.button("Create Showcase").on_hover_text("Creates the Svelte Showcase project. It does nothing until you trust it.").clicked() {
                     *action = Some(Act::CreateShowcase);
                 }
             }
-            Some(true) => {
-                if tools.can_dock && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked() {
+            "trusted" => {
+                if showcase["canDock"] == true
+                    && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
+                {
                     *action = Some(Act::ShowShowcase { docked: true });
                 }
-                if tools.can_browse && ui.button("Open in Browser").clicked() {
+                if showcase["canBrowse"] == true && ui.button("Open in Browser").clicked() {
                     *action = Some(Act::ShowShowcase { docked: false });
                 }
             }
-            Some(false) => {}
+            _ => {}
+        }
+    });
+}
+
+/// One project: what it is for, where it stands, what it asks to be allowed, what is in it,
+/// and what it says it rebuilds of its workbook's macros.
+fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
+    let warn = ui.visuals().warn_fg_color;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(said(told, "title")).strong().size(15.0));
+        ui.label(small(said(told, "version")));
+        if !said(told, "author").is_empty() {
+            ui.label(small(format!("by {}", said(told, "author"))));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(standing(ui, said(told, "status"), said(told, "statusLabel")));
+        });
+    });
+    ui.label(small(format!("{}  ·  {}", said(told, "kit"), said(told, "kindLabel"))));
+    if !said(told, "description").is_empty() {
+        ui.label(said(told, "description"));
+    }
+    ui.label(said(told, "forSays"));
+    ui.label(small(said(told, "statusSays")));
+    if let Some(problem) = told["problem"].as_str() {
+        ui.label(egui::RichText::new(format!("This project can't be used: {problem}.")).color(ui.visuals().error_fg_color).strong());
+    }
+    // What it asks to be allowed.
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(said(told, "asksTitle")).strong());
+    let asks = told["asks"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if asks.is_empty() {
+        ui.label(format!("•  {}", said(told, "asksNothing")));
+    }
+    for ask in asks {
+        let line = egui::RichText::new(format!("•  {}", said(ask, "text")));
+        ui.label(if ask["warn"] == true { line.color(warn).strong() } else { line });
+    }
+    // What is in it.
+    ui.add_space(4.0);
+    egui::Grid::new("project_parts").num_columns(2).spacing(egui::vec2(10.0, 4.0)).show(ui, |ui| {
+        for part in told["parts"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            ui.label(small(said(part, "label")));
+            ui.add(egui::Label::new(egui::RichText::new(said(part, "value")).monospace().small()).wrap());
+            ui.end_row();
+        }
+    });
+    // What it says it rebuilds of the workbook's macros.
+    let rebuilt = &told["rebuilt"];
+    if !rebuilt.is_null() {
+        heading(ui, said(rebuilt, "title"));
+        let says = egui::RichText::new(said(rebuilt, "says"));
+        ui.label(if rebuilt["problem"] == true { says.color(warn).strong() } else { says.small() });
+        for row in rebuilt["rows"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(said(row, "from")).monospace());
+                if let Some(script) = row["script"].as_str() {
+                    ui.label("→");
+                    ui.label(egui::RichText::new(script).monospace());
+                }
+                ui.label(small(said(row, "stateLabel")).strong());
+                if !said(row, "note").is_empty() {
+                    ui.label(small(said(row, "note")));
+                }
+                if row["scriptMissing"] == true {
+                    ui.label(egui::RichText::new(said(rebuilt, "missing")).small().color(warn).strong());
+                }
+            });
+        }
+    }
+    ui.add_space(6.0);
+    ui.label(small(said(told, "manage")));
+    ui.horizontal(|ui| {
+        if ui.button("Modules…").on_hover_text("Review, trust and run your projects").clicked() {
+            *action = Some(Act::Open(modules::NAME));
+        }
+        if told["canOpenFolder"] == true && ui.button("Open Project Folder").clicked() {
+            *action = Some(Act::OpenProjectFolder(said(told, "id").to_string()));
         }
     });
 }
 
 /// Hook of the fork's dialogs: draws Developer ▸ Development.
 pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
-    ui.set_min_width(560.0);
+    ui.set_min_width(820.0);
     let ctx = ui.ctx().clone();
     let frame = ctx.cumulative_frame_nr();
     let mut state: State = ctx.data(|data| data.get_temp(state_id())).unwrap_or_default();
@@ -608,15 +960,39 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         (Some(asked), Some(at)) => review(ui, &at, &asked, &mut state, driven, agents::confirms(app), &mut action),
         _ => {
             state.looking = None;
-            ui.label(card::INTRO);
-            // On a small screen the rest scrolls, and Close stays in reach.
+            let now = agents::snapshot();
+            // A project that is no longer there gives way to its kit.
+            if let Pane::Project(id) = &state.pane
+                && kits::project_pane(app, id).is_none()
+            {
+                state.pane = Pane::Kit;
+            }
+            let rows = kits::nav(app, &state.pane, &now);
+            // The server's part is drawn from how things stand; the others from what `kits` says.
+            let told = if state.pane == Pane::Server { Json::Null } else { kits::pane(app, &ctx, &state.pane, &now) };
+            // On a small screen both sides scroll, and Close stays in reach.
             let room = (ctx.content_rect().height() - 220.0).max(240.0);
-            egui::ScrollArea::vertical().id_salt("development").max_height(room).show(ui, |ui| {
-                heading(ui, "Agents");
-                agents_part(ui, &mut state, driven, &mut action);
-                heading(ui, "Tools");
-                tools_part(app, ui, &mut action);
+            let row = ui.horizontal_top(|ui| {
+                let side = ui.vertical(|ui| {
+                    ui.set_width(200.0);
+                    egui::ScrollArea::vertical().id_salt("development_parts").max_height(room).show(ui, |ui| nav_part(ui, &rows, &mut action));
+                });
+                ui.add_space(BETWEEN);
+                ui.vertical(|ui| {
+                    ui.set_min_width(580.0);
+                    egui::ScrollArea::vertical().id_salt("development").max_height(room).show(ui, |ui| match told["kind"].as_str() {
+                        Some("overview") => overview_part(ui, &told, &mut action),
+                        Some("kit") => kit_part(ui, &told, &mut state, &mut action),
+                        Some("project") => project_part(ui, &told, &mut action),
+                        _ => {
+                            ui.label(egui::RichText::new(kits::SERVER).strong().size(15.0));
+                            agents_part(ui, &mut state, driven, &mut action);
+                        }
+                    });
+                });
+                side.response.rect
             });
+            between(ui, row.inner, row.response.rect);
         }
     }
     if !state.said.is_empty() {
@@ -651,14 +1027,57 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 /// Carries out what the person asked for. Everything that decides something is theirs alone:
 /// asked for while the control channel is putting input into the window, it is refused.
 pub(super) fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, driven: bool, open: &mut bool) -> Result<String, String> {
-    // Going to another of the fork's windows is anyone's. Everything else is the person's: what
+    let outcome = carry_out(app, ctx, state, action, driven, open);
+    // Whatever was done, what the window shows of the projects is read from disk again.
+    kits::forget();
+    outcome
+}
+
+fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, driven: bool, open: &mut bool) -> Result<String, String> {
+    // Going to another part of the window, or to another of the fork's windows, is anyone's;
+    // so is a new project, which is created untrusted. Everything else is the person's: what
     // is set, what is answered, and which request is under their eyes.
     // So is tightening things: being asked again, stopping a plan.
-    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder | Act::AskAgain(..) | Act::StopPlan(_) | Act::CreateShowcase);
+    let anyones = matches!(
+        action,
+        Act::Go(_)
+            | Act::Open(_)
+            | Act::OpenFolder
+            | Act::OpenProjectFolder(_)
+            | Act::AskAgain(..)
+            | Act::StopPlan(_)
+            | Act::CreateShowcase
+            | Act::CreateProject { .. }
+    );
     if !anyones && driven {
         return Err(presence::BY_HAND.to_string());
     }
     match action {
+        Act::Go(pane) => {
+            state.pane = pane;
+            Ok(String::new())
+        }
+        Act::CreateProject { name, for_workbook } => {
+            // The workbook it is the code of is the one that is open: nobody names another.
+            let workbook = if for_workbook { app.session.active().map(|doc| doc.title.clone()) } else { None };
+            let created = modules::create_project(&name, workbook.as_deref())?;
+            state.new_name.clear();
+            state.new_for = false;
+            // The window turns to what was made.
+            let id = starter::id_for(&name);
+            if manifest::valid_id(&id) {
+                state.pane = Pane::Project(id);
+            }
+            Ok(created)
+        }
+        Act::OpenProjectFolder(id) => match (modules::places(), &app.services.open_url) {
+            (Some(at), Some(open_url)) if manifest::valid_id(&id) && at.modules.join(&id).is_dir() => {
+                open_url(&at.modules.join(&id).display().to_string());
+                Ok(String::new())
+            }
+            (Some(_), Some(_)) => Err("That project's folder is no longer there.".into()),
+            _ => Err(modules::UNAVAILABLE.into()),
+        },
         Act::Level(level) => {
             let from = agents::snapshot().level;
             // Letting agents go further is confirmed by the operating system's own question.
@@ -788,10 +1207,27 @@ mod tests {
         h
     }
 
+    /// Opens the window and turns to the MCP server's part, where agents are seen to. (While a
+    /// single request waits, the window opens on that request's card, with no list beside it.)
     fn open(h: &mut Harness) {
+        open_top(h);
+        go(h, kits::SERVER);
+    }
+
+    /// Opens the window as it opens by itself: on its top, unless something waits for an answer.
+    fn open_top(h: &mut Harness) {
         h.state_mut().open_dialog(NAME, json!({}));
         // A new window takes a few frames to find its size and place; clicks go by position.
         h.run_steps(6);
+    }
+
+    /// Turns to another part of the window, by its name in the list down the side.
+    fn go(h: &mut Harness, part: &str) {
+        h.run_steps(2);
+        if h.query_by_role_and_label(Role::Button, part).is_some() {
+            h.get_by_role_and_label(Role::Button, part).click();
+        }
+        h.run_steps(4);
     }
 
     fn click(h: &mut Harness, label: &str) {
@@ -2107,21 +2543,41 @@ mod tests {
         h.run_steps(3);
         assert!(h.state().dialog.is_none() && devpage::wanted(&ctx));
         assert!(devpage::take_raise(&ctx) && !devpage::take_raise(&ctx), "it comes to the front, once");
+        // It opens on its top: the whole at a glance, and the list of its parts down the side.
         let first = told(&mut h);
-        assert_eq!((&first["intro"], &first["agents"]["level"], &first["looking"]), (&json!(card::INTRO), &json!("off"), &Json::Null));
-        assert_eq!(first["agents"]["status"], json!({"kind": "off", "text": "Not serving: agent access is off."}));
-        assert_eq!(first["agents"]["levels"].as_array().unwrap().len(), 5);
-        assert_eq!(first["tools"]["modules"], "1 installed, 0 trusted");
+        assert_eq!((&first["title"], &first["pane"]["kind"], &first["looking"]), (&json!("Development"), &json!("overview"), &Json::Null));
+        assert_eq!((&first["pane"]["intro"], &first["pane"]["server"]["level"]), (&json!(card::INTRO), &json!("Off")));
+        assert_eq!(first["pane"]["server"]["status"], json!({"kind": "off", "text": "Not serving: agent access is off."}));
+        assert_eq!(
+            (&first["pane"]["kits"][0]["name"], &first["pane"]["kits"][0]["projects"]),
+            (&json!("Anie Development Kit"), &json!("1 project, 0 trusted"))
+        );
+        let listed: Vec<&str> = first["nav"].as_array().unwrap().iter().map(|row| row["label"].as_str().unwrap()).collect();
+        assert_eq!(listed, ["Development", "MCP Server", "Development Kits", "Anie Development Kit", "Libraries", "Clean Data"]);
+        assert_eq!((&first["nav"][0]["selected"], &first["nav"][1]["go"]), (&json!(true), &json!("server")));
         assert!(first["theme"]["window"].as_str().unwrap().starts_with('#'));
         assert!(devpage::state(h.state_mut(), &ctx).is_none(), "it is not told again at once");
+        // The person turns to the MCP server's part.
+        page(&mut h, json!({"act": "go", "to": "server"}));
+        let server = told(&mut h);
+        assert_eq!(
+            (&server["pane"]["kind"], &server["pane"]["title"], &server["pane"]["level"]),
+            (&json!("server"), &json!("MCP Server"), &json!("off"))
+        );
+        assert_eq!(server["pane"]["levels"].as_array().unwrap().len(), 5);
+        assert_eq!((&server["nav"][0]["selected"], &server["nav"][1]["selected"]), (&json!(false), &json!(true)));
         // A click there goes the way a click in GridCraft's own window goes: raising the level
         // ends in the operating system's question.
         page(&mut h, json!({"act": "level", "level": "ask"}));
         assert_eq!((asked.questions().len(), agents::snapshot().level, kept_level(&s)), (1, Level::Ask, Level::Ask));
         let now = told(&mut h);
         assert_eq!(
-            (&now["agents"]["level"], &now["agents"]["serving"], &now["said"]),
+            (&now["pane"]["level"], &now["pane"]["serving"], &now["said"]),
             (&json!("ask"), &json!(true), &json!("Agent access: Ask me each time."))
+        );
+        assert_eq!(
+            (&now["nav"][1]["hint"], &now["nav"][1]["mark"], &now["nav"][1]["badge"]),
+            (&json!("Ask me each time"), &json!("ok"), &Json::Null)
         );
         // The setup goes to the clipboard by GridCraft: the page is never handed the token.
         page(&mut h, json!({"act": "copySetup", "json": false}));
@@ -2132,7 +2588,8 @@ mod tests {
         let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/extra.py", "text": text}));
         let now = told(&mut h);
         assert_eq!(now["looking"], Json::Null);
-        let waiting = &now["agents"]["waiting"][0];
+        assert_eq!(now["nav"][1]["badge"], "1", "the list says that something waits there");
+        let waiting = &now["pane"]["waiting"][0];
         assert_eq!((&waiting["id"], &waiting["kind"], &waiting["target"]), (&json!(id), &json!("Create file"), &json!("clean-data/python/extra.py")));
         // The person looks: the card, in the words GridCraft's own window uses.
         page(&mut h, json!({"act": "look", "id": id}));
@@ -2185,6 +2642,10 @@ mod tests {
             "{\"act\":\"allow\"}",
             "{\"act\":\"level\",\"level\":\"root\"}",
             "{\"act\":\"open\",\"name\":\"development\"}",
+            "{\"act\":\"go\",\"to\":\"elsewhere\"}",
+            "{\"act\":\"go\",\"to\":\"project:../clean-data\"}",
+            "{\"act\":\"openProjectFolder\"}",
+            "{\"act\":\"createProject\"}",
             wordy.as_str(),
         ] {
             assert!(!devpage::handle(h.state_mut(), &ctx, bad), "{bad:.40}");
@@ -2195,6 +2656,33 @@ mod tests {
         page(&mut h, json!({"act": "open", "name": "modules"}));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(modules::NAME));
         h.state_mut().dialog = None;
+        page(&mut h, json!({"act": "open", "name": "macros"}));
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::macros::NAME));
+        h.state_mut().dialog = None;
+        // The kit's part, with its projects by what they are for.
+        page(&mut h, json!({"act": "go", "to": "kit"}));
+        let kit = told(&mut h)["pane"].clone();
+        assert_eq!((&kit["kind"], &kit["title"], &kit["standing"]), (&json!("kit"), &json!("Anie Development Kit"), &json!("Built in  ·  loaded")));
+        assert_eq!((&kit["groups"][0]["label"], &kit["groups"][0]["projects"]), (&json!("Workbook code"), &json!([])));
+        assert_eq!(kit["groups"][1]["projects"][0]["name"], "Clean Data");
+        // A new project made there is the code of the workbook that is open: GridCraft says
+        // which workbook that is, whatever the page sends with it.
+        let title = h.state().session.active().unwrap().title.clone();
+        page(&mut h, json!({"act": "createProject", "name": "Budget Macros", "forWorkbook": true, "workbook": "Elsewhere.xlsm"}));
+        let now = told(&mut h);
+        assert_eq!(now["said"], json!(format!("Budget Macros was created, as the code of {title}. It is not trusted yet.")));
+        let made = &now["pane"];
+        assert_eq!(
+            (&made["kind"], &made["id"], &made["kindLabel"], &made["statusLabel"]),
+            (&json!("project"), &json!("budget-macros"), &json!("Workbook code"), &json!("Not trusted"))
+        );
+        assert_eq!(made["forSays"], json!(format!("It says it is the code of the workbook {title:?}, which is open now.")));
+        assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "project:budget-macros" && row["selected"] == true));
+        assert_eq!(list()["modules"].as_array().unwrap().iter().find(|m| m["id"] == "budget-macros").unwrap()["status"], "untrusted");
+        assert_eq!(asked.questions().len(), 1, "creating it asked nothing and trusted nothing");
+        // A project that is gone gives way to its kit.
+        std::fs::remove_dir_all(s.0.join("modules/budget-macros")).unwrap();
+        assert_eq!(told(&mut h)["pane"]["kind"], "kit");
         // The person can have GridCraft's own window instead, until GridCraft closes.
         page(&mut h, json!({"act": "builtin"}));
         assert!(!devpage::wanted(&ctx) && !devpage::takes_over(&ctx));
@@ -2237,19 +2725,63 @@ mod tests {
     }
 
     #[test]
-    fn the_window_gathers_the_tools() {
-        let _s = Sandbox::new("agents-tools");
+    fn the_window_opens_on_its_top_and_each_part_has_its_place() {
+        let s = Sandbox::new("agents-tools");
         create("Clean Data").unwrap();
         let mut h = harness(app_with(Some(&yes())));
-        open(&mut h);
+        // The top: the MCP server, the kits and the open workbook, each at a glance.
+        open_top(&mut h);
         h.get_by_label(card::INTRO);
-        h.get_by_label("1 installed, 0 trusted");
+        h.get_by_label("Not serving: agent access is off.");
+        h.get_by_label("1 project, 0 trusted");
+        h.get_by_label(kits::KITS_NOTE);
+        h.get_by_label("It carries no macros.");
+        assert!(h.query_by_role_and_label(Role::RadioButton, "Full control").is_none(), "the levels are in the server's own part");
+        // The MCP server's part: it stands at the top of the list, not under a kit.
+        // The window keeps its size and place from one frame to the next.
+        let place = h.get_by_label("Close").rect();
+        h.run_steps(3);
+        assert_eq!(h.get_by_label("Close").rect(), place, "the window does not grow as it is drawn");
+        click(&mut h, "Open MCP Server");
+        h.get_by_role_and_label(Role::RadioButton, "Full control");
+        assert!(h.query_by_label(card::INTRO).is_none());
+        // The kit's part: what it needs to run, the way to its other windows, its projects by kind.
+        go(&mut h, "Anie Development Kit");
+        h.get_by_label("Python · Svelte");
+        h.get_by_label("1 project, 0 trusted");
         h.get_by_label_contains("Python: found automatically.");
+        h.get_by_label(kits::PROJECTS_NOTE);
+        h.get_by_label("None yet.");
         click(&mut h, "Modules…");
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(modules::NAME));
-        open(&mut h);
+        open_top(&mut h);
+        go(&mut h, "Anie Development Kit");
         click(&mut h, "Console…");
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::console::NAME));
+        // A project has a part of its own: what it is for, where it stands, what it asks.
+        open_top(&mut h);
+        go(&mut h, "Clean Data");
+        h.get_by_label("Anie Development Kit  ·  Library");
+        h.get_by_label("It is for any workbook.");
+        h.get_by_label("It asks to be allowed to:");
+        h.get_by_label("Not trusted");
+        // A new project, made in the kit's part as the code of the workbook that is open.
+        go(&mut h, "Anie Development Kit");
+        h.get_by_role_and_label(Role::TextInput, "New project:").focus();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::TextInput, "New project:").type_text("Budget Macros");
+        h.run_steps(2);
+        h.get_by_label_contains("It is the code of").click();
+        h.run_steps(2);
+        click(&mut h, "Create Project");
+        let title = h.state().session.active().unwrap().title.clone();
+        let made = gridcraft_aniefork_dev::module::load(&s.0.join("modules/budget-macros"));
+        assert_eq!(made.manifest.unwrap().workbook, Some(title.clone()));
+        // The window turns to what was made, which is not trusted.
+        h.get_by_label("Anie Development Kit  ·  Workbook code");
+        h.get_by_label(&format!("It says it is the code of the workbook {title:?}, which is open now."));
+        h.get_by_label(&format!("Budget Macros was created, as the code of {title}. It is not trusted yet."));
+        assert_eq!(h.state().dialog.as_ref().and_then(|d| d.values.get("part")), Some(&json!("project:budget-macros")));
         // The Developer tab's button, and the bar under the ribbon, open it by this name. (The
         // ribbon's buttons carry no names a test can click them by.)
         assert!(crate::aniefork::draws_dialog(NAME));
@@ -2270,7 +2802,8 @@ mod tests {
         let seen = opened.clone();
         app.services.open_url = Some(Box::new(move |address: &str| seen.borrow_mut().push(address.to_string())));
         let mut h = harness(app);
-        open(&mut h);
+        open_top(&mut h);
+        go(&mut h, "Anie Development Kit");
         // Created like any module: on disk, and not trusted.
         click(&mut h, "Create Showcase");
         assert!(s.0.join("modules/svelte-showcase/panel/app.js").is_file() && s.0.join("modules/svelte-showcase/source/src/App.svelte").is_file());

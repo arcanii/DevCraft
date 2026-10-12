@@ -6,8 +6,9 @@
 //! in a window of its own that stays open while the person works. There are two halves, as
 //! with a docked panel:
 //!
-//! - **This module** says what the window shows ([`state`]): everything, as JSON, in the words
-//!   `card.rs` gives both windows. And it takes what the person clicked there ([`handle`]),
+//! - **This module** says what the window shows ([`state`]): the list down its side and the
+//!   one part beside it, as JSON, in the words `card.rs` and `kits.rs` give both windows. And
+//!   it takes what the person clicked there ([`handle`]),
 //!   which goes through the same [`development::act`] as a click in GridCraft's own window.
 //! - **The shell** has the window and the web view. It serves the page from files compiled
 //!   into the app, hands it the state when that changes, and passes on its messages.
@@ -31,6 +32,7 @@ use gridcraft_aniefork_dev::bridge::Places;
 use serde_json::{Value as Json, json};
 
 use super::development::{self, Act, State};
+use super::kits::{self, Pane};
 use super::{agents, card, modules};
 use crate::SheetApp;
 use crate::theme::Tokens;
@@ -39,6 +41,8 @@ use crate::theme::Tokens;
 const MAX_MESSAGE: usize = 4096;
 /// The most of what the person tells the agent with a no (characters).
 const MAX_REASON: usize = 400;
+/// The longest name typed for a new project (characters).
+const MAX_NAME: usize = 80;
 /// How often what the window shows is worked out again while nothing was clicked (milliseconds).
 const EVERY_MS: f64 = 300.0;
 
@@ -222,10 +226,10 @@ fn review(at: &Places, asked: &Asked, state: &mut State, confirms: bool) -> Json
     })
 }
 
-/// The Agents part: the level, how to connect, who connected, what waits, the plans.
-fn agents_part(now: &agents::Snapshot, state: &State) -> Json {
+/// The MCP server's part: the level, how to connect, who connected, what waits, the plans.
+fn server_part(now: &agents::Snapshot, state: &State) -> Json {
     if !now.available {
-        return json!({"available": false, "unavailable": card::NO_AGENTS});
+        return json!({"kind": "server", "title": kits::SERVER, "above": [kits::TOP], "available": false, "unavailable": card::NO_AGENTS});
     }
     let at = modules::places();
     let levels: Vec<Json> =
@@ -269,6 +273,9 @@ fn agents_part(now: &agents::Snapshot, state: &State) -> Json {
         .map(|(module, kind)| json!({"module": module, "kind": if *kind == Kind::Edit { "edit" } else { "run" }, "covers": agents::covers(module, *kind)}))
         .collect();
     json!({
+        "kind": "server",
+        "title": kits::SERVER,
+        "above": [kits::TOP],
         "available": true,
         "intro": card::AGENTS,
         "level": now.level.code(),
@@ -284,25 +291,6 @@ fn agents_part(now: &agents::Snapshot, state: &State) -> Json {
         "unasked": unasked,
         "lately": card::lately(now),
         "latelyNote": card::RECORD,
-    })
-}
-
-/// The Tools part: each development tool, where it stands.
-fn tools_part(app: &SheetApp, ctx: &egui::Context) -> Json {
-    let Some(tools) = card::tools(app, ctx) else { return json!({"available": false, "unavailable": card::NO_MODULES}) };
-    json!({
-        "available": true,
-        "modules": tools.modules,
-        "console": tools.console,
-        "python": tools.python,
-        "folder": tools.folder,
-        "canOpenFolder": tools.can_open_folder,
-        "showcase": {
-            "stands": match tools.showcase { None => "none", Some(true) => "trusted", Some(false) => "untrusted" },
-            "text": tools.showcase_says,
-            "canDock": tools.can_dock,
-            "canBrowse": tools.can_browse,
-        },
     })
 }
 
@@ -332,14 +320,25 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
             Json::Null
         }
     };
+    // A project that is no longer there gives way to its kit.
+    if let Pane::Project(id) = &state.pane
+        && kits::project_pane(app, id).is_none()
+    {
+        state.pane = Pane::Kit;
+    }
+    // The list down the side, and the one part that is shown beside it.
+    let part = match &state.pane {
+        Pane::Server => server_part(&now, &state),
+        other => kits::pane(app, ctx, other, &now),
+    };
     let told = json!({
         "theme": theme(ctx),
-        "intro": card::INTRO,
+        "title": kits::TOP,
         "said": state.said,
         "error": page.error,
         "looking": looking,
-        "agents": agents_part(&now, &state),
-        "tools": tools_part(app, ctx),
+        "nav": kits::nav(app, &state.pane, &now),
+        "pane": part,
     });
     page.stale = false;
     page.told_at = at_ms;
@@ -404,12 +403,21 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
             kind.zip(module).map(|(kind, module)| Act::AskAgain(module.to_string(), kind))
         }
         "stopPlan" => id().map(Act::StopPlan),
+        // Another part of the window.
+        "go" => message.get("to").and_then(Json::as_str).filter(|to| to.len() <= 80).and_then(Pane::parse).map(Act::Go),
         "open" => match message.get("name").and_then(Json::as_str) {
             Some("modules") => Some(Act::Open(modules::NAME)),
             Some("console") => Some(Act::Open(super::console::NAME)),
+            Some("macros") => Some(Act::Open(super::macros::NAME)),
             _ => None,
         },
         "openFolder" => Some(Act::OpenFolder),
+        "openProjectFolder" => message.get("id").and_then(Json::as_str).filter(|id| id.len() <= 64).map(|id| Act::OpenProjectFolder(id.to_string())),
+        // A new project: its name is what the person typed, and the workbook it is the code
+        // of is the one that is open (GridCraft says which, not the page).
+        "createProject" => message.get("name").and_then(Json::as_str).filter(|name| name.chars().count() <= MAX_NAME).map(|name| {
+            Act::CreateProject { name: name.to_string(), for_workbook: message.get("forWorkbook").and_then(Json::as_bool).unwrap_or(false) }
+        }),
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
         _ => None,

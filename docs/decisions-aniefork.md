@@ -817,7 +817,7 @@ as built.
 | Phase | What | Stands |
 |---|---|---|
 | V0 | Read the project: the viewer, the command, the agent's two tools | **Built**, 2026-10-13 |
-| V1 | An agent rebuilds what the macros do as a module (Python scripts, a panel), through the requests and plans that exist: it reads the VBA and the workbook, proposes a plan, the person reads every file and trusts it. With it, a note the module keeps of which procedure became which script | **Built** in the Development crate, 2026-10-13 (below); what the windows show of it, and a trial, come next |
+| V1 | An agent rebuilds what the macros do as a module (Python scripts, a panel), through the requests and plans that exist: it reads the VBA and the workbook, proposes a plan, the person reads every file and trusts it. With it, a note the module keeps of which procedure became which script | **Built**, 2026-10-13, and tried once (below) |
 | V2 | What Excel ran by itself (`Workbook_Open`, `Worksheet_Change`) answered by the module's events, for a module the person trusts, with a visible switch | Needs the events of phase 2a taken further ("a workbook was opened by this module's workbook"), and a decision on what may run without a click |
 | V3 | The module carried in the workbook (a custom XML part), so that the workbook and what replaces its macros are one file | Needs the decision above, and Excel asked again at more length |
 | later | Help with the language itself: a real parser, for mechanical translation of the easy cases | Only if V1 shows the need |
@@ -831,8 +831,7 @@ as built.
   gives (what there is, what runs by itself, what reaches outside). A parser earns its place
   when GridCraft itself has to translate, which is "later" in the table.
 
-**V1, in the Development crate (2026-10-13): what an agent needs to rebuild the macros as a
-project.** What the windows show of it comes with the Development window's new shape.
+**V1, built and tried (2026-10-13): an agent rebuilds the macros as a project.**
 
 - **A project can say which workbook it is the code of**: `workbook = "Budget.xlsm"` in its
   `module.toml`. A file's name only, never a path (a path is another on every computer). It
@@ -852,18 +851,40 @@ project.** What the windows show of it comes with the Development window's new s
   It is checked like a manifest (256 KB, 2000 entries, names and notes of one line, a script
   that is a path inside the project) and a note that can't be understood says nothing. **It
   is the project's own word**: nothing checks that a script does what a procedure did, so it
-  is data to an agent.
-- **An agent is told of it**: `list_macros` carries what the projects that name the open
-  workbook say became of each procedure (`rebuilt`, beside each), so that an agent picks up
-  where the work was left. A module is listed with its kind, its workbook and its note.
+  is shown as what the project says, and it is data to an agent.
+- **Where it shows.** Developer ▸ Macros says, beside each module, what a project says
+  became of its procedures, and how many of the workbook's procedures are spoken for; a
+  script that is named and not there is said. The project's own part of the Development
+  window lists the note. `developer.macros` and the agent's `list_macros` carry it
+  (`rebuilt`, beside each procedure), so that an agent picks up where the work was left.
 - **What the agent is told.** `reference` has a topic `macros`: read first; what each kind
   of procedure becomes (a script; the panel for a form; an event is rebuilt as a script the
   person runs, since GridCraft runs nothing by itself; a door into a Windows library is
   left, with a note); one plan for the whole; the two files' shapes; how VBA's ways of
   reaching the sheet read in a script; and not to carry a password or an address out of the
   VBA.
+- **The way in, for a person**: Developer ▸ Macros has "Copy a Request for Your Agent". It
+  copies a few fixed words that send the agent to the Development server and that topic.
+  They hold nothing of the macros, and no token.
 - **Nothing else was needed**, as expected: the plan, its one card and its steps are those
   of phase 2e.
+
+**The trial** (2026-10-13). A copy of GridCraft with settings of its own, agent access at
+"Ask me each time", and the workbook Excel made for the first slice (`AddUp`, which sums
+`A1:A10` and shows the total; a private function nothing calls; an empty `Workbook_Open`).
+An agent's client, speaking the server's protocol and nothing else, read how things stood,
+the `macros` topic and the three modules, and proposed one plan of eight steps: create the
+project, write its `module.toml` (naming the workbook; `read` and `python`), write
+`add_up.py`, delete the starter's script and panel, write `rebuilt.toml`, trust, run. The
+plan was read on its card and approved with one click in the window; the eight steps were
+carried out without another question. The script gave `Total: 0` on the workbook as Excel
+made it (text in `A1`, nothing below), and `Total: 42.5` on a copy with 5, 7.5 and 30 under
+it, which is what the macro's `Sum` gives. The window then showed the project under
+"Workbook code", trusted, and "1 of the 3 is rebuilt".
+
+What the trial was not: the agent was the fork's own developer's, and the clicks in the
+window were its doing too, in that copy. Claude Code itself, set up by a person, has not
+done this yet. And the workbook was small: one procedure of five lines.
 
 **Open.**
 
@@ -873,12 +894,73 @@ project.** What the windows show of it comes with the Development window's new s
   or its signature looked at.
 - A project protected with a password still has its source in the file, and it is shown:
   that protection is Excel's editor's, not the file's.
-- The viewer is not in the Development window's list of tools yet (the ribbon has it).
 - **Whether "Read only" should reach macros** is the owner's to say (above).
+- The rebuild was tried once, on a small workbook, by the developer's own agent: not by
+  Claude Code set up by a person, and not on macros with forms, events that do something,
+  or calls into libraries.
 - Nothing compares a script with the procedure it says it rebuilds. The note is a claim.
 - An agent that rebuilds has no way to try the macro itself (GridCraft runs none), so it
   can't compare what the two give: the person has to.
 - Only the workbook that is open is read; an agent is told of another when it is opened.
+
+### Development kits and projects: the shape of the Development window
+
+**What the owner asked (2026-10-13).** "For the development menu, apply a nice design: we
+want a top level: Development kit (ours is the Python - Svelte UI). These would be loaded
+mods, and others can be loaded in. Then inside our Development Kit, it would have a list of
+projects. These could be workbook code or libraries. The MCP should be at the Development
+top level." And the kit's name: "Anie Development Kit".
+
+**The shape.**
+
+```text
+Development                    the whole, at a glance
+  MCP Server                   agents: how far they may go, and what they ask
+  Development Kits
+    Anie Development Kit       Python and Svelte: the kit this build has
+      Workbook code            projects that are the code of one workbook
+      Libraries                projects for any workbook
+```
+
+- **A development kit** is a way of building on GridCraft: what a project is made of, and
+  how it is run. The kits are listed (`gridcraft_aniefork_dev::kit`), not assumed to be
+  one. The one this build has is the Anie Development Kit: Python scripts and a web panel,
+  which can be a Svelte app.
+- **A project** is what the kit's files and the Development server's tools call a module.
+  It is one of two kinds, by what its `module.toml` says: **workbook code**, when it names
+  a workbook, or a **library**. The kind decides nothing.
+- **The MCP server is not a kit's.** It stands at the top, beside the kits, with everything
+  the Agents part held: the level, the connection, what waits, the plans.
+- **The window** has that list down its side and one part beside it: the top (the server,
+  the kits and the open workbook with its macros, each at a glance), the server, the kit
+  (what it runs with, its projects by kind, a new project, the showcase) and a project
+  (what it is for, where it stands, what it asks, what is in it, what it says it rebuilt).
+  A request's card still takes the place of all of it. A new project can be made in the
+  kit's part as the code of the workbook that is open: GridCraft says which workbook that
+  is, not the page.
+- **Both windows draw the same** (`kits.rs` says it once, as `card.rs` does for a card):
+  GridCraft's own, and the page, whose Svelte app was redrawn around the list.
+
+**Not built, and open.**
+
+- **There is no way to load another kit.** The list has one entry and the window says so.
+  How a kit that isn't compiled into GridCraft would be loaded is not decided. What is
+  known: it can't be a library loaded into the process (the workspace forbids `unsafe`, and
+  a kit's code would then be GridCraft's own); the two things of this kind GridCraft
+  already does are a process of its own spoken to over a pipe (Python) and a client that
+  connects (an agent). A kit as a process that speaks a small protocol would be of a piece
+  with both. That is a proposal, not a decision.
+- **"Loaded" can't be undone**: the kit can't be turned off as a whole.
+- **Two words for one thing.** The Development window says *project*. The files
+  (`module.toml`), the server's tools (`create_module`), a request's card, Modules and the
+  levels' own words still say *module*: about 700 strings, and the tests that hold them.
+  The window says so where projects are listed. Renaming the rest is mechanical and belongs
+  in a commit of its own; it is the owner's to ask for.
+- **Reviewing, trusting and running a project** is still done in Modules: the project's
+  part has the way there.
+- **A project names its workbook by the file's name.** Two workbooks of one name are the
+  same to it. That is enough to say what a project is for; it is not enough for anything
+  that would run by itself (phase V2), which needs the decision of "modules and workbooks".
 
 ### Backlog
 
