@@ -10,14 +10,18 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as Json;
 
-/// How heavily the selection's outline is drawn.
+/// How heavily the selection's outline is drawn. It is always a whole number of device pixels
+/// wide (`aniefork::selection::Bars`), so a weight is the nearest such to its points.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Outline {
-    /// Upstream's: two points.
+    /// Upstream's: two points. Three pixels on a display at 150%.
     #[default]
     Standard,
+    /// One and a half points: two pixels on a display at 100% to 150%, which is what Excel was
+    /// measured to draw at 150%.
     Thin,
+    /// One point: the gridline itself, in the selection's colour.
     Hairline,
 }
 

@@ -1417,7 +1417,8 @@ pub(crate) fn paint_selection(
         }
     }
     if cur_here && look.shown {
-        p.rect_stroke(outline.expand(0.5), 0.0, Stroke::new(look.width, t.sel_border), StrokeKind::Middle);
+        // The fork lays the outline on the gridlines, a whole number of pixels wide (aniefork).
+        crate::aniefork::selection::paint_outline(p, outline, look.width, t.sel_border);
     }
     if active_here && look.shown && sel.ranges.len() > 1 {
         p.rect_stroke(active, 0.0, Stroke::new(1.0, t.sel_border), StrokeKind::Inside);
