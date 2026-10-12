@@ -6,9 +6,11 @@
 //! a module containing anything that isn't a plain file or folder (a link, which could point
 //! outside it) is not fingerprinted at all, and so can't be trusted.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
 use crate::manifest::{self, Manifest};
 use crate::sha256::Sha256;
@@ -21,6 +23,18 @@ pub const MAX_FILES: usize = 2_000;
 pub const MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// How deep a module's folders may nest.
 const MAX_DEPTH: usize = 16;
+
+/// What keeps a module's files as they were checked for as long as they are being run.
+///
+/// Whoever runs a module's code holds it shared, from before the trust check until the code
+/// has finished; whoever changes the module's files through GridCraft needs it alone, and is
+/// refused while it is held. Without it a file could be changed between the check and the
+/// moment Python reads it, and what ran would not be what the user trusted.
+pub fn in_use(dir: &Path) -> Arc<RwLock<()>> {
+    static IN_USE: OnceLock<Mutex<HashMap<PathBuf, Arc<RwLock<()>>>>> = OnceLock::new();
+    let mut all = IN_USE.get_or_init(Mutex::default).lock().unwrap_or_else(PoisonError::into_inner);
+    all.entry(dir.to_path_buf()).or_default().clone()
+}
 
 /// A module as found on disk. It may be broken: then `problem` says how, and it can't be trusted.
 #[derive(Clone, Debug, PartialEq, Eq)]

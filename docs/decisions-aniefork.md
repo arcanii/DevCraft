@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge), phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log) and phase 2b (the workbook as objects, for panels and scripts alike; a script calls the spreadsheet while it runs) |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge), phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log), phase 2b (the workbook as objects, for panels and scripts alike; a script calls the spreadsheet while it runs) and the first slice of phase 2e (a Development server for agents, a second MCP server; the Development window; how far agents may go is the user's to set) |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -54,7 +54,7 @@ The experience the owner asked for, which this record designs for:
 | Where panels appear | In the user's browser first; docked inside the GridCraft window later, over the same bridge |
 | Which Python | The user's own. A setup wizard that installs Python for the user is wanted later (backlog) |
 | Modules carried inside workbooks | **Open.** Microsoft embeds code in workbooks; GridCraft may find a different approach. See "Open: modules and workbooks" |
-| Agents using modules | Backlog at first; **decided 2026-10-12: taken up as phase 2e, after the workbook as objects (2b)**, on the model of Anie_Maint's console. Until it is built the control channel and MCP cannot run a module's code |
+| Agents and the development tools | Backlog at first. **Decided 2026-10-12**, in four points: a second MCP server in the Development area, apart from GridCraft's own; a Development management window, opened from the Developer tab; the user sets how far agents may go, up to full control; approved plans come after single requests. Built as phase 2e (below) |
 | Fork or upstream | Fork-only until it is proven, then offered upstream in phases. It must be modular enough for that |
 
 Two requirements came with the decisions, and shape the two sections after the next:
@@ -224,10 +224,19 @@ The requirement: the user chooses to trust a module or not. The mechanics:
   refused. And the last step is a question drawn by the operating system (the module's name,
   everything it will be allowed, how many files it has), which the control channel's synthetic
   clicks cannot answer. A build that has no such dialog (the web build) cannot trust modules.
+  Since phase 2e an agent on the Development server can ask for a module to be trusted. The
+  user answers, on a card that shows what the module would be allowed and then to the
+  operating system's question, unless they set agents to full control. Trust asked for is
+  given to the contents the agent asked about, and never "as it changes".
 - **Running is checked where it happens.** The Python host reads the module and the user's
   decisions from disk on every call, and refuses, before any process exists, a module that is
   untrusted, changed, or was not granted `python`, and a script that is not one of its files.
-  There is no command that runs a script, so agents cannot run one either (backlog).
+  There is no command that runs a script. An agent asks for one to be run through the
+  Development server (phase 2e), and the host checks that run as it checks any other.
+- **What was checked is what runs** (phase 2e). Whoever runs a module's code holds the module
+  from before the trust check until the code has finished, and a change to its files through
+  GridCraft is refused meanwhile. A file changed by another program in that moment is outside
+  what GridCraft can see: trusting a module is trusting that its folder is the user's own.
 - **The bridge is closed to everyone else.** Loopback only, a random port and a secret token for
   each module, made anew each time GridCraft runs. Every request must name the bridge by its
   loopback address (a name pointed at the machine is refused) and start with the token; a call
@@ -241,7 +250,10 @@ The requirement: the user chooses to trust a module or not. The mechanics:
   opening a panel and naming the Python to run are refused while the channel is putting input
   into the window (and for a moment after), and the Modules dialog works from a state of its
   own that the channel can't write. Without this, an agent could have named any program as
-  "Python" and pressed Check Python to run it: a gap in phase 1b, closed in 1c.
+  "Python" and pressed Check Python to run it: a gap in phase 1b, closed in 1c. The same
+  holds for how far agents may go, the Development server's port and token, and the answers
+  to what agents ask (phase 2e). And GridCraft's own settings folder is out of the control
+  channel's reach: it can open and save files anywhere else.
 - **The Developer console is the user's record of what modules did** (phase 2a): what a script
   printed, why a script or a call failed, what a panel wrote with `spreadsheet.log`, and each
   call refused for want of an ability. A module can add to it and can neither read it nor
@@ -283,6 +295,10 @@ contents by the user. Directions to weigh when this is taken up:
   holds no JavaScript or TypeScript file. Starter modules are created by "New Module" from
   templates compiled into the app, so no sample panel or script is checked in. This exception
   has to be settled with upstream before the bridge is offered there.
+- The Development server (phase 2e) adds no dependency: it speaks MCP over the HTTP reading
+  the bridge already had, now shared between the two, and the JSON-RPC is written by hand as
+  upstream's MCP server's is. The app gains a listening port when the user turns agents on,
+  and at no other time.
 - The crate gains one dependency, `getrandom`, for the bridge's tokens (already in the workspace
   through other crates). The HTTP server is written on the standard library, so there is no web
   framework to keep patched; it answers one request per connection, with every size bounded.
@@ -321,34 +337,146 @@ contents by the user. Directions to weigh when this is taken up:
 | 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | **Done**, 2026-10-12: a script changes the sheet itself through `import spreadsheet`, with what its module was granted, from a panel and from Developer ▸ Modules; a panel and a script work with the same `sheet`, `range` and `workbook` |
 | 2c | Per-module Python environments: the packages of `requirements.txt` in an environment of the module's own, installed only when the user asks | The starter module's script uses pandas without the user installing anything by hand |
 | 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | The same starter module runs docked, unchanged |
-| 2e | Agents and modules over MCP (below). **Decided 2026-10-12, to follow 2b**; its mechanics are still a proposal | An agent asks to run a trusted module's script, and it runs only on the user's yes |
+| 2e | Agents and the development tools: the Development server, a second MCP server, and the Development window (below) | **First slice done**, 2026-10-12: an agent asks to write a module's file or run its script, the user reads the request on a card and answers, and it is carried out only on their yes, at a level they set. Approved plans are the next slice |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |
 
-### Agents and modules over MCP (phase 2e)
+### Agents and the development tools: the Development server (phase 2e)
 
-The owner asked (2026-10-12) whether the Development subsystem has an MCP, and pointed at
-Anie_Maint as a model. Today it has none of its own. GridCraft's MCP server (`gridcraft-cli
-mcp`, upstream's) reaches every command, and through the running app the fork's reporting ones
-(`developer.modules`, `developer.console`); it cannot trust a module, run a script or open a
-panel.
+**What the owner decided (2026-10-12).** Asked how agents should reach the Development
+subsystem, with Anie_Maint's console as the model, the owner set four points:
 
-**Decided the same day: it is taken up, after phase 2b.** The workbook as objects and Python
-calling back come first because they settle what an agent would be asking a module to do.
-What follows is the shape proposed for it, which the owner has not gone through point by
-point. Anie_Maint's three decisions map onto modules closely:
+| Point | Decision |
+|---|---|
+| Which server | **A second MCP server, in the Development area.** Its purpose is another than that of GridCraft's own MCP server, which drives the spreadsheet: this one helps drive development work inside it. It reaches every development tool, not only the first kind of module (a TypeScript panel with Python), and can help manage them |
+| Where it is managed | **A Development management window**, opened from the Developer tab: where the server is set up, and the development tools and projects are managed |
+| How far agents go | **The user sets it, all the way up to full control** |
+| Plans approved once (Anie_Maint's D25) | Staged in after single requests work |
+
+**What the first slice built.**
+
+- **The server is in the running app.** `agents` in the crate is an MCP server over HTTP on
+  the loopback address (one JSON-RPC message a request, answered as JSON; port 7980 unless
+  the user chose another). It is in the app because the app holds the workbook, the modules
+  and the question the operating system puts. Nothing listens until the user turns it on.
+- **How far agents may go is a level the user sets**, by hand, in the Development window:
+
+  | Level | What an agent may do |
+  |---|---|
+  | Off | Nothing: nothing listens. The default |
+  | Read only | Read modules, their files and the Developer console |
+  | Ask me each time | Ask for anything; each thing is done only on the user's yes |
+  | Build, and ask before running | Create modules and change their files without asking; running a script, opening a panel and trusting a module still ask |
+  | Full control | Everything without asking, trust and code included. It lasts until GridCraft closes: it is never kept in the settings |
+
+  Raising the level ends in the operating system's question; lowering it asks nothing, and
+  refuses what was waiting and is no longer allowed.
+- **Every action is a request.** The tools that read: `development_status`, `list_modules`,
+  `read_module_file`, `read_console`, `reference` (how to write a module, in GridCraft's own
+  words, with the panel's typings), `request_status`, `request_log`. The tools that ask:
+  `create_module`, `write_module_file`, `delete_module_file`, `run_script`, `open_panel`,
+  `trust_module`, `stop_trusting_module`. A tool that asks puts a request in a queue for the
+  app and waits a while for its outcome; the app decides, from the level as it is at that
+  moment, whether it is carried out at once, shown to the user, or refused. A request the
+  user doesn't answer lapses after twenty minutes. A no is an answer: after one the agent
+  must wait before asking for anything, twice as long with each no in a row.
+- **A request is answered on a card**, in the manner of a coding agent's permission prompt
+  (the owner asked for that, 2026-10-12): what it is, the thing itself in a block (for a
+  file that is there, the lines it would take out and put in, or the whole file), what a yes
+  would mean for the module's trust, and then yes, or no with a word for the agent on what
+  to do differently. A yes is confirmed by the operating system's own question.
+- **What is on the card is what is answered.** Only the user's own click puts a request's
+  card on screen or takes it off; the window opens on a card by itself only when a single
+  request waits. The card and the operating system's question name the request by its number
+  and by a mark of what it holds (the start of a SHA-256). A card can't be said yes to in its
+  first moment on screen, nor when what it holds is too long to show whole.
+- **What modules wrote is fenced.** A module's files, what its scripts print and return, the
+  console's entries and why a module is broken were written by a module or its author. They
+  reach an agent between markers that say so, carrying a number made for that answer, so
+  that text inside can't close the fence. Without such a number nothing is handed over.
+- **A change nobody looked at ends the trust in a module.** At "Build" an agent changes
+  files unasked. Such a change takes the module's trust back, whatever the files hold
+  afterwards: putting the old contents back does not bring it back. And a module's files are
+  not changed through GridCraft while one of its scripts is being checked or run: what was
+  checked is what runs. For a module the user keeps trusting as its files change, changing
+  its files asks at every level but full control, and so does taking its trust back.
+- **Everything is on the record:** each request and what became of it, in the Developer
+  console and in `agent-log.jsonl` beside the settings.
+
+**Never through an agent, a command or the control channel:** the level, the port, the token
+(which is kept in a file of its own, copied to the clipboard when the user asks for the
+setup, and neither drawn in the window nor reported); the answer to a request; choosing to
+keep trusting a module as its files change; naming the Python; clearing the console.
+`developer.agents` reports how the server stands, and nothing sets it.
+
+**How this maps onto Anie_Maint.**
 
 | Anie_Maint | Here |
 |---|---|
-| D17: a read-only MCP, with what remote machines wrote fenced as untrusted data | Reading modules and the Developer console. What scripts print is text a module wrote: it reaches an agent inside a fence that says so |
-| D22: every action is a request, raised as a native confirm that says what will be done and that a machine asked; only the click carries it out; off by default, turned on by hand | "Run this script of this trusted module on this data" as a request. The confirm is the operating system's, which the fork already uses for trust and which synthetic input cannot answer. A cancel is an answer, and asking again waits longer each time |
-| D25: a plan approved once, whose steps then run without a click, inside a window that closes | "This agent may run this script up to N times in the next T minutes", approved once |
-| Never through the MCP: the console's keys and its configuration | Never through an agent: installing or trusting a module, granting an ability, naming the Python, turning this option on, clearing the console |
+| D17: a read-only MCP, with what remote machines wrote fenced as untrusted data | The reading tools, and the fence round what modules wrote |
+| D22: every action is a request, raised as a native confirm that says what will be done and that a machine asked; off by default, turned on by hand | Every action is a request. The whole of it is shown on a card in the window, because the operating system's dialog (`rfd`) cannot show a file; the last step is that dialog. A no is an answer, and asking again waits longer each time |
+| D38: the confirm counts down and cancels itself | A request lapses after twenty minutes, and its card says how long it has |
+| D25: a plan approved once | Not built: the owner staged it after single requests |
+| The console MCP on a named pipe only the user's account can open | Not here: see what is open, below |
 
-What an agent asked for, and what happened, would be written to the Developer console, which
-is why the console came first.
+**Who can reach it, said plainly.**
+
+- A web page cannot: a request must name the server by its loopback address, carry no word
+  from a browser of where it comes from, and carry the token.
+- Another user of the same computer cannot, without the token. But **the port is a fixed
+  one**: on a computer other people use at the same time, a program of theirs that took the
+  port while GridCraft was closed would be sent the token by an agent that tried to connect.
+  A pipe only the user's account can open, as Anie_Maint's console has, would close that; it
+  needs code this crate forbids itself (`unsafe`) or a relay program, and is not built.
+- The control channel cannot read or write GridCraft's own settings folder (a hook added
+  with this slice): not the token, not the user's decisions, not a module's files.
+- **An agent that already runs programs as the user is not confined by any of this.** Claude
+  Code with its shell could read the token and the settings itself. The levels bound what is
+  done through GridCraft, and record it; they are not a sandbox round such an agent.
+- At full control an agent can trust a module and run its code: that is running any program
+  as the user, which is what the level says before it is chosen.
+
+**Found by an adversarial review before the first commit, and closed:** a file could be
+changed between the trust check and the moment Python read it (now refused while a script
+is checked or run, and a change nobody looked at ends the trust); the control channel could
+open the token file as a workbook, or save one over the settings (now out of its reach); a
+list of messages in one request could ask for more than could be answered (one message a
+request); a server that was turned off still answered clients already connected, and a
+client sending a byte now and then held a connection (now neither); two requests alike but
+for their contents could be swapped under the user's eyes by closing and opening the window
+(the window no longer chooses a card when several wait, and requests are numbered and
+marked); at "Build" an agent could take back the trust of a module kept trusted as it
+changes, change it unasked and ask for trust again (taking that trust back now asks); why a
+module is broken, which quotes its manifest, was told outside the fence.
+
+**Open.**
+
+- **Approved plans** (D25), as the owner staged. And, in the same family, "yes, and don't
+  ask again for this module until GridCraft closes", which a coding agent's prompt has.
+- **One click or two.** A yes is confirmed by the operating system because the control
+  channel can click in the window. When GridCraft runs without the control channel nothing
+  can, and one click on the card would do. Left as it is until the owner says.
+- **A transport only the user's account can open** (above), and a relay for agents that only
+  speak MCP over standard input and output.
+- **The other development tools.** The server reaches modules, their files, scripts and
+  panels, trust and the console. The command palette, the action journal and recorded
+  scripts are not on it yet, nor is naming the Python (the user's, by hand). "Projects", in
+  the owner's words, are read here as the modules a user is writing; if more is meant
+  (folders outside the modules folder, a build step) it belongs here.
+- **How the window is built.** The owner asked (2026-10-12) whether the dialogs could be
+  made with a web toolkit such as Svelte. The window is drawn with the app's own toolkit,
+  like every other dialog. A web toolkit needs the system web view (phase 2d), a build step
+  outside Rust, and an answer to upstream's "Rust only" rule; and the place where a request
+  is answered should not be a page a script could drive. A module's own panel is already a
+  web page, and can be written in Svelte today. Not decided.
+- The token is on the clipboard after the user copies the setup: whatever can paste can
+  read it.
+- The Trust card shows what the module asks and holds, not what changed since it was last
+  trusted.
+- It has been used over real connections by a test client, not yet by Claude Code itself.
 
 ### Backlog
 
 - A setup wizard that installs Python for the user.
-- (Letting agents use modules moved out of the backlog: it is phase 2e.)
+- (Letting agents use modules moved out of the backlog: it is phase 2e, whose own open
+  points are listed with it.)
 - Modules and workbooks (the open point above).

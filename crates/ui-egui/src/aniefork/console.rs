@@ -95,7 +95,7 @@ fn state_id() -> egui::Id {
 }
 
 /// How long ago, in a few words.
-fn ago(at_ms: Option<u64>, now_ms: f64) -> String {
+pub(super) fn ago(at_ms: Option<u64>, now_ms: f64) -> String {
     let Some(at) = at_ms else { return String::new() };
     let seconds = ((now_ms - at as f64) / 1000.0).max(0.0);
     if seconds < 5.0 {

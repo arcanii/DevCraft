@@ -2,8 +2,8 @@
 //!
 //! It is hidden until File ▸ Options ▸ "Show the Developer tab" turns it on, as Excel's is. Today
 //! it gathers the tools that already exist for that audience (the command palette, the action
-//! journal, how agents connect), and Modules: the first piece of the Development subsystem
-//! designed in `docs/decisions-aniefork.md` (ADR-0001).
+//! journal, how agents connect), and the Development subsystem designed in
+//! `docs/decisions-aniefork.md` (ADR-0001): the Development window, Modules and the Console.
 
 use egui::{Sense, Stroke, pos2, vec2};
 use serde_json::json;
@@ -47,6 +47,9 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
         app.open_dialog("agents", json!({}));
     }
     separator(ui);
+    if big_button(ui, Icon::Settings, "Development", "Your development tools, and how far an agent may help you with them", false).clicked() {
+        app.open_dialog(super::development::NAME, json!({}));
+    }
     if big_button(ui, Icon::Folder, "Modules", "The modules you have installed, and whether you trust them", false).clicked() {
         app.open_dialog(super::modules::NAME, json!({}));
     }

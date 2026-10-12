@@ -744,6 +744,10 @@ _serve()
                 return refused("That is not a module.".into());
             }
             let dir = modules.join(id);
+            // The module's files stay as they are checked here until the script has finished:
+            // nothing changes them through GridCraft meanwhile (see `module::in_use`).
+            let in_use = module::in_use(&dir);
+            let _as_checked = in_use.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             let found = module::load(&dir);
             let name = found.name().to_string();
             match TrustStore::load(trust).status(&found) {

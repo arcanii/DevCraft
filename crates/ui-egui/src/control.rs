@@ -165,6 +165,10 @@ fn filter_commands(commands: Vec<Json>, search: Option<&str>) -> Vec<Json> {
 }
 
 pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -> Outcome {
+    // The fork's settings folder is out of the channel's reach (aniefork).
+    if let Some(why) = crate::aniefork::control_refuses(p) {
+        return err(why);
+    }
     let s = |k: &str| p.get(k).and_then(Json::as_str);
     let f = |k: &str| p.get(k).and_then(Json::as_f64).unwrap_or(0.0) as f32;
     let out = match method {

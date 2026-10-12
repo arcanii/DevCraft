@@ -36,6 +36,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The selection's outline lies on the gridlines.** Upstream centres it half a point outside the cells, which puts its bottom and right sides a point past the gridlines they should cover; on a display at 125% or 150% a grey line shows inside them. Here each side covers its gridline and reaches outward from it, a whole number of device pixels wide, which is where Excel was measured to put it. | `Bars` and `paint_outline` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open), its second commit |
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
+| **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Modules, trust, Python, panels, events, a console and the workbook as objects** (the Development subsystem, phases 1a to 2b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what modules print and log; a script can work on the sheet itself, and panels and scripts share one set of objects for the workbook. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
 
@@ -201,9 +202,10 @@ It is the entry to the **Development subsystem**: modules a user installs that a
 Python to GridCraft. That is designed in [`docs/decisions-aniefork.md`](docs/decisions-aniefork.md)
 (ADR-0001), which the owner **accepted on 2026-10-11**: panels in the browser first and docked
 later, the user's own Python, fork-only until it is proven and then offered upstream in phases.
-Whether a workbook can carry a module is left open, and letting agents use modules is on the
-backlog. The record also sets out how the model is exposed to modules and how the user gives or
-refuses trust; those two are still proposals.
+Whether a workbook can carry a module is left open. Letting agents help was on the backlog
+until the owner took it up on 2026-10-12 (phase 2e, below). The record also sets out how the
+model is exposed to modules and how the user gives or refuses trust; those two are still
+proposals.
 
 **Phase 1a is built: modules and trust, with nothing running.**
 
@@ -310,11 +312,34 @@ refuses trust; those two are still proposals.
 - **Nothing was added to the engine.** Every command already takes a range that names its
   sheet, so an object is a command with the address filled in.
 
-Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). **Next is 2e, agents and
-modules over MCP**, which the owner decided on 2026-10-12 to take up after 2b: on the model of
-Anie_Maint's console (every action a request on a native confirm, plans approved once). Its
-mechanics are a proposal still. Then **2c** per-module Python environments and **2d** panels
-docked in the window.
+**Phase 2e, first slice, is built: a Development server for agents, and the Development
+window.** The owner decided its shape on 2026-10-12: a second MCP server in the Development
+area, a management window on the Developer tab, a level of agent access the user sets up to
+full control, and approved plans after single requests.
+
+- **Developer ▸ Development** gathers the development tools and holds agent access. It is off
+  until turned on there. The levels: Off; Read only; Ask me each time; Build, and ask before
+  running; Full control (until GridCraft closes, and never kept). Raising the level is
+  confirmed by the operating system.
+- **An agent connects over MCP** to the running app, on the loopback address, with a token.
+  The window copies the setup for Claude Code, or as a settings entry for another agent; the
+  token is never drawn or reported.
+- **What an agent asks for is a request.** It can read modules, their files and the console;
+  and ask to create a module, write or delete a module's file, run a script, open a panel,
+  trust a module or stop trusting one. The level decides whether a request is carried out at
+  once, shown to the user, or refused.
+- **A request is answered on a card**, like a coding agent's permission prompt: what it is,
+  the lines a change would take out and put in, what a yes means for the module's trust,
+  then yes, or no with a word for the agent. A bar under the ribbon says when one waits.
+- **What modules wrote reaches an agent fenced**, as data. Each request and its outcome is in
+  the Developer console and in `agent-log.jsonl` beside the settings.
+- **`developer.agents`** reports how it stands. No command sets the level, the port or the
+  token, or answers a request; and the control channel can no longer read or write
+  GridCraft's own settings folder.
+
+Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next in 2e are approved
+plans, which the owner staged after single requests. Then **2c** per-module Python environments
+and **2d** panels docked in the window.
 
 The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
 own.
@@ -332,9 +357,23 @@ own.
   where a module is waited for, and a decision on whether a module may hold a save up.
 - An event says a workbook changed, not which cells: telling the range needs the engine to say
   what a command touched.
-- The Developer console is kept in memory for the run. It is not written to a file, and what an
-  agent is told of it is not yet fenced as Anie_Maint fences what remote machines wrote
-  (phase 2e, if taken up).
+- The Developer console is kept in memory for the run. It is not written to a file; what
+  agents asked for is, in `agent-log.jsonl`. `developer.console` hands the entries to the
+  control channel with a note that they are data; the Development server fences them.
+- **The Development server's port is a fixed one.** On a computer other people use at the same
+  time, a program of theirs that took the port while GridCraft was closed would be sent the
+  token by an agent that tried to connect. A transport only the user's account can open is not
+  built (ADR-0001 says why).
+- **An agent that already runs programs as the user** (Claude Code with its shell) is not
+  confined by the levels: it could read the token and the settings itself. They bound and
+  record what is done through GridCraft.
+- A yes to a request is two steps, the card and the operating system's question, also when
+  GridCraft runs without the control channel and one would do. The owner's to decide.
+- Approved plans, and "don't ask again until GridCraft closes", are not built.
+- The Development server reaches modules and the console. The command palette, the action
+  journal and recorded scripts are not on it.
+- The Development window keeps the height of its tallest card until it is closed.
+- The server was used over real connections by a test client, not yet by Claude Code itself.
 - The panel's script (`spreadsheet.js`) is run by no test of the repository: it was exercised
   by hand in a browser, against a copy of the app with settings of its own. The Python side
   of the same objects is tested, where the machine has a Python.
@@ -362,7 +401,8 @@ still there:
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
 | `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
-| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, and carries out the calls modules' panels made |
+| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls modules' panels made, and sees to what agents asked of the Development server |
+| `crates/ui-egui/src/control.rs`, `handle`, first thing | `if let Some(why) = crate::aniefork::control_refuses(p) { return err(why); }`: GridCraft's own settings folder is out of the control channel's reach |
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
 | `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
@@ -436,6 +476,20 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (Development subsystem, phase 2e, first slice: the Development server and the
+  Development window):** The owner decided the shape the same day: a second MCP server in the
+  Development area, a management window, a level of agent access up to full control, plans
+  later; and asked for the request dialog to be like a coding agent's permission prompt. Built:
+  the server in the crate (MCP over HTTP on the loopback address, a token, fourteen tools,
+  requests with lapse and back-off, a fence round what modules wrote); Developer ▸ Development
+  (the level, the setup, who connected, the tools); the card a request is answered on, with a
+  line-by-line comparison for a file that is there. An adversarial review before the commit
+  found seven things worth closing, and they are closed (ADR-0001 lists them): among them a
+  file that could be changed between the trust check and Python reading it, and the control
+  channel opening the token file. One new hook in an upstream file (`control.rs`: the settings
+  folder is out of the control channel's reach). Checked by 50 more tests (24 in the crate, 26
+  in the UI, with the machine's Python), and by a client over a real connection against a copy
+  of the app with settings of its own. Not yet tried with Claude Code itself.
 - **2026-10-12 (Development subsystem, phase 2b: the workbook as objects, and Python calling
   back):** A script imports `spreadsheet` and works on the sheet itself, with what its module
   was granted, checked for every call as a panel's are. Panels and scripts share `sheet`,

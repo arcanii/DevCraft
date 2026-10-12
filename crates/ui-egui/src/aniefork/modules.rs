@@ -74,7 +74,7 @@ pub fn values() -> Json {
 }
 
 /// The question the operating system puts to the user: what they are about to allow, in full.
-fn question(found: &Module, follow_changes: bool) -> String {
+pub(super) fn question(found: &Module, follow_changes: bool) -> String {
     let mut text = format!("Trust \"{}\"", found.name());
     if let Some(m) = &found.manifest {
         text.push_str(&format!(" {}?\n\nIt will be allowed to:\n", m.version));
@@ -137,7 +137,10 @@ pub(super) fn create(name: &str) -> Result<String, String> {
 /// Remembers which Python to use and says whether it answers.
 fn check_python(python: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
-    settings::save(&at.settings, &settings::Settings { python: python.trim().to_string() })?;
+    // Only the Python is set here: what else the settings hold stays as it is.
+    let mut kept = settings::load(&at.settings);
+    kept.python = python.trim().to_string();
+    settings::save(&at.settings, &kept)?;
     let host = PythonHost::global();
     host.look_again();
     host.interpreter(python).map(|found| found.describe())
@@ -623,6 +626,8 @@ pub(crate) mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             SANDBOX.with(|s| *s.borrow_mut() = Some(dir.clone()));
+            // An app that starts in this sandbox begins without another test's server.
+            crate::aniefork::agents::forget();
             Sandbox(dir)
         }
     }
@@ -632,6 +637,7 @@ pub(crate) mod tests {
             if let Some(at) = places() {
                 PythonHost::global().stop(&at.modules, "clean-data");
             }
+            crate::aniefork::agents::forget();
             SANDBOX.with(|s| *s.borrow_mut() = None);
             let _ = std::fs::remove_dir_all(&self.0);
         }
@@ -642,6 +648,18 @@ pub(crate) mod tests {
     pub(crate) struct Asked {
         questions: Rc<RefCell<Vec<String>>>,
         answer: Rc<RefCell<bool>>,
+    }
+
+    impl Asked {
+        /// Every question the operating system was asked to put, in order.
+        pub(crate) fn questions(&self) -> Vec<String> {
+            self.questions.borrow().clone()
+        }
+
+        /// What the "user" answers from now on.
+        pub(crate) fn says(&self, yes: bool) {
+            *self.answer.borrow_mut() = yes;
+        }
     }
 
     /// An app whose operating-system confirmation is `asked` (or missing, as in a build without one).
@@ -1053,7 +1071,7 @@ pub(crate) mod tests {
     }
 
     /// The channel goes quiet: after a moment the window is the person's again.
-    fn quiet(h: &mut egui_kittest::Harness<'static, SheetApp>) {
+    pub(crate) fn quiet(h: &mut egui_kittest::Harness<'static, SheetApp>) {
         h.state_mut().synthetic.clear();
         // The frame after the channel's last input still counts as its own.
         h.run_steps(2);

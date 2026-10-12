@@ -544,23 +544,21 @@ mod web {
 #[cfg(not(target_arch = "wasm32"))]
 mod server {
     use std::collections::{HashMap, VecDeque};
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
     use std::sync::atomic::AtomicUsize;
-    use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+    use std::sync::{Condvar, Mutex, PoisonError};
     use std::thread;
 
     use serde_json::json;
 
     use super::*;
     use crate::console::{self, Console};
+    use crate::http::{self, Incoming, lock, same};
     use crate::python::{self, PythonHost, RunError};
     use crate::trust::{Status, TrustStore};
     use crate::{manifest, module, settings};
 
-    /// The longest request line and headers read (bytes).
-    const MAX_HEAD: usize = 16 * 1024;
-    const MAX_HEADERS: usize = 100;
     /// The most requests answered at once for one module; more are turned away.
     const MAX_CONNECTIONS: usize = 32;
     /// The most events handed to a panel in one answer.
@@ -571,10 +569,6 @@ mod server {
     const CLOSED: &str = "default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
     /// With `network`: anything, but still in no other page's frame.
     const OPEN: &str = "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
-
-    fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-        mutex.lock().unwrap_or_else(PoisonError::into_inner)
-    }
 
     /// What every module's listener shares: the queue to the app.
     struct Shared {
@@ -665,7 +659,7 @@ mod server {
             let port = listener.local_addr().map_err(failed)?.port();
             let site = Arc::new(Site {
                 id: id.to_string(),
-                token: token()?,
+                token: http::token().map_err(|why| format!("The panel could not be served: {why}."))?,
                 port,
                 places: places.clone(),
                 stop: AtomicBool::new(false),
@@ -752,18 +746,6 @@ mod server {
         format!("http://127.0.0.1:{}/{}/", site.port, site.token)
     }
 
-    /// 64 hexadecimal digits from the operating system's source of randomness.
-    fn token() -> Result<String, String> {
-        let mut bytes = [0u8; 32];
-        getrandom::fill(&mut bytes).map_err(|e| format!("The panel could not be served: the system gave no random numbers ({e})."))?;
-        Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-    }
-
-    /// Whether two texts are the same, taking as long whichever byte differs.
-    fn same(a: &str, b: &str) -> bool {
-        a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |differs, (x, y)| differs | (x ^ y)) == 0
-    }
-
     fn halt(site: &Site) {
         site.stop.store(true, Ordering::SeqCst);
         // Panels waiting for events are answered now, with none.
@@ -808,23 +790,6 @@ mod server {
             Status::Changed => Err(format!("{} has changed since you trusted it. Review it again in Developer > Modules.", found.name())),
             Status::Untrusted => Err(format!("{} is not trusted. Trust it in Developer > Modules first.", found.name())),
             Status::Problem(why) => Err(format!("{} can't be used: {why}.", found.name())),
-        }
-    }
-
-    struct Incoming {
-        method: String,
-        target: String,
-        /// Names in lower case.
-        headers: Vec<(String, String)>,
-        body: Vec<u8>,
-    }
-
-    impl Incoming {
-        /// The header's value; an error when it was sent more than once, which no honest browser does.
-        fn header(&self, name: &str) -> Result<Option<&str>, ()> {
-            let mut values = self.headers.iter().filter(|(n, _)| n == name).map(|(_, v)| v.as_str());
-            let first = values.next();
-            if values.next().is_some() { Err(()) } else { Ok(first) }
         }
     }
 
@@ -883,79 +848,15 @@ mod server {
         if stream.set_read_timeout(wait).is_err() || stream.set_write_timeout(wait).is_err() {
             return;
         }
-        let reply = match read(&mut stream) {
+        let reply = match http::read(&mut stream, MAX_BODY_BYTES, site.shared.limits.read.saturating_mul(3)) {
             Ok(request) => respond(site, &request),
-            Err(Some(reply)) => reply,
+            Err(Some(refused)) => Reply::plain(refused.status, refused.reason, refused.text),
             // Nothing that makes a request arrived in time: there is nobody to answer.
             Err(None) => return,
         };
         let _ = stream.write_all(&reply.bytes());
         let _ = stream.flush();
         let _ = stream.shutdown(Shutdown::Both);
-    }
-
-    fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack.windows(needle.len()).position(|window| window == needle)
-    }
-
-    /// Reads one request. `Err(None)`: the connection gave nothing to answer.
-    fn read(stream: &mut TcpStream) -> Result<Incoming, Option<Reply>> {
-        let mut buffer = Vec::with_capacity(2048);
-        let mut chunk = [0u8; 4096];
-        let end = loop {
-            let found = find(&buffer, b"\r\n\r\n");
-            if found.unwrap_or(buffer.len()) > MAX_HEAD {
-                return Err(Some(Reply::plain(431, "Request Header Fields Too Large", "That request's headers are too long.")));
-            }
-            if let Some(at) = found {
-                break at;
-            }
-            let n = stream.read(&mut chunk).map_err(|_| None)?;
-            if n == 0 {
-                return Err(None);
-            }
-            buffer.extend_from_slice(chunk.get(..n).unwrap_or(&[]));
-        };
-        let head = std::str::from_utf8(buffer.get(..end).unwrap_or(&[])).map_err(|_| Some(Reply::bad()))?;
-        let mut lines = head.split("\r\n");
-        let mut first = lines.next().unwrap_or("").split(' ');
-        let (method, target, version) = (first.next().unwrap_or(""), first.next().unwrap_or(""), first.next().unwrap_or(""));
-        if method.is_empty() || !target.starts_with('/') || !version.starts_with("HTTP/1.") || first.next().is_some() {
-            return Err(Some(Reply::bad()));
-        }
-        let mut headers = Vec::new();
-        for line in lines {
-            let Some((name, value)) = line.split_once(':') else { return Err(Some(Reply::bad())) };
-            if name.is_empty() || name.contains(char::is_whitespace) || headers.len() >= MAX_HEADERS {
-                return Err(Some(Reply::bad()));
-            }
-            headers.push((name.to_ascii_lowercase(), value.trim().to_string()));
-        }
-        let mut request = Incoming { method: method.to_string(), target: target.to_string(), headers, body: Vec::new() };
-        // A body is taken by its stated length and no other way.
-        if request.header("transfer-encoding") != Ok(None) {
-            return Err(Some(Reply::bad()));
-        }
-        let length = match request.header("content-length") {
-            Ok(None) => 0,
-            Ok(Some(text)) => text.parse::<usize>().map_err(|_| Some(Reply::bad()))?,
-            Err(()) => return Err(Some(Reply::bad())),
-        };
-        if length > MAX_BODY_BYTES {
-            return Err(Some(Reply::plain(413, "Content Too Large", "That call is too large.")));
-        }
-        let mut body = buffer.get(end + 4..).unwrap_or(&[]).to_vec();
-        body.truncate(length);
-        while body.len() < length {
-            let n = stream.read(&mut chunk).map_err(|_| None)?;
-            if n == 0 {
-                return Err(None);
-            }
-            let room = length - body.len();
-            body.extend_from_slice(chunk.get(..n.min(room)).unwrap_or(&[]));
-        }
-        request.body = body;
-        Ok(request)
     }
 
     fn respond(site: &Site, request: &Incoming) -> Reply {

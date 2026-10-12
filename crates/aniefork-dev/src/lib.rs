@@ -14,6 +14,8 @@
 //! - [`bridge`]: serving a trusted module's panel to the browser, carrying its calls, and telling
 //!   it what happens in GridCraft.
 //! - [`console`]: the Developer console: what modules printed and logged, and what failed.
+//! - [`agents`]: the Development server, a second MCP server for agents that help with
+//!   development work, as far as the user lets them go.
 //! - [`starter`]: "New Module".
 //! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
 //!
@@ -22,8 +24,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod agents;
 pub mod bridge;
 pub mod console;
+#[cfg(not(target_arch = "wasm32"))]
+mod http;
 pub mod manifest;
 pub mod module;
 pub mod paths;

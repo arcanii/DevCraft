@@ -4,7 +4,8 @@
 //!
 //! - what a script printed while it ran, and why a script failed (its traceback with it);
 //! - what a panel logged with `spreadsheet.log(...)`;
-//! - a call that was refused because the module wasn't granted what it needs.
+//! - a call that was refused because the module wasn't granted what it needs;
+//! - what an agent asked for through the Development server, and what became of it.
 //!
 //! It is a record for the person at the screen. A module can add to it and can neither read it
 //! nor clear it, and one module's chatter cannot push another's entries out: each module keeps
@@ -35,6 +36,8 @@ pub enum Kind {
     Log,
     /// A call that was refused: the module wasn't granted what it needs, or isn't trusted.
     Refused,
+    /// What an agent asked for through the Development server, and what became of it.
+    Agent,
 }
 
 impl Kind {
@@ -45,6 +48,7 @@ impl Kind {
             Kind::Error => "error",
             Kind::Log => "log",
             Kind::Refused => "refused",
+            Kind::Agent => "agent",
         }
     }
 
@@ -55,6 +59,7 @@ impl Kind {
             Kind::Error => "failed",
             Kind::Log => "logged",
             Kind::Refused => "refused",
+            Kind::Agent => "an agent",
         }
     }
 }

@@ -46,7 +46,7 @@ fn kind(spec: &CommandSpec) -> Kind {
 }
 
 /// The engine's commands, as the typings served to a panel describe them.
-fn command_docs() -> Vec<CommandDoc> {
+pub(super) fn command_docs() -> Vec<CommandDoc> {
     let doc = |spec: &CommandSpec| CommandDoc {
         id: spec.id.to_string(),
         label: spec.label.trim_end_matches('…').to_string(),
@@ -241,6 +241,12 @@ fn outside_settings(params: &Json) -> Result<(), String> {
         Some(target) if !target.starts_with(&settings) => Ok(()),
         _ => Err("Modules can't read or write GridCraft's own settings folder.".into()),
     }
+}
+
+/// Whether what the control channel was sent names a file in GridCraft's own settings folder:
+/// in the message itself, or in the parameters of the command it carries.
+pub(super) fn names_settings(message: &Json) -> bool {
+    [Some(message), message.get("params")].into_iter().flatten().any(|held| outside_settings(held).is_err())
 }
 
 /// Runs a command for a caller that is a program: nothing it asks of the user interface (a
