@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-12, upstream `3926d21` (GridCraft 0.5.0 and 352 commits after it) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 6 changes upstream lacks (below) |
+| Fork carries | 7 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -33,7 +33,8 @@ merged; delete the row once a merge of upstream brings it back.
 |---|---|---|
 | **On upstream's Options page:** the user name (the author of comments and notes) and whether the ribbon shows the Developer tab, with a command for each (`app.userName`, `developer.tab`); and an Animations section holding upstream's switch for the selection glide, as wordcraft's Options has. | `crates/ui-egui/src/aniefork/options.rs`, a hook in `backstage.rs` | Not offered |
 | **Options for the selection:** the weight of its outline (thin by default, which is Excel's; standard is upstream's; hairline), and hiding it while another window is the active one, as Excel does, which is off until chosen. On the Options page's Selection section. | `crates/ui-egui/src/aniefork/` (`selection.rs`, `prefs.rs`, `options.rs`), hooks in `grid.rs` and `lib.rs` | Not offered |
-| **The selection's outline lies on the gridlines.** Upstream centres it half a point outside the cells, which puts its bottom and right sides a point past the gridlines they should cover; on a display at 125% or 150% a grey line shows inside them. Here each side covers its gridline and reaches outward from it, a whole number of device pixels wide, which is where Excel was measured to put it. | `Bars` and `paint_outline` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered yet: a fix upstream would want, and one #549 would then build on |
+| **The selection's outline lies on the gridlines.** Upstream centres it half a point outside the cells, which puts its bottom and right sides a point past the gridlines they should cover; on a display at 125% or 150% a grey line shows inside them. Here each side covers its gridline and reaches outward from it, a whole number of device pixels wide, which is where Excel was measured to put it. | `Bars` and `paint_outline` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open), its second commit |
+| **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Modules, trust, Python and panels** (the Development subsystem, phases 1a to 1c): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser and calls GridCraft over a local bridge. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
@@ -56,11 +57,17 @@ The fork no longer carries these. They are kept here as the record of what happe
   thread of its own so a slow drive never holds up the view, with its ten strings in upstream's
   nine catalogs. The fork's `main` does not carry it: it arrives with the merge after upstream
   takes it.
-- **The highlight that stays on its cell while typing** is offered as
+- **The outline on the gridlines, and the highlight that stays on its cell while typing**, are
+  offered together as
   [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (2026-10-12, branch
-  `editor-highlight`), written into upstream's `grid.rs` without the fork's outline options.
-  When upstream takes it, the fork's `editor_size` and `paint_editor` reduce to the outline's
-  weight: at that merge, keep upstream's code and pass it the fork's width. Upstream's #456
+  `editor-highlight`, two commits), written into upstream's `grid.rs` without the fork's choice
+  of weight: upstream's outline stays two points. There the renderer's rule is checked without
+  a GPU, by tessellating what was painted (`tests/selection_outline.rs`), which the fork could
+  take over from its own pixel test at the merge. When upstream takes it, the fork's `Bars`,
+  `editor_size` and `paint_editor` reduce to the weight and the fill handle: at that merge, keep
+  upstream's code and pass it the fork's width. Its check is red for a reason outside it:
+  upstream's `main` fails two engine tests of its own, and the run stops there (#449 is open to
+  fix them). Upstream's #456
   (and the pull requests stacked on it) changes the height line of the same function to cap the
   editor at five lines; it is not the same work, but whichever lands second needs a rebase.
 - Following the system's reduced-motion setting is now an open pull request of someone else's:
@@ -132,6 +139,15 @@ the grid at 100%, 125%, 150% and 200% and checks, pixel by pixel and for each we
 side covers its gridline, reaches only outward, and leaves no gridline showing inside. If a new
 egui changes its rule, that test fails and the rule is repeated anew.
 
+**The fill handle** is three times the outline's weight, in whole pixels, centred on the
+outline's inner corner so that it reaches as far into the cell as out of it, with a clear
+margin of half the weight (a pixel at least) between it and the outline's lines. In the same
+capture Excel's is six pixels to an outline of two, on that corner, with about a pixel clear.
+With Thin at 150% that is the fork's six pixels, where upstream's six points were nine; with
+Standard it is still nine. It is never smaller than four points, so a hairline outline keeps a
+handle that can be seen and caught. The pointer still catches it in upstream's nine points
+round the cells' corner, which the handle stays inside.
+
 **While typing**, the highlight is the selection's own outline: the same place, the same weight,
 and no larger than the cell however long the text gets.
 
@@ -152,9 +168,8 @@ and no larger than the cell however long the text gets.
   the renderer spreads over two. That is upstream's drawing and the fork leaves it, so at 150%
   Thin and Hairline are the same two pixels. A one-pixel gridline would be a hook in upstream's
   `paint_cells`.
-- **The fill handle is upstream's six points**, nine pixels at 150%, where Excel's measured
-  about five and a half. Beside a thin outline it looks heavy. Excel also keeps the handle
-  showing while a cell is being edited; upstream hides it.
+- **Excel keeps the fill handle showing while a cell is being edited**, below the edit box;
+  upstream hides it, and so does the fork.
 - **On a right-to-left sheet** the outline is mirrored after it is placed, so at a fractional
   display scale it can land a pixel off the gridline there.
 - **Typing past a cell follows what Excel was seen to do sideways**: the highlight stays and
@@ -283,6 +298,7 @@ still there:
 | `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `aniefork: aniefork::Prefs`, flattened (`#[serde(flatten)]`), after `animations`: every preference of the fork's, in one field |
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, first thing | `let look = crate::aniefork::selection::look(app, p.ctx());`, and then `look.shown` added to four conditions (the fill's `keep`, the outline, the active cell's own stroke, the fill handle) |
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, the outline | `crate::aniefork::selection::paint_outline(p, outline, look.width, t.sel_border);` in place of upstream's `rect_stroke` |
+| `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill handle | `crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);` in place of upstream's three lines that size and paint it |
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's size | `let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);` in place of upstream's `w` and `h`, and `Rect::from_min_size(rect.min, grown)` for `erect` |
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
 | `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
@@ -361,6 +377,13 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (the fill handle, and the outline offered upstream):** The fill handle is sized
+  to the outline, three times its weight on the outline's inner corner: six pixels with Thin
+  at 150%, as Excel's measured, where upstream's was nine. And the outline's place on the
+  gridlines went into pull request #549 as a second commit, at upstream's one weight, with a
+  test that asks the renderer where it puts the gridlines at five display scales. #549's check
+  failed on upstream's own two CSV tests in the engine, before reaching the UI crate; nothing
+  in the pull request causes it.
 - **2026-10-12 (Thin by default):** The selection's outline is Thin unless chosen otherwise:
   Excel's two pixels on a display at 150%. Preferences equal to their default are no longer
   written to `ui.json`, and the weight moved to the key `selectionOutlineWeight`, because the

@@ -8,6 +8,9 @@
 //! - **Its outline is thinner, and its weight a choice** (File ▸ Options ▸ Selection). Upstream
 //!   draws it two points wide: three pixels on a display at 150%, where Excel draws two. The
 //!   fork's default, Thin, is Excel's two; Standard is upstream's.
+//! - **Its fill handle is sized to the outline**, three times its weight, and set on the
+//!   outline's inner corner, as Excel's is. Upstream's is always six points, which beside a
+//!   thin outline is a heavy square.
 //! - **It can be hidden while another window is the active one**, as Excel does: the outline,
 //!   the shading of a range and the fill handle go, and come back when GridCraft is active
 //!   again. The marching ants around a copied range stay, as they do in Excel.
@@ -34,6 +37,9 @@ const TEXT_AT: f32 = 2.0;
 const CARET: f32 = 2.0;
 /// The most columns or rows the editor looks along for a gridline to stop at.
 const REACH: u32 = 2048;
+/// The fill handle is never smaller than this many points, however thin the outline: it has to
+/// be seen and caught.
+const SMALLEST_HANDLE: f32 = 4.0;
 
 /// What `paint_selection` asks about the selection it is about to draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,6 +144,36 @@ pub fn paint_outline(p: &egui::Painter, cells: Rect, width: f32, colour: Color32
         if bar.is_finite() && bar.is_positive() {
             p.rect_filled(bar, 0.0, colour);
         }
+    }
+}
+
+/// The fill handle at the far corner of the outline round `cells`: the square itself, and the
+/// clear margin that parts it from the outline's lines, in points.
+///
+/// Measured in Excel on a display at 150% (2026-10-12): a square of six device pixels, three
+/// times the outline's two, centred on the outline's inner corner, so it reaches as far into
+/// the cell as out of it, with about a pixel clear between it and the lines. Upstream's handle
+/// is three times its own outline too (six points to two) but stays six points whatever the
+/// weight, and is centred on the cells' corner, half a point further out.
+pub fn fill_handle(cells: Rect, width: f32, ppp: f32) -> (Rect, Rect) {
+    let ppp = scale(ppp);
+    let bars = Bars::new(cells, width, ppp);
+    // In whole pixels: the outline's weight, the square's side, and where it lies about the corner.
+    let weight = (bars.right.width() * ppp).round().max(1.0);
+    let side = (3.0 * weight).max((SMALLEST_HANDLE * ppp).round());
+    let (before, after) = ((side / 2.0).floor() / ppp, (side / 2.0).ceil() / ppp);
+    let corner = bars.inner().right_bottom();
+    let square = Rect::from_min_max(pos2(corner.x - before, corner.y - before), pos2(corner.x + after, corner.y + after));
+    let clear = (weight / 2.0).round().max(1.0) / ppp;
+    (square, square.expand(clear))
+}
+
+/// Hook of `grid::paint_selection`: paints the fill handle of the outline round `cells`.
+pub fn paint_fill_handle(p: &egui::Painter, cells: Rect, width: f32, colour: Color32) {
+    let (square, margin) = fill_handle(cells, width, p.ctx().pixels_per_point());
+    if square.is_finite() && square.is_positive() {
+        p.rect_filled(margin, 0.0, Color32::WHITE);
+        p.rect_filled(square, 0.0, colour);
     }
 }
 
@@ -446,6 +482,74 @@ mod tests {
             let b = Bars::new(cells, width, ppp);
             let _ = [b.left, b.top, b.right, b.bottom].map(|side| side.is_finite() && side.is_positive());
         }
+    }
+
+    #[test]
+    fn the_fill_handle_is_three_times_the_outline_on_its_inner_corner() {
+        let cells = Rect::from_min_max(pos2(100.0, 50.0), pos2(160.0, 66.0));
+        // What Excel was measured to draw at 150%: an outline of two pixels, a handle of six,
+        // three each side of the outline's inner corner, a pixel clear round it.
+        let (square, margin) = fill_handle(cells, 1.5, 1.5);
+        let corner = Bars::new(cells, 1.5, 1.5).inner().right_bottom();
+        let px = |points: f32| (points * 1.5).round();
+        assert_eq!((px(square.width()), px(square.height())), (6.0, 6.0));
+        assert_eq!((px(corner.x - square.left()), px(square.right() - corner.x)), (3.0, 3.0), "as far into the cell as out of it");
+        assert_eq!((px(corner.y - square.top()), px(square.bottom() - corner.y)), (3.0, 3.0));
+        assert_eq!(px(square.left() - margin.left()), 1.0);
+        assert!((square.left() * 1.5 - px(square.left())).abs() < 1e-3, "on whole pixels");
+        // Upstream's weight there is three pixels, and its handle the nine it always was.
+        let (standard, clear) = fill_handle(cells, 2.0, 1.5);
+        assert_eq!(px(standard.width()), 9.0);
+        assert_eq!(px(standard.left() - clear.left()), 2.0);
+        // At a pixel a point, two points and a point and a half are both two pixels: six.
+        for width in [2.0, 1.5] {
+            assert_eq!(fill_handle(cells, width, 1.0).0, Rect::from_min_max(pos2(156.0, 62.0), pos2(162.0, 68.0)), "{width}");
+        }
+        // However thin the outline, the handle can still be seen and caught.
+        let (hair, _) = fill_handle(cells, 1.0, 1.0);
+        assert_eq!((hair.width(), hair.height()), (4.0, 4.0));
+        assert_eq!(fill_handle(cells, 1.0, 2.0).0.width() * 2.0, 8.0);
+        // It stays where the pointer catches it: the nine points round the cells' corner (to
+        // within half a point, at the scales where a pixel is an awkward part of one).
+        let catches = Rect::from_center_size(cells.right_bottom(), vec2(9.0, 9.0)).expand(0.5);
+        for ppp in [1.0_f32, 1.25, 1.5, 1.75, 2.0, 3.0] {
+            for width in [2.0_f32, 1.5, 1.0] {
+                let (square, margin) = fill_handle(cells, width, ppp);
+                assert!(catches.contains_rect(square), "{width} at {ppp}: {square:?}");
+                assert!(margin.contains_rect(square) && square.is_positive());
+                let side = square.width() * ppp;
+                assert!((side - side.round()).abs() < 1e-3, "{width} at {ppp}: {side} pixels");
+            }
+        }
+        // Numbers that make no sense give nothing that would be painted, and no panic.
+        for (cells, width, ppp) in [(Rect::NAN, 2.0, 1.0), (cells, f32::NAN, 1.0), (cells, 2.0, f32::NAN), (cells, f32::INFINITY, 1.5)] {
+            let _ = fill_handle(cells, width, ppp);
+        }
+    }
+
+    #[test]
+    fn the_fill_handle_is_drawn_as_small_as_excels_at_150_percent() {
+        let ppp = 1.5;
+        let mut h = harness_at(app(), ppp);
+        h.run_steps(2);
+        assert_eq!(h.state().ui.aniefork.selection_outline, Outline::Thin, "the default");
+        let (square, _) = fill_handle(cell(&h), Outline::Thin.width(), ppp);
+        let image = h.render().unwrap();
+        let px = |v: f32| (v * ppp).round() as i32;
+        let green = |x: i32, y: i32| is_outline(colour(image.get_pixel(x as u32, y as u32).0));
+        // Through the handle, above the outline's bottom side: six pixels of it, and nothing else.
+        let y = px(square.top()) + 1;
+        let across: Vec<i32> = (px(square.left()) - 12..px(square.right()) + 12).filter(|x| green(*x, y)).collect();
+        assert_eq!(across, (px(square.left())..px(square.right())).collect::<Vec<_>>(), "six pixels wide");
+        assert_eq!(across.len(), 6);
+        // And down it, left of the outline's right side.
+        let x = px(square.left()) + 1;
+        let down: Vec<i32> = (px(square.top()) - 12..px(square.bottom()) + 12).filter(|y| green(x, *y)).collect();
+        assert_eq!(down, (px(square.top())..px(square.bottom())).collect::<Vec<_>>(), "six pixels tall");
+        // A pixel is clear between it and the outline's bottom side, which then carries on.
+        let line = px(square.bottom()) - 2;
+        assert!(!green(px(square.left()) - 1, line), "the clear pixel");
+        assert!(green(px(square.left()) - 2, line) && green(px(square.left()) - 20, line), "and the bottom side");
     }
 
     #[test]

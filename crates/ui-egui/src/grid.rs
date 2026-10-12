@@ -1425,9 +1425,8 @@ pub(crate) fn paint_selection(
     }
     // Fill handle (bottom-right of the current area).
     if app.editor.is_none() && look.shown && range_in_pane(RangeRef::cell(sel.current().end), rows, cols) {
-        let h = Rect::from_center_size(outline.right_bottom(), vec2(6.0, 6.0));
-        p.rect_filled(h.expand(1.0), 0.0, Color32::WHITE);
-        p.rect_filled(h, 0.0, t.sel_border);
+        // The fork sizes the handle to the outline and sets it on the outline's inner corner (aniefork).
+        crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);
     }
     // Fill-handle drag preview.
     if let crate::grid::Drag::Fill { target: Some(tr) } = &app.grid.drag
