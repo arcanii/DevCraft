@@ -27,6 +27,13 @@
 //! control channel can't open that file, or any other in GridCraft's own settings folder
 //! (`super::control_refuses`).
 //!
+//! **A plan is approved once** ([`approve`]). The person answers its card as they answer any
+//! request; a yes does nothing but approve it. Its steps then come in one by one, as the agent
+//! asks for them, and are carried out without another question: each only when the module it
+//! is about stands as the plan needs it ([`fits`]), which is as it stood when the plan was
+//! approved or as the plan's last step there left it. Anything else that changed the module
+//! (the person, another program, a script) stops the step, not the plan.
+//!
 //! **A change nobody looked at ends the trust in a module.** When the level lets an agent change
 //! a module's files without asking, the change takes the module's trust back, whatever the
 //! files hold afterwards ([`perform`]); and the crate refuses a change while one of the
@@ -57,6 +64,8 @@ const MAX_REASON: usize = 400;
 const MAX_RUNNING: usize = 4;
 pub(super) const NO_CONFIRM: &str = "This copy of GridCraft can't ask your operating system to confirm, so this can't be done here.";
 const OFF: &str = "Agent access is off.";
+/// Said of a plan that can't be approved as things are.
+const UNFIT: &str = "The plan no longer fits things as they are.";
 
 /// A script an agent asked for, running off the UI thread.
 #[derive(Clone)]
@@ -199,7 +208,9 @@ pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     // What came in: carried out, kept for the person, or refused, by the level as it is now.
     let mut asking = false;
     for asked in server.take_new() {
-        match server.decides(&asked.action) {
+        // A step of a plan the person approved needs no answer: the plan is what was answered.
+        let decided = if asked.plan.is_some() { Policy::Allowed } else { server.decides(&asked.action) };
+        match decided {
             Policy::Allowed => {
                 let _ = carry_out(app, ctx, &mut now, &server, asked.id, false);
                 changed = true;
@@ -339,6 +350,45 @@ fn perform(app: &mut SheetApp, ctx: &egui::Context, at: &Places, action: &Action
             said(format!("{module} is no longer trusted."))
         }
         Action::RunScript { .. } => Err("That is a script to run.".into()),
+        Action::Plan { .. } => Err("That is a plan to approve.".into()),
+    }
+}
+
+/// Approves the plan the request `id` proposes: nothing else is done now. It is approved for
+/// its modules as they stood when it was proposed, which is how its first step in each must
+/// find it: a module that has changed since is not the one the plan was proposed for, and the
+/// plan is not approved (as trust asked for by itself is not given to a module that changed).
+fn approve(at: &Places, server: &Server, id: u64, steps: &[Action], stood: &[(String, Option<String>)], minutes: u64) -> Result<Done, String> {
+    dev::plan_fits(at, steps, stood).map_err(|why| format!("{UNFIT} {why}"))?;
+    let plan = server.approve(id)?;
+    Ok(Done {
+        said: format!(
+            "Plan #{} is approved: {} step(s), to be carried out within {minutes} minute(s). Nothing has been done yet. Carry out step 1 with run_plan_step {{\"plan\": {}, \"step\": 1}}.",
+            plan.id,
+            plan.steps.len(),
+            plan.id
+        ),
+        data: None,
+    })
+}
+
+/// Whether the module a plan's step is about stands as the plan needs it: as it stood when the
+/// plan was approved, or as the plan's last step there left it.
+fn fits(at: &Places, server: &Server, plan: u64, action: &Action) -> Result<(), String> {
+    let module = dev::step_module(action);
+    let Some(expected) = server.plan_expects(plan, &module) else { return Err(format!("Plan #{plan} has ended.")) };
+    // Trust goes to the module as the plan left it, and to no other: the fingerprint the step
+    // names (the server read it when the step was asked for) is that one too.
+    if let Action::Trust { fingerprint, .. } = action
+        && expected.as_deref() != Some(fingerprint.as_str())
+    {
+        return Err(format!("{module}'s files are not as the plan's steps left them: something else has changed them since the plan was approved."));
+    }
+    match (expected, dev::stands(at, &module)?) {
+        (expected, stands) if expected == stands => Ok(()),
+        (None, _) => Err(format!("A folder named {module} is there now, which was not when the plan was approved.")),
+        (_, None) => Err(format!("{module} is no longer there.")),
+        _ => Err(format!("{module}'s files are not as the plan's steps left them: something else has changed them since the plan was approved.")),
     }
 }
 
@@ -350,6 +400,26 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, now: &mut Running, server:
         server.finish(id, Err(modules::UNAVAILABLE.into()));
         return Err(modules::UNAVAILABLE.into());
     };
+    // A plan: approving it is all that is done now.
+    if let Action::Plan { steps, minutes, stood, .. } = &asked.action {
+        let result = approve(&at, server, id, steps, stood, *minutes);
+        server.finish(id, result.clone());
+        return result.map(|_| {
+            format!(
+                "The plan is approved: its {} step{} can be carried out for the next {minutes} minute{}, without asking you again. You can stop it here.",
+                steps.len(),
+                if steps.len() == 1 { "" } else { "s" },
+                if *minutes == 1 { "" } else { "s" }
+            )
+        });
+    }
+    // A step of a plan: the module it is about must stand as the plan needs it.
+    if let Some((plan, _)) = asked.plan
+        && let Err(why) = fits(&at, server, plan, &asked.action)
+    {
+        server.not_ready(id, &why);
+        return Err(why);
+    }
     if matches!(asked.action, Action::RunScript { .. }) {
         if now.jobs.len() >= MAX_RUNNING {
             let why = format!("{MAX_RUNNING} scripts are running for agents already. Wait for one to finish.");
@@ -367,8 +437,17 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, now: &mut Running, server:
             }
         };
     }
-    let unasked = !asked_first && server.level() != Level::Full;
+    // A step of a plan was looked at with its plan.
+    let unasked = !asked_first && asked.plan.is_none() && server.level() != Level::Full;
     let result = perform(app, ctx, &at, &asked.action, unasked);
+    // What a plan's step changed is how the plan's next step there must find it.
+    if let Some((plan, _)) = asked.plan
+        && result.is_ok()
+        && asked.action.kind() == dev::Kind::Edit
+    {
+        let module = dev::step_module(&asked.action);
+        server.plan_left(plan, &module, dev::stands(&at, &module).ok().flatten());
+    }
     server.finish(id, result.clone());
     result.map(|done| done.said)
 }
@@ -395,6 +474,22 @@ fn question(at: &Places, asked: &Asked) -> String {
             return format!("{who} asks you to trust a module (request #{}).\n\n{}", asked.id, modules::question(&found, false));
         }
         Action::StopTrusting { .. } => "It does nothing after that until you trust it again.".to_string(),
+        Action::Plan { title, purpose, steps, minutes, .. } => {
+            let listed: Vec<String> = steps.iter().enumerate().map(|(index, step)| format!("  {}. {}", index + 1, step.title())).collect();
+            let trusts = steps.iter().any(|step| matches!(step, Action::Trust { .. }));
+            let runs = steps.iter().any(|step| matches!(step, Action::RunScript { .. }));
+            let weighs = match (trusts, runs) {
+                (true, true) => "It trusts a module and runs its code: a script can do anything a program you run can do.\n\n",
+                (true, false) => "It trusts a module: from then on its code can run.\n\n",
+                (false, true) => "It runs a script: a script can do anything a program you run can do.\n\n",
+                (false, false) => "",
+            };
+            return format!(
+                "{who} asks you to approve a plan, {title:?}. It says it is for: {purpose:?}\n\n{}\n\nNothing is done now. Each step is done later, when the agent asks for it: in order, without asking you again, within {minutes} minute(s).\n\n{weighs}{}Approve the plan?",
+                listed.join("\n"),
+                tag(asked)
+            );
+        }
     };
     format!("{who} asks GridCraft to:\n\n{}\n\n{means}\n\n{}Allow it, this once?", asked.action.title(), tag(asked))
 }
@@ -470,6 +565,16 @@ pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, said: Sai
     if not_again && !can_go_unasked(&asked) {
         return Err("That is asked about each time: it can't be allowed for the rest of the session.".into());
     }
+    // What is too long to have been shown whole is not said yes to, whatever was pressed.
+    if super::card::too_long(&asked.action) {
+        return Err(super::card::TOO_LONG.into());
+    }
+    if let Action::Plan { steps, stood, .. } = &asked.action
+        && let Err(why) = dev::plan_fits(&at, steps, stood)
+    {
+        server.refuse(id, &format!("{UNFIT} {why} Propose it again for things as they are now."), false);
+        return Err(format!("{UNFIT} {why} It was dropped: the agent has to propose it again."));
+    }
     if confirms(app) {
         let Some(confirm) = &app.services.confirm else { return Err(NO_CONFIRM.into()) };
         let mut text = question(&at, &asked);
@@ -492,6 +597,18 @@ pub(super) fn answer(app: &mut SheetApp, ctx: &egui::Context, id: u64, said: Sai
     done
 }
 
+/// A plan is stopped in the window: none of its steps is carried out after this. `by_hand`:
+/// it was the person's own click, as far as GridCraft can tell (stopping is anyone's to do, so
+/// the record says no more than is known).
+pub(super) fn stop_plan(id: u64, by_hand: bool) -> Result<String, String> {
+    let server = running().server.ok_or(OFF)?;
+    if server.stop_plan(id, if by_hand { "the person stopped it" } else { "it was stopped in GridCraft's window" }) {
+        Ok(format!("Plan #{id} was stopped. What was done stays done; what was not will not be."))
+    } else {
+        Ok(format!("Plan #{id} had ended already."))
+    }
+}
+
 /// The person wants to be asked again about this kind of thing in this module.
 pub(super) fn ask_again(module: &str, kind: dev::Kind) {
     if let Some(server) = &running().server {
@@ -512,6 +629,8 @@ pub(super) struct Snapshot {
     pub recent: Vec<Record>,
     /// What the person said not to ask about again, until GridCraft closes.
     pub unasked: Vec<(String, dev::Kind)>,
+    /// The plans the person approved, the latest first.
+    pub plans: Vec<dev::Plan>,
 }
 
 pub(super) fn snapshot() -> Snapshot {
@@ -527,6 +646,7 @@ pub(super) fn snapshot() -> Snapshot {
         waiting: server.map(Server::waiting).unwrap_or_default(),
         recent: server.map(Server::recent).unwrap_or_default(),
         unasked: server.map(Server::unasked).unwrap_or_default(),
+        plans: server.map(Server::plans).unwrap_or_default(),
     }
 }
 
@@ -537,10 +657,20 @@ pub(super) fn set_level(app: &mut SheetApp, ctx: &egui::Context, level: Level) -
     let mut now = running();
     now.settled = true;
     // Full control is for this run: the settings keep what was chosen before it.
-    if level != Level::Full {
+    let keep_it = || -> Result<(), String> {
+        if level == Level::Full {
+            return Ok(());
+        }
         let mut kept = settings::load(&at.settings);
         kept.agents.level = level;
-        settings::save(&at.settings, &kept)?;
+        settings::save(&at.settings, &kept)
+    };
+    // Letting agents go further waits on its being kept. Letting them go less far takes hold
+    // first, whether or not it can be kept: what could not be kept is said afterwards.
+    let lowering = level < now.level;
+    let kept = keep_it();
+    if !lowering {
+        kept.clone()?;
     }
     now.level = level;
     match (&now.server, level) {
@@ -575,6 +705,9 @@ pub(super) fn set_level(app: &mut SheetApp, ctx: &egui::Context, level: Level) -
     }
     if !problem.is_empty() {
         return Err(problem);
+    }
+    if let Err(why) = kept {
+        return Err(format!("Agent access is now \"{}\", but that could not be kept for the next time GridCraft starts: {why}", level.label()));
     }
     Ok(format!("Agent access: {}.", level.label()))
 }
@@ -649,6 +782,18 @@ pub fn report() -> Json {
         .skip(now.recent.len().saturating_sub(20))
         .map(|line| json!({"at": line.at_ms, "request": line.request, "client": line.client, "what": line.what, "outcome": line.outcome.code()}))
         .collect();
+    let plans: Vec<Json> = now
+        .plans
+        .iter()
+        .map(|plan| {
+            let steps: Vec<Json> = plan.steps.iter().map(|step| json!({"what": step.action.title(), "state": step.state.code()})).collect();
+            json!({
+                "plan": plan.id, "title": plan.title, "proposedBy": plan.client, "ended": plan.ended,
+                "minutesLeft": if plan.ended.is_some() { Json::Null } else { json!(plan.left.as_secs() / 60) },
+                "steps": steps,
+            })
+        })
+        .collect();
     json!({
         "available": now.available,
         "level": now.level.code(),
@@ -659,6 +804,7 @@ pub fn report() -> Json {
         "clients": clients,
         "waiting": waiting,
         "recent": recent,
+        "plans": plans,
         "notAskedAgain": now.unasked.iter().map(|(module, kind)| json!({"module": module, "what": if *kind == dev::Kind::Edit { "changing its files" } else { "running its scripts, opening its panel" }})).collect::<Vec<_>>(),
         "note": "It only reports. How far agents may go, the port and the token are set by the person at the screen alone, in Developer ▸ Development, and requests are answered there. What a client calls itself, and what it asked for, are its own words.",
     })

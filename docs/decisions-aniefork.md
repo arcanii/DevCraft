@@ -338,7 +338,7 @@ contents by the user. Directions to weigh when this is taken up:
 | 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | **Done**, 2026-10-12: a script changes the sheet itself through `import spreadsheet`, with what its module was granted, from a panel and from Developer ▸ Modules; a panel and a script work with the same `sheet`, `range` and `workbook` |
 | 2c | Per-module Python environments: the packages of `requirements.txt` in an environment of the module's own, installed only when the user asks | The starter module's script uses pandas without the user installing anything by hand |
 | 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | **First slice done**, 2026-10-12, on Windows: a trusted module's panel is docked beside the sheet over the same bridge, kept to its own address without `network`, and the Svelte showcase runs there. macOS and Linux are open |
-| 2e | Agents and the development tools: the Development server, a second MCP server, and the Development window (below) | **First slice done**, 2026-10-12: an agent asks to write a module's file or run its script, the user reads the request on a card and answers, and it is carried out only on their yes, at a level they set. Approved plans are the next slice |
+| 2e | Agents and the development tools: the Development server, a second MCP server, and the Development window (below) | **First slice done**, 2026-10-12: an agent asks to write a module's file or run its script, the user reads the request on a card and answers, and it is carried out only on their yes, at a level they set. **Second slice done** the same day: approved plans, answered once and carried out step by step (below) |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |
 
 ### Agents and the development tools: the Development server (phase 2e)
@@ -351,7 +351,7 @@ subsystem, with Anie_Maint's console as the model, the owner set four points:
 | Which server | **A second MCP server, in the Development area.** Its purpose is another than that of GridCraft's own MCP server, which drives the spreadsheet: this one helps drive development work inside it. It reaches every development tool, not only the first kind of module (a TypeScript panel with Python), and can help manage them |
 | Where it is managed | **A Development management window**, opened from the Developer tab: where the server is set up, and the development tools and projects are managed |
 | How far agents go | **The user sets it, all the way up to full control** |
-| Plans approved once (Anie_Maint's D25) | Staged in after single requests work |
+| Plans approved once (Anie_Maint's D25) | Staged in after single requests work. Built as the second slice (below) |
 
 **What the first slice built.**
 
@@ -428,7 +428,7 @@ keep trusting a module as its files change; naming the Python; clearing the cons
 | D17: a read-only MCP, with what remote machines wrote fenced as untrusted data | The reading tools, and the fence round what modules wrote |
 | D22: every action is a request, raised as a native confirm that says what will be done and that a machine asked; off by default, turned on by hand | Every action is a request. The whole of it is shown on a card in the window, because the operating system's dialog (`rfd`) cannot show a file; the last step is that dialog. A no is an answer, and asking again waits longer each time |
 | D38: the confirm counts down and cancels itself | A request lapses after twenty minutes, and its card says how long it has |
-| D25: a plan approved once | Not built: the owner staged it after single requests |
+| D25: a plan approved once | The second slice: approved plans, below |
 | The console MCP on a named pipe only the user's account can open | Not here: see what is open, below |
 
 **Who can reach it, said plainly.**
@@ -461,9 +461,113 @@ marked); at "Build" an agent could take back the trust of a module kept trusted 
 changes, change it unasked and ask for trust again (taking that trust back now asks); why a
 module is broken, which quotes its manifest, was told outside the fence.
 
+**Approved plans (the second slice, 2026-10-12).** The owner asked for them next. The shape
+is Anie_Maint's D25, fitted to what a plan is made of here.
+
+- **A plan is proposed like any request** (`propose_plan`): a title, a purpose (the one
+  sentence read first), up to 20 steps, and how long it may run (60 minutes unless it says,
+  240 at most). A step is one of the seven tools that ask for a single thing, with its
+  arguments. A plan is sent whole in the call, not named as a file: there is no folder of
+  reviewed plans here as there is in Anie_Maint.
+- **It is followed through before anyone is asked** (`sights`): each step must fit what the
+  steps before it leave. A file deleted must be there by then; a module created must not be;
+  a script runs, and a panel opens, only in a module that will be trusted at that point (so a
+  plan that changes a module's files and then runs its script needs a step that trusts it
+  between). A plan that doesn't fit is refused with the step and the reason, and the person
+  is never shown it.
+- **It is answered once, on one card:** its purpose, then every step whole, each as it will
+  find things once the steps before it are done. A file written twice is compared with what
+  the earlier step wrote. A step that trusts a module shows what the module will ask to be
+  allowed (from the module.toml as the plan leaves it) and the files it will hold. What
+  trusts a module or runs code is said again under the block, each by its step. The card
+  and the operating system's question carry the request's number and a mark of everything
+  the plan holds. A plan too long to show whole, or one that no longer fits things as they
+  are, can't be approved.
+- **A yes approves it and does nothing else.** Each step is carried out later, when the agent
+  asks with `run_plan_step`, which sends the plan's number and the step's and nothing more:
+  what a step does is the server's own copy of what the person was shown. Steps go in order,
+  one at a time, without another question.
+- **Each step is checked when it is to be done**, twice. As the same request made by itself
+  would be, against things as they are (the module is trusted, the script is there). And
+  its module must stand as the plan needs it: as it stood when the plan was approved, or as
+  the plan's last step there left it (a fingerprint the app keeps with the plan). Anything
+  else that changed the module since (the person, another program, a script writing into
+  its own folder) stops the step. That is not a failure of the plan: the step can be asked
+  for again once it is put right.
+- **A step that trusts a module** trusts it as the plan's steps leave it. The agent names no
+  fingerprint; the server works it out when the step is to be done, and the check above
+  makes it the fingerprint of what the person was shown. This is the one place where trust
+  is given without a question of its own. It is why a plan is asked about at every level but
+  full control, whatever its steps are, and is never covered by "don't ask again".
+- **A plan ends** when its last step is done, when a step is carried out and fails, when its
+  time runs out, when the person lowers the level, when GridCraft closes, and when the
+  person (Stop Plan, in the window) or an agent (`stop_plan`) stops it. Ending undoes
+  nothing. One plan at a time, and one proposal.
+- **What it changes at each level:** nothing at read only (refused) or at full control (a
+  plan is approved without a question there, like everything else). At "Ask me each time"
+  and "Build" it is the way to do several things on one answer.
+
+| Anie_Maint's D25 | Here |
+|---|---|
+| A plan is a file, reviewed and committed, named by path | The plan is sent whole in the call |
+| Every file pinned by its SHA-256, every agent by its certificate | Every module pinned by its fingerprint: at approval, then after each step of the plan that changes it |
+| Preconditions and expectations a step declares (`pre`, `expect`) | Not declared. The precondition is the same for every step (the two checks above); a step passes when its tool succeeds |
+| A step that fails halts the plan, or runs the one recovery step declared for it | It ends the plan. Recovery steps are not built |
+| A window of 60 minutes, 240 at most; one plan at a time; Stop in the console | The same |
+| Only the plan's id and the step's are sent | The same |
+
+**The threat model for plans, stated.** An agent whose instructions were tampered with can
+propose plans, each shown whole and approved or not, and run the steps of an approved one in
+order, or stop it. It cannot add, reorder or change a step, or bring anything of its own to a
+step when it runs. So the worst it can do with an approved plan is carry it out as approved,
+or stop early: **a plan should be safe to leave after any step**, which the card says. Any
+client holding the token can run or stop the plan; clients are not told apart. What a step's
+script prints or returns can't become a step. The checks at run time rest on GridCraft's own
+reading of the files; a program running as the user could change a file after the check and
+before the step, as with any single request.
+
+**Found by an adversarial review of plans before the commit, and closed.**
+
+- **A plan trusted its module as it stood at the click, not as it stood when the plan was
+  proposed** (the one finding of weight). At "Build" an agent could change a file the plan
+  doesn't write while the card waited; the card looked the same, and the plan's trust step
+  would have trusted the change. A plan now holds how each of its modules stood when it was
+  proposed (in its mark too), and is approved only if they stand so still: as trust asked
+  for by itself is refused when the module changed after it was asked. A plan's trust step
+  now says that the files the plan doesn't write are trusted as they are, and how to read
+  them first.
+- **Another spelling of a file's name** (`MODULE.TOML`, where the file system takes it for
+  `module.toml`) was followed through as another file: a trust step would have shown the old
+  permissions. A file is now reached only under the name the module has it by, in a plan
+  and outside one.
+- **A script's run left compiled files in its module** (`__pycache__`) unless the user's
+  environment said otherwise, so that the module was no longer the one trusted, and a plan's
+  later steps there stopped. Python is now started so that it writes none. (Older than plans:
+  it made any module "changed" after its first run.)
+- **What a file holds that doesn't show** (a carriage return inside a line, which is a new
+  line to Python and nothing to the eye; characters that turn the order of text) was drawn
+  as nothing. It is now written out where it stands (`⟨U+000D⟩`), and the card says the file
+  holds such characters. (Older than plans.)
+- A change with more changed lines than a card shows was cut in the view of its changes:
+  such a change is now shown as the whole file. A request too long to show whole is refused
+  where it is answered, not only by a button that can't be pressed.
+- A plan's purpose and title were the agent's words in GridCraft's voice: the purpose is now
+  quoted as what the agent says, and neither may hold a character that doesn't show.
+- Smaller: a step the app never began stayed "being carried out" (it goes back to waiting);
+  a trust step's fingerprint is checked against the plan's own; following a plan through no
+  longer takes a module for "kept trusted as it changes" after a step that ends that; a stop
+  that may be the control channel's is not recorded as the person's; lowering the level takes
+  hold before it is saved, so a settings file that can't be written can't keep agents where
+  they were; a plan's time is also kept by the calendar's clock, for a computer that slept;
+  a card's mark is worked out once, not at every frame.
+- Left open by it: long lines in a block are not wrapped (the block scrolls sideways).
+
 **Open.**
 
-- **Approved plans** (D25), as the owner staged.
+- **Plans:** recovery steps and declared expectations (a step that passes only when its
+  script returns what was expected); a plan kept as a file a person reviews first; more than
+  one plan at a time. A script that writes into its own module's folder stops the plan's
+  later steps on that module, which is the cautious reading and may prove too strict.
 - **A transport only the user's account can open** (above), and a relay for agents that only
   speak MCP over standard input and output.
 - **The other development tools.** The server reaches modules, their files, scripts and

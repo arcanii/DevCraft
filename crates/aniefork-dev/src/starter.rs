@@ -152,14 +152,29 @@ def main(data):
     return {"rows": cleaned}
 "#;
 
-/// Creates a starter module named `name` in `modules_dir` and returns it as read back from disk.
-/// Refuses a name that makes no id, and never touches a folder that already exists.
-pub fn create(modules_dir: &Path, name: &str) -> Result<Module, String> {
+/// The id a starter module named `name` is given: empty when the name makes none.
+pub fn id_for(name: &str) -> String {
+    slug(&plain(name))
+}
+
+/// What a starter module named `name` holds: its id, and its files (path and text). `None` when
+/// the name makes no id.
+pub fn files(name: &str) -> Option<(String, Vec<(&'static str, String)>)> {
     let shown = plain(name);
     let id = slug(&shown);
     if shown.is_empty() || !manifest::valid_id(&id) {
-        return Err("Give the module a name with at least one letter or digit.".into());
+        return None;
     }
+    let files = vec![(manifest::FILE, manifest_text(&id, &shown)), ("panel/index.html", panel_text(&shown)), ("python/clean.py", SCRIPT.to_string())];
+    Some((id, files))
+}
+
+/// Creates a starter module named `name` in `modules_dir` and returns it as read back from disk.
+/// Refuses a name that makes no id, and never touches a folder that already exists.
+pub fn create(modules_dir: &Path, name: &str) -> Result<Module, String> {
+    let Some((id, files)) = files(name) else {
+        return Err("Give the module a name with at least one letter or digit.".into());
+    };
     let dir = modules_dir.join(&id);
     if dir.exists() {
         return Err(format!("There is already a module folder named {id}."));
@@ -168,9 +183,7 @@ pub fn create(modules_dir: &Path, name: &str) -> Result<Module, String> {
     for folder in ["panel", "python"] {
         fs::create_dir_all(dir.join(folder)).map_err(failed)?;
     }
-    for (path, text) in
-        [(manifest::FILE, manifest_text(&id, &shown)), ("panel/index.html", panel_text(&shown)), ("python/clean.py", SCRIPT.to_string())]
-    {
+    for (path, text) in files {
         fs::write(dir.join(path), text).map_err(failed)?;
     }
     let created = module::load(&dir);
@@ -202,6 +215,20 @@ mod tests {
             assert!(id.is_empty() || manifest::valid_id(id));
         }
         assert!(slug(&"long name ".repeat(40)).len() <= 64);
+    }
+
+    #[test]
+    fn what_a_starter_holds_is_known_before_it_is_written() {
+        let t = TempDir::new("starter-files");
+        let (id, listed) = files("Clean \"Data\"").unwrap();
+        assert_eq!((id.as_str(), id_for("Clean \"Data\"").as_str()), ("clean-data", "clean-data"), "the id is the one the module is created with");
+        let made = create(&t.0, "Clean \"Data\"").unwrap();
+        assert_eq!(made.id, id);
+        assert_eq!(made.files, listed.iter().map(|(path, _)| path.to_string()).collect::<Vec<_>>());
+        for (path, text) in listed {
+            assert_eq!(std::fs::read_to_string(made.dir.join(path)).unwrap(), text, "{path}");
+        }
+        assert!(files("!!!").is_none() && id_for("!!!").is_empty());
     }
 
     #[test]

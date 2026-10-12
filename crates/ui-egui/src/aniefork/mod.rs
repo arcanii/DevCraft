@@ -5,6 +5,7 @@
 //! `AGENTS-aniefork.md` at the repository root.
 
 pub mod agents;
+mod card;
 pub mod console;
 pub mod developer;
 pub mod development;

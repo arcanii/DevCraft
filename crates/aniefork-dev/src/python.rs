@@ -459,7 +459,10 @@ _serve()
         fn start(interpreter: &Interpreter, scripts: &Path, fingerprint: &str) -> Result<Worker, RunError> {
             let failed = |what: String| RunError::Failed(format!("Python could not be started: {what}"));
             let mut cmd = command(&interpreter.program, &interpreter.args);
-            cmd.arg("-u").arg("-c").arg(RUNNER).arg(scripts).current_dir(scripts).env("PYTHONIOENCODING", "utf-8").env("PYTHONUNBUFFERED", "1");
+            // `-B`: Python keeps no compiled copy of what it imports. It would keep it inside the
+            // module, whose files would then no longer be the ones the user trusted.
+            cmd.arg("-u").arg("-B").arg("-c").arg(RUNNER).arg(scripts).current_dir(scripts);
+            cmd.env("PYTHONIOENCODING", "utf-8").env("PYTHONUNBUFFERED", "1").env("PYTHONDONTWRITEBYTECODE", "1");
             let mut child = cmd.spawn().map_err(|e| failed(e.to_string()))?;
             let (Some(stdin), Some(stdout), Some(mut stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
                 let _ = child.kill();
@@ -952,6 +955,10 @@ _serve()
             assert_eq!(f.host.running(), 1);
             // A script in a subfolder, importing a sibling from the scripts folder.
             assert_eq!(f.run("sub/deep.py", json!("x")).unwrap().result, json!(["x", "x"]));
+            // Running wrote nothing into the module: it is still the one that was trusted.
+            let found = module::load(&f.t.0.join("modules/m"));
+            assert!(found.files.iter().all(|file| !file.contains("__pycache__") && !file.ends_with(".pyc")), "{:?}", found.files);
+            assert!(TrustStore::load(&f.trust_file()).status(&found).is_trusted());
         }
 
         #[test]

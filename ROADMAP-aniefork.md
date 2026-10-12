@@ -359,9 +359,26 @@ section.
   Svelte source is in the module, with how to rebuild it.
 - **`GRIDCRAFT_DOCK=<module>`** docks a trusted module's panel as GridCraft starts.
 
-Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next in 2e are approved
-plans, which the owner staged after single requests. Then **2c** per-module Python
-environments, and the rest of **2d**: macOS and Linux.
+**Phase 2e, second slice, is built: approved plans.** The owner asked for them next, on
+2026-10-12. The shape is Anie_Maint's D25.
+
+- **An agent proposes a plan** (`propose_plan`): a title, a purpose, up to 20 steps, each one
+  of the things it could ask for singly. It is followed through before anyone is asked, so a
+  plan that could not be carried out is refused with the step and the reason.
+- **The person answers once, on one card** that shows every step whole, each as it will find
+  things once the steps before it are done, and says by itself what trusts a module or runs
+  code. A yes approves the plan and does nothing else.
+- **The agent then carries the steps out** (`run_plan_step`), in order, by the plan's number
+  and the step's and nothing more: what a step does is GridCraft's own copy of what was
+  shown. No step asks again. Each is checked when it is to be done, and waits if its module
+  is not as the plan's earlier steps left it.
+- **The window shows the plan**, where each step stands, how long it has, and **Stop Plan**.
+  A plan also ends when a step fails, when its time runs out (60 minutes unless it says, 240
+  at most), when the level is lowered and when GridCraft closes. One plan at a time.
+- Four tools more (eighteen): `propose_plan`, `run_plan_step`, `plan_status`, `stop_plan`.
+
+Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
+per-module Python environments, and the rest of **2d**: macOS and Linux.
 
 The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
 own.
@@ -394,7 +411,10 @@ own.
 - **An agent that already runs programs as the user** (Claude Code with its shell) is not
   confined by the levels: it could read the token and the settings itself. They bound and
   record what is done through GridCraft.
-- Approved plans are not built.
+- **Plans:** a step that fails ends its plan (no recovery steps, no declared
+  expectations); a plan is sent in the call, not kept as a file to review first; one at a
+  time. A step that trusts a module does so without a question of its own: the plan's card
+  is where that is read. Any client holding the token can run or stop an approved plan.
 - The Development server reaches modules and the console. The command palette, the action
   journal and recorded scripts are not on it.
 - The Development window keeps the height of its tallest card until it is closed.
@@ -505,6 +525,25 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (plans, after an adversarial review):** One finding of weight, closed: a plan
+  now holds how its modules stood when it was proposed and is approved only for that.
+  Also closed: one spelling for a file; Python writes no compiled files into a module; what
+  doesn't show in a file is written out; a change too long to show as changes is shown
+  whole; a plan's purpose is quoted as the agent's; and smaller ones (ADR-0001 lists them).
+  6 more tests (2 in the crate, 4 in the UI), and more asked of the ones that were there.
+- **2026-10-12 (Development subsystem, phase 2e, second slice: approved plans):** The owner
+  asked for the next slice. An agent proposes a plan of up to 20 steps; it is followed
+  through first (`sights`), shown whole on one card, and answered once; its steps are then
+  carried out by number, in order, without another question, each checked against things as
+  they are and against how the plan left its module (a fingerprint kept with the plan). A
+  step that fails ends the plan; so do its time, a lowered level, Stop Plan, `stop_plan` and
+  closing. Four tools more (eighteen). In the crate: `Action::Plan`, the follow-through, the
+  plan's state in the server. In the UI: the card, the Plans part of the window, and the
+  checks before a step. No hook added. Also: a module's id on a card was made from its name
+  in another way than the module is created with (a name with a quote or an ampersand
+  showed one id and made another); both now use `starter::id_for`. Checked by 11 more tests
+  (8 in the crate, 3 in the UI, one of which runs a real script as a plan's fourth step),
+  and on screen in a window with settings of its own.
 - **2026-10-12 (Development subsystem, phase 2d, first slice: a docked panel and the Svelte
   showcase):** The owner asked for Svelte and the web view to be showcased in the Developer
   section. A trusted module's panel can now be docked beside the sheet in the system's web

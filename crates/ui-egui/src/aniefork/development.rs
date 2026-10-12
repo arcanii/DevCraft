@@ -23,10 +23,19 @@
 //! by its number and by a mark of what it holds, and a request too long to show whole can't
 //! be said yes to.
 //!
+//! **A plan is answered on one card**: its purpose, then every step whole, each as it will find
+//! things once the steps before it are done (a file written twice is compared with what the
+//! earlier step wrote), and what in it trusts a module or runs code. A yes approves it and does
+//! nothing else; the window then shows the plan with where each step stands, and a way to stop
+//! it.
+//!
 //! **Tools.** The modules, the Developer console and the Python that runs scripts, each with
 //! where it stands and the way to its own window. And a showcase: a module whose panel is a
 //! Svelte app, which the window creates and, once the person has trusted it, docks beside the
 //! sheet in the system's web view ([`super::dock`]).
+//!
+//! **What a card says is not worded here.** `card.rs` says it, as blocks, and this window
+//! draws them.
 //!
 //! The control channel can click and type in this window as a person does, and rewrite a
 //! dialog's values. So the window works from a state of its own that the channel can't reach,
@@ -34,13 +43,15 @@
 //! to a request) is refused while the channel is putting input into the window; see
 //! [`super::presence`].
 
-use gridcraft_aniefork_dev::agents::{Action, Asked, Kind, Level};
+use std::sync::Arc;
+
+use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::trust::TrustStore;
-use gridcraft_aniefork_dev::{module, settings, showcase, starter};
+use gridcraft_aniefork_dev::{settings, showcase};
 use serde_json::{Value as Json, json};
 
-use super::diff::{self, Line, Row};
+use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
+use super::diff::{Line, Row};
 use super::{agents, modules, presence};
 use crate::SheetApp;
 use crate::dialogs::Dialog;
@@ -49,29 +60,13 @@ use crate::theme::Tokens;
 /// The dialog's name, as `ui.dialog {name}` takes it.
 pub const NAME: &str = "development";
 
-const INTRO: &str = "Your development tools, and how far an agent may help you with them.";
-const AGENTS: &str =
-    "An agent (Claude Code, for one) can connect to GridCraft's Development server to help you build modules. You set how far it may go.";
 const COPIED: &str = "The setup was copied. It holds the token, which is a secret: paste it only into your agent's own settings.";
-/// The most of a file or of a script's data shown in a request (characters). What is cut says so.
-const SHOWN: usize = 200_000;
-/// The most lines of a comparison drawn. What is cut says so.
-const ROWS: usize = 4_000;
-/// How many unchanged lines are shown before and after each change to a file.
-const AROUND: usize = 3;
 /// How long a request's card is on screen before its yes can be pressed (milliseconds): a click
 /// meant for what was there a moment ago must not answer it.
-const SETTLE_MS: f64 = if cfg!(test) { 60.0 } else { 900.0 };
-
-const YES: &str = "1. Yes, allow it once";
-/// No, when the card has two choices, and when it has the third between them.
-const NO: &str = "2. No";
-const NO_OF_THREE: &str = "3. No";
-const REASON: &str = "…and tell the agent what to do differently";
-const NOT_NOW: &str = "Not now";
+pub(super) const SETTLE_MS: f64 = if cfg!(test) { 60.0 } else { 900.0 };
 
 /// What the person asked for in one frame; carried out after the window is drawn.
-enum Act {
+pub(super) enum Act {
     Level(Level),
     Port(String),
     CopySetup {
@@ -86,6 +81,8 @@ enum Act {
     Refuse(u64),
     /// Ask again for this kind of thing in this module.
     AskAgain(String, Kind),
+    /// Stop a plan that was approved.
+    StopPlan(u64),
     /// Show the whole of the file that would be written, or only what changes.
     Whole(bool),
     Open(&'static str),
@@ -101,19 +98,21 @@ enum Act {
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
 /// values, which anything on the control channel can rewrite: the values only report.
 #[derive(Clone, Default)]
-struct State {
+pub(super) struct State {
     /// The last frame the window was drawn in: after a gap it was closed, and starts afresh.
     seen: u64,
-    port: String,
+    pub(super) port: String,
     /// The request the person is looking at.
-    looking: Option<u64>,
+    pub(super) looking: Option<u64>,
     /// When its card came on screen (`now_ms`).
-    shown_at: f64,
+    pub(super) shown_at: f64,
     /// What the person would tell the agent with a no.
-    reason: String,
+    pub(super) reason: String,
     /// Show the whole of the file that would be written, not only what changes.
-    whole: bool,
-    said: String,
+    pub(super) whole: bool,
+    pub(super) said: String,
+    /// The plan being looked at, followed through: for which request, when, and what was found.
+    followed: Option<(u64, f64, Arc<Result<Vec<Sight>, String>>)>,
 }
 
 fn state_id() -> egui::Id {
@@ -133,7 +132,7 @@ impl State {
     /// The window as it opens: on the request that waits, when exactly one does. With several
     /// it opens on the list, for the person to choose: opening the window (which anything on
     /// the control channel can do) never decides which request is under their eyes.
-    fn fresh() -> State {
+    pub(super) fn fresh() -> State {
         let kept = modules::places().map(|at| settings::load(&at.settings).agents.port).unwrap_or_default();
         let mut state = State { port: kept.to_string(), ..State::default() };
         let only = match agents::snapshot().waiting.as_slice() {
@@ -150,6 +149,23 @@ impl State {
         self.shown_at = crate::now_ms();
         self.reason.clear();
         self.whole = false;
+    }
+
+    /// A plan's steps followed through, for its card: worked out afresh once a second, not
+    /// once a frame.
+    pub(super) fn follow(&mut self, at: &Places, id: u64, steps: &[Action], stood: &[(String, Option<String>)]) -> Arc<Result<Vec<Sight>, String>> {
+        let now = crate::now_ms();
+        if let Some((of, at_ms, kept)) = &self.followed
+            && *of == id
+            && (0.0..1000.0).contains(&(now - at_ms))
+        {
+            return kept.clone();
+        }
+        // Whether it can be approved as things are: its modules as they stood when it was
+        // proposed, and its steps fitting one another.
+        let fresh = Arc::new(dev::plan_fits(at, steps, stood));
+        self.followed = Some((id, now, fresh.clone()));
+        fresh
     }
 
     /// Writes what the dialog's values report. They are never read back, and never hold the token.
@@ -199,19 +215,18 @@ fn mono(ui: &egui::Ui) -> egui::FontId {
 fn text_block(ui: &mut egui::Ui, salt: &str, text: &str, numbered: bool) {
     let t = Tokens::get(ui.ctx());
     let font = mono(ui);
-    let count = text.chars().count();
-    let shown: String = if count > SHOWN { text.chars().take(SHOWN).collect() } else { text.to_string() };
+    let (shown, cut) = card::shown_text(text);
     let mut job = egui::text::LayoutJob::default();
     for (index, line) in shown.lines().enumerate() {
         if numbered {
             job.append(&format!("{:>4}  ", index + 1), 0.0, egui::TextFormat { font_id: font.clone(), color: t.text_dim, ..Default::default() });
         }
-        job.append(&format!("{line}\n"), 0.0, egui::TextFormat { font_id: font.clone(), color: t.text, ..Default::default() });
+        job.append(&format!("{}\n", card::visible(line)), 0.0, egui::TextFormat { font_id: font.clone(), color: t.text, ..Default::default() });
     }
     block(ui, salt, job);
-    if count > SHOWN {
+    if let Some(cut) = cut {
         let warn = ui.visuals().warn_fg_color;
-        ui.label(egui::RichText::new(format!("Only the first {SHOWN} characters are shown: {} more are not.", count - SHOWN)).color(warn).strong());
+        ui.label(egui::RichText::new(cut).color(warn).strong());
     }
 }
 
@@ -223,252 +238,93 @@ fn diff_block(ui: &mut egui::Ui, salt: &str, compared: &[Line]) {
     let tint = |colour: egui::Color32| egui::Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), 46);
     let plain = |colour: egui::Color32| egui::TextFormat { font_id: font.clone(), color: colour, ..Default::default() };
     let marked = |colour: egui::Color32| egui::TextFormat { font_id: font.clone(), color: t.text, background: tint(colour), ..Default::default() };
-    let rows = diff::shown(compared, AROUND);
+    let (rows, cut) = card::shown_rows(compared);
     let mut job = egui::text::LayoutJob::default();
-    for row in rows.iter().take(ROWS) {
+    for row in &rows {
         match row {
             Row::Skipped(count) => {
                 job.append(&format!("       ⋯ {count} line{} the same\n", if *count == 1 { "" } else { "s" }), 0.0, plain(t.text_dim))
             }
             Row::Line(Line::Same(_, number, text)) => {
                 job.append(&format!("{number:>4}   "), 0.0, plain(t.text_dim));
-                job.append(&format!("{text}\n"), 0.0, plain(t.text));
+                job.append(&format!("{}\n", card::visible(text)), 0.0, plain(t.text));
             }
             Row::Line(Line::Gone(number, text)) => {
                 job.append(&format!("{number:>4} - "), 0.0, plain(t.danger));
-                job.append(&format!("{text}\n"), 0.0, marked(t.danger));
+                job.append(&format!("{}\n", card::visible(text)), 0.0, marked(t.danger));
             }
             Row::Line(Line::New(number, text)) => {
                 job.append(&format!("{number:>4} + "), 0.0, plain(t.accent));
-                job.append(&format!("{text}\n"), 0.0, marked(t.accent));
+                job.append(&format!("{}\n", card::visible(text)), 0.0, marked(t.accent));
             }
         }
     }
     block(ui, salt, job);
-    if rows.len() > ROWS {
+    if let Some(cut) = cut {
         let warn = ui.visuals().warn_fg_color;
-        ui.label(
-            egui::RichText::new(format!("Only the first {ROWS} lines of the changes are shown. Show the whole file to read the rest."))
-                .color(warn)
-                .strong(),
-        );
+        ui.label(egui::RichText::new(cut).color(warn).strong());
     }
 }
 
-/// What the agent's client calls itself, for a sentence: its own word, or "the agent".
-fn agent(asked: &Asked) -> String {
-    if asked.client == "an agent" { "the agent".into() } else { asked.client.clone() }
-}
-
-/// Whether the module has a plain file at `path` now.
-fn there(at: &Places, id: &str, path: &str) -> bool {
-    at.modules.join(id).join(path).is_file()
-}
-
-/// What kind of thing a request is: the card's heading.
-fn kind(at: &Places, action: &Action) -> &'static str {
-    match action {
-        Action::CreateModule { .. } => "Create module",
-        Action::WriteFile { module, path, .. } if there(at, module, path) => "Edit file",
-        Action::WriteFile { .. } => "Create file",
-        Action::DeleteFile { .. } => "Delete file",
-        Action::RunScript { .. } => "Run script",
-        Action::OpenPanel { .. } => "Open panel",
-        Action::Trust { .. } => "Trust module",
-        Action::StopTrusting { .. } => "Stop trusting module",
-    }
-}
-
-/// What a request is about: the first line of the card's block.
-fn target(action: &Action) -> String {
-    match action {
-        Action::CreateModule { name } => format!("{}/   ({name:?})", starter::slug(name)),
-        Action::WriteFile { module, path, .. } | Action::DeleteFile { module, path } => format!("{module}/{path}"),
-        Action::RunScript { module, script, .. } => format!("{module}: {script}"),
-        Action::OpenPanel { module } | Action::Trust { module, .. } | Action::StopTrusting { module } => module.clone(),
-    }
-}
-
-/// The question the card puts. What the agent named freely is inside quotes.
-fn question(at: &Places, asked: &Asked) -> String {
-    let agent = agent(asked);
-    match &asked.action {
-        Action::CreateModule { .. } => format!("Do you want to let {agent} create this module?"),
-        Action::WriteFile { module, path, .. } if there(at, module, path) => format!("Do you want to let {agent} make this edit to {path:?}?"),
-        Action::WriteFile { path, .. } => format!("Do you want to let {agent} create {path:?}?"),
-        Action::DeleteFile { path, .. } => format!("Do you want to let {agent} delete {path:?}?"),
-        Action::RunScript { script, .. } => format!("Do you want to let {agent} run {script:?}?"),
-        Action::OpenPanel { module } => format!("Do you want to let {agent} open the panel of {module} in your browser?"),
-        Action::Trust { module, .. } => format!("Do you want to trust {module}, as {agent} asks?"),
-        Action::StopTrusting { module } => format!("Do you want to stop trusting {module}, as {agent} asks?"),
-    }
-}
-
-/// What a change to a module's files means for its trust.
-fn change_means(ui: &mut egui::Ui, at: &Places, id: &str) {
-    if TrustStore::load(&at.trust).follows_changes(id) {
-        let warn = ui.visuals().warn_fg_color;
-        let text = format!("You chose to keep trusting {id} as its files change: what is written runs without your looking at it again.");
-        ui.label(egui::RichText::new(text).color(warn).strong());
-    } else {
-        ui.label(format!("{id} stops being trusted when its files change: nothing in it runs until you review it again."));
-    }
-}
-
-/// The thing itself, in the card's block: everything a request would do.
-fn content(ui: &mut egui::Ui, at: &Places, asked: &Asked, whole: bool, action: &mut Option<Act>) {
+/// Draws what a card says, block by block (`card.rs` says it). `salt` tells its blocks from
+/// those of another part of the card.
+fn draw(ui: &mut egui::Ui, salt: &str, blocks: &[Block<'_>], action: &mut Option<Act>) {
     let warn = ui.visuals().warn_fg_color;
-    match &asked.action {
-        Action::CreateModule { .. } => {
-            ui.label("A starter module: a module.toml, a panel and a Python script.");
-        }
-        Action::WriteFile { module, path, text } => {
-            if !there(at, module, path) {
-                ui.label(small("The file is new:"));
-                text_block(ui, "request_text", text, true);
-                return;
+    for (index, block) in blocks.iter().enumerate() {
+        match block {
+            Block::Note(text) => {
+                ui.label(text.as_str());
             }
-            // The file that is there, when it can be read as text and compared.
-            let old = gridcraft_aniefork_dev::agents::read_file(at, module, path).ok();
-            let compared = old.as_deref().and_then(|old| diff::lines(old, text));
-            match (&compared, whole) {
-                (Some(compared), false) => {
-                    let (gone, new) = diff::counts(compared);
-                    ui.horizontal(|ui| {
-                        let same = gone == 0 && new == 0;
-                        ui.label(small(if same {
-                            "It changes the file that is there: no line differs but for line breaks or what ends it.".to_string()
-                        } else {
-                            format!("It changes the file that is there: {new} line{} in, {gone} out.", if new == 1 { "" } else { "s" })
-                        }));
-                        if ui.small_button("Show whole file").clicked() {
-                            *action = Some(Act::Whole(true));
-                        }
-                    });
-                    diff_block(ui, "request_diff", compared);
-                }
-                _ => {
-                    ui.horizontal(|ui| {
-                        ui.label(small(if compared.is_some() {
-                            "It replaces the file that is there with this:"
-                        } else {
-                            "It replaces the file that is there, which can't be compared line by line, with this:"
-                        }));
-                        if compared.is_some() && ui.small_button("Show changes").clicked() {
-                            *action = Some(Act::Whole(false));
-                        }
-                    });
-                    text_block(ui, "request_text", text, true);
-                }
+            Block::Warn(text) => {
+                ui.label(egui::RichText::new(text.as_str()).color(warn).strong());
+            }
+            Block::Small(text) => {
+                ui.label(small(text.as_str()));
+            }
+            Block::Strong(text) => {
+                ui.label(egui::RichText::new(text.as_str()).strong());
+            }
+            Block::Bullet { text, warn: weighs } => {
+                let line = egui::RichText::new(format!("•  {text}"));
+                ui.label(if *weighs { line.color(warn).strong() } else { line });
+            }
+            Block::Toggle { text, button } => {
+                ui.horizontal(|ui| {
+                    ui.label(small(text.as_str()));
+                    if let Some((label, whole)) = button
+                        && ui.small_button(*label).clicked()
+                    {
+                        *action = Some(Act::Whole(*whole));
+                    }
+                });
+            }
+            Block::Text { text, numbered } => text_block(ui, &format!("{salt}_text"), text, *numbered),
+            Block::Diff(compared) => diff_block(ui, &format!("{salt}_diff"), compared),
+            Block::Step { heading, target, blocks } => {
+                ui.add_space(4.0);
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(heading.as_str()).strong());
+                    ui.label(egui::RichText::new(target.as_str()).monospace());
+                });
+                draw(ui, &format!("{salt}_step{index}"), blocks, action);
             }
         }
-        Action::DeleteFile { .. } => {
-            ui.label("The file is deleted.");
-        }
-        Action::RunScript { data, on_selection, timeout, .. } => {
-            if *on_selection {
-                ui.label("main(data) is handed the current selection.");
-            } else {
-                ui.label(small("main(data) is handed this:"));
-                text_block(ui, "request_data", &serde_json::to_string_pretty(data).unwrap_or_default(), false);
-            }
-            ui.label(small(format!("It may run for up to {} seconds.", timeout.as_secs().max(1))));
-        }
-        Action::OpenPanel { .. } => {
-            ui.label("Its panel opens in your browser.");
-        }
-        Action::Trust { module, fingerprint } => {
-            let found = module::load(&at.modules.join(module));
-            if found.fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                ui.label(
-                    egui::RichText::new("The module changed after the agent asked. It has to ask again: this request can't be allowed.")
-                        .color(warn)
-                        .strong(),
-                );
-                return;
-            }
-            ui.label(egui::RichText::new("It would be allowed to:").strong());
-            let asks = found.manifest.as_ref().map(|m| m.permissions.clone()).unwrap_or_default();
-            if asks.is_empty() {
-                ui.label("•  Show its panel, and nothing more");
-            }
-            for permission in asks {
-                let line = egui::RichText::new(format!("•  {}", permission.meaning()));
-                ui.label(if permission.is_unlimited() { line.color(warn).strong() } else { line });
-            }
-            let shown: Vec<&str> = found.files.iter().map(String::as_str).take(8).collect();
-            let more = found.files.len().saturating_sub(shown.len());
-            ui.label(small(format!(
-                "It contains {} file{}: {}{}. Fingerprint {}…",
-                found.files.len(),
-                if found.files.len() == 1 { "" } else { "s" },
-                shown.join(", "),
-                if more > 0 { format!(" and {more} more") } else { String::new() },
-                fingerprint.chars().take(16).collect::<String>()
-            )));
-        }
-        Action::StopTrusting { .. } => {
-            ui.label("Its trust is taken back.");
-        }
-    }
-}
-
-/// What a yes would mean, under the card's block.
-fn means(ui: &mut egui::Ui, at: &Places, action: &Action) {
-    let warn = ui.visuals().warn_fg_color;
-    match action {
-        Action::CreateModule { .. } => {
-            ui.label("It is created untrusted: it does nothing until you trust it.");
-        }
-        Action::WriteFile { module, .. } | Action::DeleteFile { module, .. } => change_means(ui, at, module),
-        Action::RunScript { .. } => {
-            ui.label("It may change the workbook, with what its module was granted.");
-            ui.label(egui::RichText::new("A script can do anything a program you run can do.").color(warn).strong());
-        }
-        Action::OpenPanel { .. } => {
-            ui.label("Its panel can do what you granted the module.");
-        }
-        Action::Trust { .. } => {
-            ui.label("Trust is given to exactly these files. To read them first, say no, and review the module in Modules.");
-        }
-        Action::StopTrusting { .. } => {
-            ui.label("It does nothing after that until you trust it again.");
-        }
-    }
-}
-
-/// What names a request, on its card and in the list: its number, the mark of what it holds
-/// (the same mark the operating system's question gives), and how long it has.
-fn named(asked: &Asked) -> String {
-    let mark = match gridcraft_aniefork_dev::agents::mark(&asked.action).as_str() {
-        "" => String::new(),
-        mark => format!("  ·  marked {mark}"),
-    };
-    format!("request #{}{mark}  ·  lapses in {} min", asked.id, asked.left.as_secs() / 60 + 1)
-}
-
-/// Whether a request holds more than a card can show whole. Such a request can't be said yes
-/// to: nobody has read the whole of it.
-fn too_long(action: &Action) -> bool {
-    match action {
-        Action::WriteFile { text, .. } => text.chars().count() > SHOWN,
-        Action::RunScript { data, on_selection: false, .. } => serde_json::to_string_pretty(data).unwrap_or_default().chars().count() > SHOWN,
-        _ => false,
     }
 }
 
 /// One request that waits for an answer, in the list: what kind of thing, and what about.
-fn card(ui: &mut egui::Ui, at: &Places, asked: &Asked, action: &mut Option<Act>) {
+fn waiting_card(ui: &mut egui::Ui, at: &Places, asked: &Asked, action: &mut Option<Act>) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         ui.set_min_width(ui.available_width());
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(kind(at, &asked.action)).strong());
-            ui.label(egui::RichText::new(target(&asked.action)).monospace());
+            ui.label(egui::RichText::new(card::kind(&asked.action, card::writes_new(at, &asked.action))).strong());
+            ui.label(egui::RichText::new(card::target(&asked.action)).monospace());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Look…").on_hover_text("See everything this request would do, and answer it").clicked() {
                     *action = Some(Act::Look(asked.id));
                 }
-                ui.label(small(named(asked)));
+                ui.label(small(card::named(asked)));
             });
         });
     });
@@ -478,21 +334,38 @@ fn card(ui: &mut egui::Ui, at: &Places, asked: &Asked, action: &mut Option<Act>)
 /// means, and yes or no. It takes the place of the rest of the window, so that what is being
 /// decided is all there is to look at.
 fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driven: bool, confirms: bool, action: &mut Option<Act>) {
+    let sight = card::sight_now(at, &asked.action);
+    let new = card::is_new(&sight);
+    // A plan's steps, followed through: how each will find what it is about.
+    let followed = match &asked.action {
+        Action::Plan { steps, stood, .. } => Some(state.follow(at, asked.id, steps, stood)),
+        _ => None,
+    };
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(kind(at, &asked.action)).strong().size(15.0));
+        ui.label(egui::RichText::new(card::kind(&asked.action, new)).strong().size(15.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(small(named(asked)));
+            ui.label(small(card::named(asked)));
         });
     });
+    let whole = state.whole;
     egui::Frame::group(ui.style()).fill(ui.visuals().extreme_bg_color).show(ui, |ui| {
         ui.set_min_width(ui.available_width());
-        ui.label(egui::RichText::new(target(&asked.action)).monospace().strong());
+        ui.label(egui::RichText::new(card::target(&asked.action)).monospace().strong());
         ui.add_space(2.0);
-        content(ui, at, asked, state.whole, action);
+        match (&asked.action, &followed) {
+            (Action::Plan { purpose, steps, minutes, .. }, Some(sights)) => {
+                // Every step is on the card, however many: the card scrolls, and its answer stays in reach.
+                let room = (ui.ctx().content_rect().height() - 440.0).max(160.0);
+                egui::ScrollArea::vertical().id_salt("plan_steps").max_height(room).auto_shrink([false, true]).show(ui, |ui| {
+                    draw(ui, "request", &card::plan(at, purpose, steps, *minutes, sights, whole), action);
+                });
+            }
+            _ => draw(ui, "request", &card::content(at, &asked.action, &sight, false, whole), action),
+        }
     });
-    means(ui, at, &asked.action);
+    draw(ui, "means", &card::means(at, &asked.action), action);
     ui.add_space(8.0);
-    ui.label(egui::RichText::new(question(at, asked)).strong());
+    ui.label(egui::RichText::new(card::question(asked, new)).strong());
     ui.add_space(2.0);
     // A card that has only just come on screen can't be said yes to yet.
     let waited = crate::now_ms() - state.shown_at;
@@ -501,20 +374,22 @@ fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driv
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
     // Nor can one that is too long to have been read whole.
-    let cut = too_long(&asked.action);
+    let cut = card::too_long(&asked.action);
     if cut {
         let warn = ui.visuals().warn_fg_color;
-        let text = "This is too long to show whole, so it can't be allowed here. Say no, and have the agent do it in smaller pieces.";
-        ui.label(egui::RichText::new(text).color(warn).strong());
+        ui.label(egui::RichText::new(card::TOO_LONG).color(warn).strong());
     }
-    if ui.add_enabled(ready && !cut, egui::Button::new(YES)).clicked() {
+    // Nor a plan that doesn't fit things as they are.
+    let unfit = followed.as_ref().is_some_and(|sights| sights.is_err());
+    let yes = if followed.is_some() { YES_PLAN } else { YES };
+    if ui.add_enabled(ready && !cut && !unfit, egui::Button::new(yes)).clicked() {
         *action = Some(Act::Allow(asked.id));
     }
     // And don't ask again: for what can go unasked, in a module whose files are looked at
     // before they run.
     let three = agents::can_go_unasked(asked);
     if three {
-        let again = egui::Button::new(yes_and(&asked.action)).wrap_mode(egui::TextWrapMode::Wrap);
+        let again = egui::Button::new(card::yes_and(&asked.action)).wrap_mode(egui::TextWrapMode::Wrap);
         if ui.add_enabled(ready && !cut, again).clicked() {
             *action = Some(Act::AllowNotAgain(asked.id));
         }
@@ -534,18 +409,7 @@ fn review(ui: &mut egui::Ui, at: &Places, asked: &Asked, state: &mut State, driv
         *action = Some(Act::NotNow);
     }
     ui.add_space(2.0);
-    let named = if asked.client == "an agent" {
-        "The agent gave no name.".to_string()
-    } else {
-        format!("Asked by an agent that calls itself \"{}\": the name is its own word.", asked.client)
-    };
-    let confirmed = if confirms { " A yes is confirmed by your operating system." } else { "" };
-    ui.label(small(format!("{named}{confirmed}")));
-}
-
-/// The card's second choice, when it has three.
-fn yes_and(action: &Action) -> String {
-    format!("2. Yes, and don't ask again for {} until GridCraft closes", agents::covers(action.module(), action.kind()))
+    ui.label(small(card::asker(asked, confirms)));
 }
 
 /// The Agents part: the level, how to connect, who connected, and what waits for an answer.
@@ -553,10 +417,10 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
     let t = Tokens::get(ui.ctx());
     let now = agents::snapshot();
     if !now.available {
-        ui.label("Agents can't connect in this run, because it keeps no settings.");
+        ui.label(card::NO_AGENTS);
         return;
     }
-    ui.label(AGENTS);
+    ui.label(card::AGENTS);
     ui.add_space(2.0);
     for level in Level::ALL {
         if ui.radio(now.level == level, level.label()).on_hover_text(level.meaning()).clicked() && level != now.level {
@@ -566,26 +430,15 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
     ui.label(small(now.level.meaning()));
     ui.add_space(4.0);
     // Where it stands.
-    if now.serving {
-        ui.label(egui::RichText::new(format!("Serving on 127.0.0.1, port {}.", now.port)).color(t.accent).strong());
-        match now.clients.first() {
-            Some(client) => {
-                let more = now.clients.len() - 1;
-                let others = if more > 0 { format!(", and {more} more") } else { String::new() };
-                ui.label(small(format!(
-                    "Last heard from: {} ({} s ago){others}. A client's name is what it chose to say.",
-                    client.name,
-                    client.heard.as_secs()
-                )));
-            }
-            None => {
-                ui.label(small("No agent has connected yet."));
-            }
-        }
-    } else if !now.problem.is_empty() {
-        ui.label(egui::RichText::new(format!("Not serving: {}", now.problem)).color(ui.visuals().error_fg_color).strong());
-    } else {
-        ui.label(small("Not serving: agent access is off."));
+    let (kind, status) = card::serving(&now);
+    let status = egui::RichText::new(status);
+    ui.label(match kind {
+        "ok" => status.color(t.accent).strong(),
+        "error" => status.color(ui.visuals().error_fg_color).strong(),
+        _ => status.small(),
+    });
+    if let Some(clients) = card::clients(&now) {
+        ui.label(small(clients));
     }
     ui.horizontal(|ui| {
         let label = ui.label("Port:");
@@ -623,8 +476,16 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
         ui.label(egui::RichText::new(format!("Waiting for your answer ({})", now.waiting.len())).strong());
         if let Some(at) = modules::places() {
             for asked in &now.waiting {
-                card(ui, &at, asked, action);
+                waiting_card(ui, &at, asked, action);
             }
+        }
+    }
+    // The plan that was approved, and the last one that ended.
+    if !now.plans.is_empty() {
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Plans").strong());
+        for plan in now.plans.iter().take(2) {
+            plan_card(ui, plan, action);
         }
     }
     // What the person said not to ask about again.
@@ -644,83 +505,83 @@ fn agents_part(ui: &mut egui::Ui, state: &mut State, driven: bool, action: &mut 
     if !now.recent.is_empty() {
         ui.add_space(4.0);
         ui.label(egui::RichText::new("Lately").strong());
-        let at_ms = crate::now_ms();
-        // Each request once, as it stands now: the newest first.
-        let mut told = Vec::new();
-        for line in now.recent.iter().rev() {
-            if line.request != 0 && told.contains(&line.request) {
-                continue;
-            }
-            told.push(line.request);
-            let when = super::console::ago(line.at_ms, at_ms);
-            ui.label(small(format!("{when}  ·  {}: {}  ·  {}", line.client, line.what, line.outcome.code())));
-            if told.len() >= 4 {
-                break;
-            }
+        for line in card::lately(&now) {
+            ui.label(small(line));
         }
-        ui.label(small("The whole record is in the Developer console, and in agent-log.jsonl beside your settings."));
+        ui.label(small(card::RECORD));
     }
+}
+
+/// A plan the person approved: where each of its steps stands, and the way to stop it.
+fn plan_card(ui: &mut egui::Ui, plan: &dev::Plan, action: &mut Option<Act>) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Plan #{}", plan.id)).strong());
+            ui.label(format!("{:?}", plan.title));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if plan.ended.is_none()
+                    && ui.button("Stop Plan").on_hover_text("None of its steps is carried out after this. What was done stays done.").clicked()
+                {
+                    *action = Some(Act::StopPlan(plan.id));
+                }
+                ui.label(small(card::plan_stands(plan)));
+            });
+        });
+        for (index, step) in plan.steps.iter().enumerate() {
+            ui.label(small(format!("{}. {}  ·  {}", index + 1, step.action.title(), card::step_stands(&step.state))));
+        }
+    });
 }
 
 /// The Tools part: each development tool, where it stands, and the way to its own window.
 fn tools_part(app: &SheetApp, ui: &mut egui::Ui, action: &mut Option<Act>) {
-    let listing = modules::list();
-    if listing["available"] != true {
-        ui.label("Modules are not available in this run, because it keeps no settings.");
+    let Some(tools) = card::tools(app, ui.ctx()) else {
+        ui.label(card::NO_MODULES);
         return;
-    }
-    let all = listing["modules"].as_array().cloned().unwrap_or_default();
-    let trusted = all.iter().filter(|m| m["status"] == "trusted").count();
-    let console = super::console::report(&json!({"last": 1})).ok().and_then(|report| report["kept"].as_u64()).unwrap_or(0);
-    let python = modules::places().map(|at| settings::load(&at.settings).python).unwrap_or_default();
+    };
     ui.horizontal(|ui| {
         if ui.button("Modules…").on_hover_text("Create, review, trust and run modules; name the Python that runs their scripts").clicked() {
             *action = Some(Act::Open(modules::NAME));
         }
-        ui.label(format!("{} installed, {trusted} trusted", all.len()));
+        ui.label(tools.modules.as_str());
         ui.add_space(12.0);
         if ui.button("Console…").on_hover_text("What your modules print and log, what failed, and what agents asked for").clicked() {
             *action = Some(Act::Open(super::console::NAME));
         }
-        ui.label(format!("{console} entr{}", if console == 1 { "y" } else { "ies" }));
+        ui.label(tools.console.as_str());
     });
     ui.horizontal(|ui| {
-        ui.label(small(format!("Python: {}.", if python.is_empty() { "found automatically" } else { python.as_str() })));
-        let folder = listing["folder"].as_str().unwrap_or("");
+        ui.label(small(tools.python.as_str()));
+        let folder = tools.folder.as_str();
         ui.label(small("Modules folder:"));
         ui.allocate_ui(egui::vec2((ui.available_width() - 110.0).clamp(80.0, 260.0), ui.spacing().interact_size.y), |ui| {
             ui.add(egui::Label::new(egui::RichText::new(folder).monospace().small()).truncate()).on_hover_text(folder);
         });
-        if app.services.open_url.is_some() && ui.button("Open Folder").clicked() {
+        if tools.can_open_folder && ui.button("Open Folder").clicked() {
             *action = Some(Act::OpenFolder);
         }
     });
     // The showcase: a panel written with a web toolkit, shown inside the window.
     ui.add_space(4.0);
-    let standing = all.iter().find(|m| m["id"] == showcase::ID).map(|m| m["status"].as_str().unwrap_or("").to_string());
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("Showcase").strong());
-        match standing.as_deref() {
+        ui.label(tools.showcase_says);
+        match tools.showcase {
             None => {
-                ui.label("A panel that is a Svelte app, docked beside the sheet.");
                 if ui.button("Create Showcase").on_hover_text("Creates the Svelte Showcase module. It does nothing until you trust it.").clicked() {
                     *action = Some(Act::CreateShowcase);
                 }
             }
-            Some("trusted") => {
-                ui.label("Svelte Showcase is ready.");
-                if super::dock::available(ui.ctx())
-                    && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
-                {
+            Some(true) => {
+                if tools.can_dock && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked() {
                     *action = Some(Act::ShowShowcase { docked: true });
                 }
-                if app.services.open_url.is_some() && ui.button("Open in Browser").clicked() {
+                if tools.can_browse && ui.button("Open in Browser").clicked() {
                     *action = Some(Act::ShowShowcase { docked: false });
                 }
             }
-            Some(_) => {
-                ui.label("Svelte Showcase is not trusted yet: review and trust it in Modules, then come back.");
-            }
+            Some(false) => {}
         }
     });
 }
@@ -745,7 +606,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         (Some(asked), Some(at)) => review(ui, &at, &asked, &mut state, driven, agents::confirms(app), &mut action),
         _ => {
             state.looking = None;
-            ui.label(INTRO);
+            ui.label(card::INTRO);
             // On a small screen the rest scrolls, and Close stays in reach.
             let room = (ctx.content_rect().height() - 220.0).max(240.0);
             egui::ScrollArea::vertical().id_salt("development").max_height(room).show(ui, |ui| {
@@ -766,8 +627,9 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             *open = false;
         }
     });
-    // While a request waits, or a script an agent asked for runs, the window keeps up with it.
-    if !agents::snapshot().waiting.is_empty() {
+    // While a request waits, or a plan's steps can be carried out, the window keeps up.
+    let now = agents::snapshot();
+    if !now.waiting.is_empty() || now.plans.iter().any(|plan| plan.ended.is_none()) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
 
@@ -786,10 +648,11 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 
 /// Carries out what the person asked for. Everything that decides something is theirs alone:
 /// asked for while the control channel is putting input into the window, it is refused.
-fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, driven: bool, open: &mut bool) -> Result<String, String> {
+pub(super) fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, driven: bool, open: &mut bool) -> Result<String, String> {
     // Going to another of the fork's windows is anyone's. Everything else is the person's: what
     // is set, what is answered, and which request is under their eyes.
-    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder | Act::AskAgain(..) | Act::CreateShowcase);
+    // So is tightening things: being asked again, stopping a plan.
+    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder | Act::AskAgain(..) | Act::StopPlan(_) | Act::CreateShowcase);
     if !anyones && driven {
         return Err(presence::BY_HAND.to_string());
     }
@@ -844,6 +707,7 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, 
             agents::ask_again(&module, kind);
             Ok(format!("You will be asked again for {}.", agents::covers(&module, kind)))
         }
+        Act::StopPlan(id) => agents::stop_plan(id, !driven),
         Act::Open(name) => {
             app.open_dialog(name, json!({}));
             *open = false;
@@ -1478,7 +1342,7 @@ mod tests {
         let mut h = harness(app_with(Some(&asked)));
         open(&mut h);
         choose(&mut h, Level::Ask);
-        let long = format!("{}# the end\n", "x = 1\n".repeat(SHOWN / 6 + 1));
+        let long = format!("{}# the end\n", "x = 1\n".repeat(card::SHOWN / 6 + 1));
         let id = asks(&mut h, "write_module_file", json!({"module": "clean-data", "path": "python/long.py", "text": long}));
         look(&mut h);
         h.get_by_label_contains("so it can't be allowed here");
@@ -1955,13 +1819,258 @@ mod tests {
         assert!(!agents::snapshot().serving);
     }
 
+    /// The person says yes to a plan's card, once it has been on screen a moment.
+    fn approve_plan(h: &mut Harness) {
+        std::thread::sleep(Duration::from_millis(SETTLE_MS as u64 + 40));
+        click(h, YES_PLAN);
+    }
+
+    /// An agent asks for a step of a plan, and the app draws frames until it is settled: (is an
+    /// error, what was said).
+    fn step(h: &mut Harness, plan: u64, number: u64) -> (bool, String) {
+        let (failed, text) = agent("run_plan_step", json!({"plan": plan, "step": number}));
+        let Some((_, rest)) = text.split_once("(request #") else { return (failed, text) };
+        let id = rest.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap();
+        h.run_steps(3);
+        settled(h, id)
+    }
+
+    #[test]
+    fn a_plan_is_approved_on_one_card_and_its_steps_need_no_further_answer() {
+        let s = Sandbox::new("agents-plan");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        open(&mut h);
+        choose(&mut h, Level::Ask);
+        h.state_mut().dialog = None;
+        h.run_steps(2);
+        let script = s.0.join("modules/clean-data/python/clean.py");
+        let before = std::fs::read_to_string(&script).unwrap();
+        let first = "def main(data):\n    return 1\n";
+        let second = "def main(data):\n    print('doubling')\n    return {'twice': data['n'] * 2}\n";
+        let plan = asks(
+            &mut h,
+            "propose_plan",
+            json!({
+                "title": "Double it", "purpose": "Make clean.py double a number, and try it.",
+                "steps": [
+                    {"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "python/clean.py", "text": first}},
+                    {"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "python/clean.py", "text": second}},
+                    {"tool": "trust_module", "arguments": {"module": "clean-data"}},
+                    {"tool": "run_script", "arguments": {"module": "clean-data", "script": "clean.py", "data": {"n": 21}}},
+                ],
+            }),
+        );
+        assert!(h.state().notice.as_ref().is_some_and(|notice| notice.text.contains("1 waiting")), "it is a request like any other");
+        // One card, with what it is for and every step whole.
+        open(&mut h);
+        look(&mut h);
+        h.get_by_label("Plan");
+        h.get_by_label("\"Double it\"  ·  4 steps");
+        h.get_by_label("What the agent says it is for: \"Make clean.py double a number, and try it.\"");
+        h.get_by_label_contains("Its files that this plan doesn't write are trusted as they are now.");
+        h.get_by_label_contains("Nothing is done now. Each step is done later, when the agent asks for it");
+        for heading in ["Step 1 of 4  ·  Edit file", "Step 2 of 4  ·  Edit file", "Step 3 of 4  ·  Trust module", "Step 4 of 4  ·  Run script"] {
+            h.get_by_label(heading);
+        }
+        // Each step is shown as it will find things: the second edit takes out what the first put in.
+        assert_eq!(h.query_all_by_label_contains("return 1").count(), 2, "put in by step 1, taken out by step 2");
+        assert_eq!(h.query_all_by_label_contains("return {'twice': data['n'] * 2}").count(), 1);
+        h.get_by_label_contains("As the steps before this one leave it, it will contain 3 files: module.toml, panel/index.html, python/clean.py.");
+        h.get_by_label_contains("Run its Python scripts. This cannot be limited");
+        // What in it trusts a module or runs code is said by itself.
+        h.get_by_label("Step 3 trusts clean-data: from then on its code can run, with what it asks to be allowed.");
+        h.get_by_label("Step 4 runs \"clean.py\" of clean-data: a script can do anything a program you run can do.");
+        h.get_by_label("Do you want to approve this plan, as the agent proposes it?");
+        assert!(h.query_by_label(YES).is_none() && h.query_by_label_contains("don't ask again").is_none(), "a plan is approved or not");
+        let questions = asked.questions().len();
+        approve_plan(&mut h);
+        // The operating system's question names the plan, its steps and what weighs most.
+        let question = asked.questions().pop().unwrap();
+        assert_eq!(asked.questions().len(), questions + 1);
+        let tag = format!("This is request #{plan}, holding what its card marks ");
+        for part in [
+            "An agent asks you to approve a plan, \"Double it\". It says it is for: \"Make clean.py double a number, and try it.\"",
+            "  1. Write \"python/clean.py\" in clean-data",
+            "  3. Trust clean-data",
+            "  4. Run \"clean.py\" of clean-data",
+            "Nothing is done now.",
+            "It trusts a module and runs its code",
+            tag.as_str(),
+            "Approve the plan?",
+        ] {
+            assert!(question.contains(part), "{part}: {question}");
+        }
+        // Approving it did nothing but approve it.
+        assert_eq!(std::fs::read_to_string(&script).unwrap(), before);
+        let (failed, said) = stands(plan);
+        assert!(
+            !failed
+                && said.contains(&format!("Plan #{plan} is approved: 4 step(s), to be carried out within 60 minute(s). Nothing has been done yet.")),
+            "{said}"
+        );
+        // The window shows the plan, and the way to stop it.
+        h.get_by_label_contains("The plan is approved: its 4 steps can be carried out for the next 60 minutes");
+        h.get_by_label(format!("Plan #{plan}").as_str());
+        h.get_by_label("Stop Plan");
+        h.get_by_label_contains("0 of 4 done");
+        let report = h.state_mut().run("developer.agents", json!({})).unwrap();
+        assert_eq!((&report["plans"][0]["plan"], &report["plans"][0]["ended"]), (&json!(plan), &Json::Null));
+        assert_eq!(report["plans"][0]["steps"][2]["what"], "Trust clean-data");
+        // The steps are carried out as the agent asks for them, and nobody is asked again.
+        let (failed, said) = step(&mut h, plan, 1);
+        assert!(!failed && said.contains("python/clean.py was written over in clean-data") && said.contains("The next is step 2 of 4"), "{said}");
+        assert_eq!(std::fs::read_to_string(&script).unwrap(), first);
+        let (failed, said) = step(&mut h, plan, 2);
+        assert!(!failed, "{said}");
+        assert_eq!(std::fs::read_to_string(&script).unwrap(), second);
+        assert_eq!(list()["modules"][0]["status"], "untrusted");
+        let (failed, said) = step(&mut h, plan, 3);
+        assert!(!failed && said.contains("clean-data is trusted as it is now."), "{said}");
+        assert_eq!(list()["modules"][0]["status"], "trusted");
+        assert_eq!(list()["modules"][0]["followsChanges"], false);
+        assert_eq!(asked.questions().len(), questions + 1, "the plan was the one thing asked");
+        assert!(agents::snapshot().waiting.is_empty() && h.state().notice.is_none());
+        h.get_by_label_contains("3 of 4 done");
+        if let Err(why) = PythonHost::global().interpreter("") {
+            eprintln!("skipped the run: {why}");
+            return;
+        }
+        let (failed, said) = step(&mut h, plan, 4);
+        assert!(
+            !failed
+                && said.contains("clean.py of clean-data returned.")
+                && said.contains(&format!("Plan #{plan} has ended: every step was carried out.")),
+            "{said}"
+        );
+        let (_, rest) = said.split_once("<untrusted-data-").unwrap();
+        let data: Json = serde_json::from_str(rest.split_once(">\n").unwrap().1.rsplit_once("\n</untrusted-data-").unwrap().0).unwrap();
+        assert_eq!(data["result"], json!({"twice": 42}));
+        assert_eq!(data["printed"].as_str().map(str::trim), Some("doubling"));
+        PythonHost::global().stop(&s.0.join("modules"), "clean-data");
+        // It is over: the window says so, and nothing more of it can be asked for.
+        h.run_steps(3);
+        h.get_by_label_contains("4 of 4 done  ·  ended: every step was carried out");
+        assert!(h.query_by_label("Stop Plan").is_none());
+        assert!(step(&mut h, plan, 4).1.contains("has ended"));
+        assert_eq!(outcomes(&s), ["asked", "allowed", "done", "allowed", "done", "allowed", "done", "allowed", "done", "allowed", "done", "done"]);
+    }
+
+    #[test]
+    fn a_plans_step_waits_while_its_module_is_not_as_the_plan_left_it_and_the_person_can_stop_the_plan() {
+        let s = Sandbox::new("agents-plan-fits");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        // Without the control channel: a yes on the card is enough for a plan too.
+        let mut h = harness_alone(app_with(Some(&asked)));
+        open(&mut h);
+        choose(&mut h, Level::Ask);
+        h.state_mut().dialog = None;
+        h.run_steps(2);
+        let script = s.0.join("modules/clean-data/python/clean.py");
+        let notes = s.0.join("modules/clean-data/notes.txt");
+        let before = std::fs::read_to_string(&script).unwrap();
+        let write = |text: &str| json!({"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "notes.txt", "text": text}});
+        let plan = asks(&mut h, "propose_plan", json!({"title": "Notes", "purpose": "Keep notes.", "steps": [write("one\n"), write("two\n")]}));
+        open(&mut h);
+        look(&mut h);
+        h.get_by_label("Step 1 of 2  ·  Create file");
+        h.get_by_label("Step 2 of 2  ·  Edit file");
+        let questions = asked.questions().len();
+        approve_plan(&mut h);
+        assert_eq!(asked.questions().len(), questions, "nothing but the person can click here");
+        assert_eq!(agents::snapshot().plans[0].ended, None);
+        // Something else changes the module: the plan was approved for the files as they stood.
+        std::fs::write(&script, "def main(data):\n    return 'changed by hand'\n").unwrap();
+        let (failed, said) = step(&mut h, plan, 1);
+        assert!(failed && said.contains("clean-data's files are not as the plan's steps left them"), "{said}");
+        assert!(said.contains("That is not held against the plan"), "{said}");
+        assert!(!notes.exists(), "the step was not carried out");
+        let now = agents::snapshot();
+        assert_eq!((now.plans[0].ended.clone(), now.plans[0].done()), (None, 0), "and the plan goes on");
+        // Put right, the step is carried out; and the next one finds what it left.
+        std::fs::write(&script, &before).unwrap();
+        let (failed, said) = step(&mut h, plan, 1);
+        assert!(!failed && said.contains("notes.txt was created in clean-data"), "{said}");
+        assert_eq!(std::fs::read_to_string(&notes).unwrap(), "one\n");
+        // The person stops the plan: what was done stays done, and nothing more is.
+        h.run_steps(3);
+        click(&mut h, "Stop Plan");
+        h.get_by_label(format!("Plan #{plan} was stopped. What was done stays done; what was not will not be.").as_str());
+        h.get_by_label_contains("1 of 2 done  ·  ended: the person stopped it");
+        let (failed, said) = step(&mut h, plan, 2);
+        assert!(failed && said.contains(&format!("Plan #{plan} has ended: the person stopped it.")), "{said}");
+        assert_eq!(std::fs::read_to_string(&notes).unwrap(), "one\n");
+        assert_eq!(outcomes(&s), ["asked", "allowed", "done", "allowed", "not ready", "allowed", "done", "stopped"]);
+    }
+
+    #[test]
+    fn a_plan_that_no_longer_fits_cannot_be_approved_and_lowering_the_level_ends_the_one_that_was() {
+        let s = Sandbox::new("agents-plan-unfit");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        open(&mut h);
+        choose(&mut h, Level::Ask);
+        h.state_mut().dialog = None;
+        h.run_steps(2);
+        let script = s.0.join("modules/clean-data/python/clean.py");
+        let delete = json!({"tool": "delete_module_file", "arguments": {"module": "clean-data", "path": "python/clean.py"}});
+        let plan = asks(&mut h, "propose_plan", json!({"title": "Tidy", "purpose": "Take the script out.", "steps": [delete]}));
+        // The module changes before the person answers: it is no longer the one the plan was
+        // proposed for. (So it is with trust asked for by itself.)
+        let before = std::fs::read_to_string(&script).unwrap();
+        std::fs::write(&script, "def main(data):\n    return 'not what was proposed for'\n").unwrap();
+        open(&mut h);
+        look(&mut h);
+        h.get_by_label_contains(
+            "The plan doesn't fit things as they are now, so it can't be approved. clean-data has changed since the agent proposed this plan",
+        );
+        approve_plan(&mut h);
+        assert!(stands(plan).1.contains("is waiting for the person"), "the yes is not there to press");
+        assert!(agents::snapshot().plans.is_empty());
+        // Nor is it approved if a yes got through all the same.
+        let ctx = h.ctx.clone();
+        let refused = agents::answer(h.state_mut(), &ctx, plan, agents::Said::Yes).unwrap_err();
+        assert!(refused.contains("The plan no longer fits things as they are."), "{refused}");
+        let (failed, said) = stands(plan);
+        assert!(failed && said.contains("The plan no longer fits things as they are.") && said.contains("Propose it again"), "{said}");
+        assert!(said.contains("clean-data has changed since the agent proposed this plan"), "{said}");
+        assert!(agents::snapshot().plans.is_empty());
+        std::fs::write(&script, &before).unwrap();
+        // Nor one whose steps no longer fit: here the person takes back the trust its run needs.
+        h.run_steps(3);
+        trust(h.state(), "clean-data", list()["modules"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        let run = json!({"tool": "run_script", "arguments": {"module": "clean-data", "script": "clean.py"}});
+        let plan = asks(&mut h, "propose_plan", json!({"title": "Run", "purpose": "Try it.", "steps": [run]}));
+        gridcraft_aniefork_dev::TrustStore::load(&s.0.join("trusted-modules.json")).revoke("clean-data").unwrap();
+        look(&mut h);
+        h.get_by_label_contains("so it can't be approved. Step 1: clean-data will not be trusted when \"clean.py\" is to run");
+        let refused = agents::answer(h.state_mut(), &ctx, plan, agents::Said::Yes).unwrap_err();
+        assert!(refused.contains("Step 1: clean-data will not be trusted"), "{refused}");
+        // A plan that was approved ends when the person lets agents go less far.
+        h.run_steps(3);
+        let write = json!({"tool": "write_module_file", "arguments": {"module": "clean-data", "path": "notes.txt", "text": "n\n"}});
+        let plan = asks(&mut h, "propose_plan", json!({"title": "Notes", "purpose": "Keep notes.", "steps": [write]}));
+        look(&mut h);
+        approve_plan(&mut h);
+        assert_eq!(agents::snapshot().plans[0].ended, None);
+        choose(&mut h, Level::Read);
+        assert_eq!(agents::snapshot().plans[0].ended.as_deref(), Some("agent access was lowered"));
+        let (failed, said) = step(&mut h, plan, 1);
+        assert!(failed && !s.0.join("modules/clean-data/notes.txt").exists(), "{said}");
+        let report = h.state_mut().run("developer.agents", json!({})).unwrap();
+        assert_eq!(report["plans"][0]["ended"], "agent access was lowered");
+    }
+
     #[test]
     fn the_window_gathers_the_tools() {
         let _s = Sandbox::new("agents-tools");
         create("Clean Data").unwrap();
         let mut h = harness(app_with(Some(&yes())));
         open(&mut h);
-        h.get_by_label(INTRO);
+        h.get_by_label(card::INTRO);
         h.get_by_label("1 installed, 0 trusted");
         h.get_by_label_contains("Python: found automatically.");
         click(&mut h, "Modules…");
