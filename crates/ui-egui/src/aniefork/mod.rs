@@ -8,6 +8,8 @@ pub mod backstage;
 pub mod developer;
 pub mod modules;
 pub mod options;
+pub mod panels;
+pub mod presence;
 pub mod selection;
 
 use serde_json::{Value as Json, json};
@@ -48,6 +50,14 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         "developer.modules" => Some(Ok(modules::list())),
         _ => None,
     }
+}
+
+/// Hook of `SheetApp::logic`, right after the control channel is polled: the fork's work of
+/// every frame. It notes whether the control channel is putting input into the window (see
+/// [`presence`]) and carries out the calls that modules' panels made (see [`panels`]).
+pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
+    presence::watch(app, ctx);
+    panels::poll(app, ctx);
 }
 
 /// Hook of the control channel's `engine.commands`: the fork's commands, listed like upstream's

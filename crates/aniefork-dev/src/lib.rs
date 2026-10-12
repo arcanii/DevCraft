@@ -11,6 +11,7 @@
 //! - [`module`]: modules on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
 //! - [`python`]: running a trusted module's scripts in a process of their own.
+//! - [`bridge`]: serving a trusted module's panel to the browser, and carrying its calls.
 //! - [`starter`]: "New Module".
 //! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
 //!
@@ -19,6 +20,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod bridge;
 pub mod manifest;
 pub mod module;
 pub mod paths;

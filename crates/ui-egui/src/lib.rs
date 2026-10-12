@@ -582,6 +582,8 @@ impl SheetApp {
         }
         self.effective_dark = ctx.theme() == egui::Theme::Dark;
         control::poll(self, ctx);
+        // The fork's work of every frame: its modules' panels (aniefork).
+        aniefork::poll(self, ctx);
         // Files read asynchronously (web file picker, dropped files).
         let arrived: Vec<(String, Vec<u8>)> = self
             .services

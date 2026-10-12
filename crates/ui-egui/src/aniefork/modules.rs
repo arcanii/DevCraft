@@ -1,5 +1,6 @@
 //! Developer ▸ Modules: the modules the user has installed, the one place where trust in a module
-//! is given or taken back, and a bench for running a trusted module's scripts by hand.
+//! is given or taken back, where a trusted module's panel is opened, and a bench for running its
+//! scripts by hand.
 //!
 //! A module does nothing until the user trusts it. Trusting is a decision about exact contents:
 //! the dialog shows what the module asks to be allowed and what it contains, and what gets
@@ -13,15 +14,22 @@
 //!
 //! A trusted module that was granted `python` can have its scripts run from here on the current
 //! selection. The script runs in a Python process of its own, off the UI thread; see
-//! `gridcraft_aniefork_dev::python`.
+//! `gridcraft_aniefork_dev::python`. One with a panel can have it opened in the browser; see
+//! [`super::panels`].
+//!
+//! The control channel can click and type in this dialog as a person does, and rewrite a dialog's
+//! values. So the dialog works from a state of its own that the channel can't reach, and what
+//! runs code or decides who may (trusting, running a script, opening a panel, naming the Python)
+//! is refused while the channel is putting input into the window; see [`super::presence`].
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::python::{DEFAULT_TIMEOUT, Output, PythonHost, RunError};
 use gridcraft_aniefork_dev::{Module, TrustStore, describe, manifest, module, settings, starter};
 use serde_json::{Value as Json, json};
 
+use super::{panels, presence};
 use crate::SheetApp;
 use crate::dialogs::Dialog;
 use crate::theme::Tokens;
@@ -33,28 +41,22 @@ const FOLLOW: &str = "Keep trusting it as its files change (only for a module yo
 /// The most of a result shown in the dialog (characters).
 const SHOWN: usize = 6_000;
 
-/// Where this run keeps modules, the user's decisions and the subsystem's settings.
-struct Places {
-    modules: PathBuf,
-    trust: PathBuf,
-    settings: PathBuf,
-}
-
-/// `None` when the run keeps no settings (the web build, a run without preferences): then there
-/// are no modules.
+/// Where this run keeps modules, the user's decisions and the subsystem's settings. `None` when
+/// the run keeps no settings (the web build, a run without preferences): then there are no
+/// modules.
 #[cfg(not(test))]
-fn places() -> Option<Places> {
+pub(super) fn places() -> Option<Places> {
     use gridcraft_aniefork_dev::paths;
     Some(Places { modules: paths::modules_dir()?, trust: paths::trust_file()?, settings: paths::settings_file()? })
 }
 
 /// In tests: only the folder a test set up for itself, never the developer's own settings.
 #[cfg(test)]
-fn places() -> Option<Places> {
+pub(super) fn places() -> Option<Places> {
     tests::sandbox().map(|dir| Places { modules: dir.join("modules"), trust: dir.join("trusted-modules.json"), settings: dir.join("developer.json") })
 }
 
-const UNAVAILABLE: &str = "Modules are not available in this run.";
+pub(super) const UNAVAILABLE: &str = "Modules are not available in this run.";
 
 /// The user's modules and where each stands: what `developer.modules` reports and the dialog
 /// shows. Reading only.
@@ -65,7 +67,7 @@ pub fn list() -> Json {
     json!({"available": true, "folder": at.modules.display().to_string(), "modules": modules})
 }
 
-/// What the dialog starts from.
+/// What the dialog's values report when it opens. The dialog doesn't work from them: see `State`.
 pub fn values() -> Json {
     let python = places().map(|at| settings::load(&at.settings).python).unwrap_or_default();
     json!({"list": list(), "review": null, "follow": false, "newName": "", "python": python, "pythonStatus": "", "run": null})
@@ -95,7 +97,7 @@ fn question(found: &Module, follow_changes: bool) -> String {
 
 /// The user pressed "Trust this module" while reviewing `id`. `reviewed` is the fingerprint they
 /// were shown: only that is trusted, and only after the operating system's own confirmation.
-fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bool) -> Result<String, String> {
+pub(super) fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bool) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     if !manifest::valid_id(id) {
         return Err("That is not a module.".into());
@@ -125,7 +127,7 @@ fn stop_trusting(id: &str) -> Result<String, String> {
     Ok("The module is no longer trusted.".into())
 }
 
-fn create(name: &str) -> Result<String, String> {
+pub(super) fn create(name: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
     let created = starter::create(&at.modules, name)?;
@@ -152,7 +154,7 @@ fn job_id() -> egui::Id {
 }
 
 /// The current selection, as the data a script is handed: `{range, sheet, rows}`.
-fn selection_data(app: &mut SheetApp) -> Result<Json, String> {
+pub(super) fn selection_data(app: &mut SheetApp) -> Result<Json, String> {
     let range = app.session.active().map(|d| d.selection.current().a1()).ok_or("There is no workbook open.")?;
     let read = app.session.run("sheet.read", json!({"range": range})).map_err(|e| crate::clean_error(&e))?;
     Ok(json!({"range": read["range"], "sheet": read["sheet"], "rows": read["values"]}))
@@ -210,6 +212,7 @@ enum Action {
     Create(String),
     CheckPython(String),
     OpenFolder,
+    OpenPanel(String),
     Run { id: String, script: String },
     StopRun(String),
 }
@@ -250,7 +253,7 @@ fn scripts(m: &Json) -> Vec<String> {
     files.into_iter().filter_map(|f| f.strip_prefix(&prefix)).filter(|f| f.ends_with(".py")).take(12).map(str::to_string).collect()
 }
 
-fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, follow: &mut bool, action: &mut Option<Action>) {
+fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool, follow: &mut bool, action: &mut Option<Action>) {
     let id = m["id"].as_str().unwrap_or("").to_string();
     let status = m["status"].as_str().unwrap_or("");
     egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -273,6 +276,12 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, follow: &mut b
         if !reviewing {
             ui.horizontal(|ui| match status {
                 "trusted" => {
+                    if can_open
+                        && m["panel"].is_string()
+                        && ui.button("Open Panel").on_hover_text("Opens this module's panel in your browser").clicked()
+                    {
+                        *action = Some(Action::OpenPanel(id.clone()));
+                    }
                     if ui.button("Stop trusting").clicked() {
                         *action = Some(Action::StopTrusting(id.clone()));
                     }
@@ -357,29 +366,86 @@ fn run_area(ui: &mut egui::Ui, run: &Json, action: &mut Option<Action>) {
     });
 }
 
+/// What the dialog works from, kept between frames.
+///
+/// It is the dialog's own, out of the dialog's values: anything on the control channel can
+/// rewrite those (`ui.dialog.set`), and what the user is shown, which module they are reviewing
+/// and which Python they named must not be anyone else's to set. The values only report.
+#[derive(Clone, Default)]
+struct State {
+    /// The last frame the dialog was drawn in: after a gap it was closed, and starts afresh.
+    seen: u64,
+    list: Json,
+    /// The module being reviewed, if one is.
+    review: String,
+    follow: bool,
+    new_name: String,
+    python: String,
+    python_status: String,
+    run: Json,
+}
+
+fn state_id() -> egui::Id {
+    egui::Id::new("aniefork.modules.state")
+}
+
+/// The value that marks a dialog as already drawn: one without it has just been opened.
+const OPENED: &str = "opened";
+
+impl State {
+    fn fresh() -> State {
+        let python = places().map(|at| settings::load(&at.settings).python).unwrap_or_default();
+        State { list: list(), python, ..State::default() }
+    }
+
+    /// Writes what the dialog's values report. They are never read back.
+    fn report(&self, d: &mut Dialog) {
+        let review = if self.review.is_empty() { Json::Null } else { json!(self.review) };
+        for (key, value) in [
+            ("list", self.list.clone()),
+            ("review", review),
+            ("follow", json!(self.follow)),
+            ("newName", json!(self.new_name)),
+            ("python", json!(self.python)),
+            ("pythonStatus", json!(self.python_status)),
+            ("run", self.run.clone()),
+            (OPENED, json!(true)),
+        ] {
+            d.values.insert(key.into(), value);
+        }
+    }
+}
+
 /// Hook of the fork's dialogs: draws Developer ▸ Modules.
 pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
     ui.set_min_width(520.0);
-    let listing = d.values.get("list").cloned().unwrap_or(Json::Null);
+    let ctx = ui.ctx().clone();
+    let frame = ctx.cumulative_frame_nr();
+    let mut state: State = ctx.data(|data| data.get_temp(state_id())).unwrap_or_default();
+    if frame > state.seen.saturating_add(1) || !d.values.contains_key(OPENED) {
+        state = State::fresh();
+    }
+    state.seen = frame;
+    // Whether what is clicked and typed now may be the control channel's doing.
+    let driven = presence::driven(&ctx);
     let mut action = None;
 
     // A script that was running may have finished since the last frame.
-    let mut run = d.values.get("run").cloned().unwrap_or(Json::Null);
-    if run["state"] == "running" {
-        let job = ui.ctx().data(|data| data.get_temp::<Job>(job_id()));
+    if state.run["state"] == "running" {
+        let job = ctx.data(|data| data.get_temp::<Job>(job_id()));
         let result = job.and_then(|job| job.slot.lock().unwrap_or_else(PoisonError::into_inner).take());
         match result {
             Some(result) => {
                 let mut done = finished(result);
-                done["module"] = run["module"].clone();
-                done["script"] = run["script"].clone();
-                run = done;
-                d.values.insert("run".into(), run.clone());
+                done["module"] = state.run["module"].clone();
+                done["script"] = state.run["script"].clone();
+                state.run = done;
             }
-            None => ui.ctx().request_repaint_after(std::time::Duration::from_millis(100)),
+            None => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
         }
     }
-    let busy = run["state"] == "running";
+    let busy = state.run["state"] == "running";
+    let listing = state.list.clone();
 
     ui.label("Modules add panels and code to GridCraft. A module does nothing until you trust it.");
     if listing["available"] == true {
@@ -397,52 +463,54 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         });
         ui.separator();
         let modules = listing["modules"].as_array().cloned().unwrap_or_default();
-        let reviewing = d.values.get("review").and_then(Json::as_str).unwrap_or("").to_string();
-        let mut follow = d.values.get("follow").and_then(Json::as_bool).unwrap_or(false);
+        let can_open = app.services.open_url.is_some();
+        let mut follow = state.follow;
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             if modules.is_empty() {
                 ui.label("No modules are installed. Create one below, or copy a module's folder into the folder above.");
             }
             for m in &modules {
-                card(ui, m, m["id"].as_str() == Some(reviewing.as_str()), busy, &mut follow, &mut action);
+                let reviewing = !state.review.is_empty() && m["id"].as_str() == Some(state.review.as_str());
+                card(ui, m, reviewing, busy, can_open, &mut follow, &mut action);
             }
         });
-        d.values.insert("follow".into(), json!(follow));
-        if !run.is_null() {
-            run_area(ui, &run, &mut action);
+        // A choice about trust is the person's: a tick the control channel made doesn't count.
+        if !driven {
+            state.follow = follow;
+        }
+        if !state.run.is_null() {
+            run_area(ui, &state.run, &mut action);
         }
         ui.separator();
         egui::Grid::new("modules_settings").num_columns(3).spacing(egui::vec2(8.0, 6.0)).show(ui, |ui| {
             let label = ui.label("New module:");
-            let mut name = d.values.get("newName").and_then(Json::as_str).unwrap_or("").to_string();
             // A grid cell would squeeze a text field to nothing: it is given its size.
             let size = egui::vec2(240.0, ui.spacing().interact_size.y);
-            if ui.add_sized(size, egui::TextEdit::singleline(&mut name).hint_text("Its name")).labelled_by(label.id).changed() {
-                d.values.insert("newName".into(), json!(name));
-            }
+            ui.add_sized(size, egui::TextEdit::singleline(&mut state.new_name).hint_text("Its name")).labelled_by(label.id);
             if ui.button("Create").clicked() {
-                action = Some(Action::Create(name));
+                action = Some(Action::Create(state.new_name.clone()));
             }
             ui.end_row();
 
             let label = ui.label("Python:");
-            let mut python = d.values.get("python").and_then(Json::as_str).unwrap_or("").to_string();
+            // The program named here gets run: only what the person typed is kept.
+            let mut python = state.python.clone();
             let field = egui::TextEdit::singleline(&mut python).hint_text("Found automatically");
-            if ui
+            let edited = ui
                 .add_sized(size, field)
                 .labelled_by(label.id)
                 .on_hover_text("The Python that runs modules' scripts: a path or a command. Leave empty to let GridCraft find one.")
-                .changed()
-            {
-                d.values.insert("python".into(), json!(python));
+                .changed();
+            if edited && !driven {
+                state.python = python;
             }
             if ui.button("Check Python").clicked() {
-                action = Some(Action::CheckPython(python));
+                action = Some(Action::CheckPython(state.python.clone()));
             }
             ui.end_row();
         });
-        if let Some(status) = d.values.get("pythonStatus").and_then(Json::as_str).filter(|s| !s.is_empty()) {
-            ui.label(egui::RichText::new(status).small());
+        if !state.python_status.is_empty() {
+            ui.label(egui::RichText::new(&state.python_status).small());
         }
     } else {
         ui.label("Modules are not available in this run, because it keeps no settings.");
@@ -457,32 +525,48 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         }
     });
 
+    let outcome = action.map(|action| act(app, &ctx, &mut state, action, driven));
+    state.report(d);
+    ctx.data_mut(|data| data.insert_temp(state_id(), state));
+    match outcome {
+        None => {}
+        Some(Ok(said)) if said.is_empty() => {}
+        Some(Ok(said)) => app.toast = Some((said, crate::now_ms())),
+        Some(Err(why)) => app.message = Some(("Modules".into(), why)),
+    }
+}
+
+/// Carries out what the user asked for. Trusting a module, running its code, opening its panel
+/// and naming the Python to run are for the person at the screen: asked for while the control
+/// channel is putting input into the window, they are refused.
+fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Action, driven: bool) -> Result<String, String> {
+    let by_hand = matches!(action, Action::Trust { .. } | Action::CheckPython(_) | Action::Run { .. } | Action::OpenPanel(_));
     let outcome = match action {
-        None => return,
-        Some(Action::Refresh) => Ok(String::new()),
-        Some(Action::Review(id)) => {
-            d.values.insert("review".into(), json!(id));
-            d.values.insert("follow".into(), json!(false));
+        _ if by_hand && driven => Err(presence::BY_HAND.to_string()),
+        Action::Refresh => Ok(String::new()),
+        Action::Review(id) => {
+            state.review = id;
+            state.follow = false;
             Ok(String::new())
         }
-        Some(Action::NotNow) => {
-            d.values.insert("review".into(), Json::Null);
+        Action::NotNow => {
+            state.review.clear();
             Ok(String::new())
         }
-        Some(Action::Trust { id, fingerprint, follow }) => {
-            d.values.insert("review".into(), Json::Null);
+        Action::Trust { id, fingerprint, follow } => {
+            state.review.clear();
             trust(app, &id, &fingerprint, follow)
         }
-        Some(Action::StopTrusting(id)) => stop_trusting(&id),
-        Some(Action::Create(name)) => create(&name).inspect(|_| {
-            d.values.insert("newName".into(), json!(""));
-        }),
-        Some(Action::CheckPython(python)) => {
-            let status = check_python(&python).unwrap_or_else(|why| why);
-            d.values.insert("pythonStatus".into(), json!(status));
+        Action::StopTrusting(id) => {
+            panels::stop(ctx, &id);
+            stop_trusting(&id)
+        }
+        Action::Create(name) => create(&name).inspect(|_| state.new_name.clear()),
+        Action::CheckPython(python) => {
+            state.python_status = check_python(&python).unwrap_or_else(|why| why);
             Ok(String::new())
         }
-        Some(Action::OpenFolder) => match (places(), &app.services.open_url) {
+        Action::OpenFolder => match (places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
                 std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}")).map(|()| {
                     open_url(&at.modules.display().to_string());
@@ -491,11 +575,12 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             }
             _ => Err(UNAVAILABLE.into()),
         },
-        Some(Action::Run { id, script }) => start(app, ui.ctx(), &id, &script).map(|()| {
-            d.values.insert("run".into(), json!({"state": "running", "module": id, "script": script}));
+        Action::OpenPanel(id) => panels::open(app, ctx, &id),
+        Action::Run { id, script } => start(app, ctx, &id, &script).map(|()| {
+            state.run = json!({"state": "running", "module": id, "script": script});
             String::new()
         }),
-        Some(Action::StopRun(id)) => {
+        Action::StopRun(id) => {
             if let Some(at) = places() {
                 PythonHost::global().stop(&at.modules, &id);
             }
@@ -503,12 +588,8 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         }
     };
     // Whatever happened, show what is on disk now.
-    d.values.insert("list".into(), list());
-    match outcome {
-        Ok(said) if said.is_empty() => {}
-        Ok(said) => app.toast = Some((said, crate::now_ms())),
-        Err(why) => app.message = Some(("Modules".into(), why)),
-    }
+    state.list = list();
+    outcome
 }
 
 #[cfg(test)]
@@ -517,6 +598,7 @@ pub(crate) mod tests {
     use crate::Services;
     use egui_kittest::kittest::Queryable;
     use std::cell::RefCell;
+    use std::path::PathBuf;
     use std::rc::Rc;
 
     thread_local! {
@@ -555,13 +637,13 @@ pub(crate) mod tests {
 
     /// What the operating system's question was asked, and what the "user" answers.
     #[derive(Clone, Default)]
-    struct Asked {
+    pub(crate) struct Asked {
         questions: Rc<RefCell<Vec<String>>>,
         answer: Rc<RefCell<bool>>,
     }
 
     /// An app whose operating-system confirmation is `asked` (or missing, as in a build without one).
-    fn app_with(asked: Option<&Asked>) -> SheetApp {
+    pub(crate) fn app_with(asked: Option<&Asked>) -> SheetApp {
         let mut session = gridcraft_engine::Session::new();
         session.new_workbook();
         let confirm = asked.cloned().map(|asked| {
@@ -574,7 +656,7 @@ pub(crate) mod tests {
     }
 
     /// A user who answers yes.
-    fn yes() -> Asked {
+    pub(crate) fn yes() -> Asked {
         let asked = Asked::default();
         *asked.answer.borrow_mut() = true;
         asked
@@ -677,7 +759,7 @@ pub(crate) mod tests {
         assert_eq!(status(&list(), "clean-data").as_deref(), Some("trusted"));
     }
 
-    fn harness(app: SheetApp) -> egui_kittest::Harness<'static, SheetApp> {
+    pub(crate) fn harness(app: SheetApp) -> egui_kittest::Harness<'static, SheetApp> {
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SheetApp| {
                 let ctx = ui.ctx().clone();
@@ -695,7 +777,7 @@ pub(crate) mod tests {
 
     /// Clicks go by position, so the window is given a moment to settle first: it changes size
     /// when a review opens or a result appears.
-    fn click(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str) {
+    pub(crate) fn click(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str) {
         h.run_steps(3);
         h.get_by_label(label).click();
         h.run_steps(3);
@@ -712,9 +794,7 @@ pub(crate) mod tests {
         let asked = yes();
         let mut h = harness(app_with(Some(&asked)));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.clone()).as_deref(), Some(NAME));
-        if let Some(d) = h.state_mut().dialog.as_mut() {
-            d.values.insert("newName".into(), json!("Clean Data"));
-        }
+        typed(&mut h, |state| state.new_name = "Clean Data".into());
         click(&mut h, "Create");
         assert_eq!(shown(&h).as_deref(), Some("untrusted"), "a new module is not trusted");
         assert!(s.0.join("modules/clean-data/module.toml").exists());
@@ -856,9 +936,7 @@ pub(crate) mod tests {
     fn the_python_to_use_is_remembered_and_checked() {
         let s = Sandbox::new("python");
         let mut h = harness(app_with(Some(&yes())));
-        if let Some(d) = h.state_mut().dialog.as_mut() {
-            d.values.insert("python".into(), json!("gridcraft-no-such-python-here"));
-        }
+        typed(&mut h, |state| state.python = "gridcraft-no-such-python-here".into());
         click(&mut h, "Check Python");
         let said = h.state().dialog.as_ref().unwrap().values["pythonStatus"].as_str().unwrap().to_string();
         assert!(said.contains("did not answer"), "{said}");
@@ -878,5 +956,133 @@ pub(crate) mod tests {
         click(&mut h, "Open Folder");
         assert_eq!(*opened.borrow(), [s.0.join("modules").display().to_string()]);
         assert!(s.0.join("modules").is_dir(), "the folder is made if it wasn't there");
+    }
+
+    /// Sets what the user would have typed into the dialog's own fields.
+    fn typed(h: &mut egui_kittest::Harness<'static, SheetApp>, set: impl FnOnce(&mut State)) {
+        let mut state: State = h.ctx.data(|d| d.get_temp(state_id())).unwrap();
+        set(&mut state);
+        h.ctx.data_mut(|d| d.insert_temp(state_id(), state));
+    }
+
+    /// Puts input in the window the way the control channel does: from then on it counts as driven.
+    pub(crate) fn drive(h: &mut egui_kittest::Harness<'static, SheetApp>) {
+        h.state_mut().synthetic.push_back(vec![egui::Event::PointerMoved(egui::pos2(1.0, 1.0))]);
+        h.run_steps(2);
+        assert!(presence::driven(&h.ctx));
+    }
+
+    fn control(h: &mut egui_kittest::Harness<'static, SheetApp>, method: &str, params: Json) -> Json {
+        let ctx = h.ctx.clone();
+        match crate::control::handle(h.state_mut(), &ctx, method, &params) {
+            crate::control::Outcome::Done(v) => v,
+            _ => Json::Null,
+        }
+    }
+
+    /// The control channel can rewrite a dialog's values. This dialog doesn't work from them.
+    #[test]
+    fn what_the_control_channel_writes_into_the_dialog_changes_nothing_it_works_from() {
+        let s = Sandbox::new("values");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        for (field, value) in [
+            ("python", json!("gridcraft-planted-python")),
+            ("list", json!({"available": true, "folder": "elsewhere", "modules": []})),
+            ("review", json!("clean-data")),
+            ("follow", json!(true)),
+            ("run", json!({"state": "done", "ok": true, "text": "planted", "script": "x", "module": "y"})),
+        ] {
+            assert_eq!(control(&mut h, "ui.dialog.set", json!({"field": field, "value": value}))["ok"], json!(true));
+        }
+        h.run_steps(3);
+        // The next frame reports what the dialog really holds.
+        let values = h.state().dialog.as_ref().unwrap().values.clone();
+        assert_eq!(status(&values["list"], "clean-data").as_deref(), Some("untrusted"));
+        assert_eq!((&values["python"], &values["review"], &values["follow"], &values["run"]), (&json!(""), &Json::Null, &json!(false), &Json::Null));
+        assert!(h.query_by_label("Trust this module").is_none(), "no review was opened for the user");
+        assert!(h.query_by_label_contains("planted").is_none());
+        // The person checks Python: the one they named (none) is used and remembered, not the planted one.
+        click(&mut h, "Check Python");
+        assert_eq!(settings::load(&s.0.join("developer.json")).python, "");
+        // And reviewing by hand still starts with nothing ticked.
+        click(&mut h, "Review…");
+        click(&mut h, "Trust this module");
+        assert!(asked.questions.borrow()[0].contains("will ask you again"), "{:?}", asked.questions.borrow());
+    }
+
+    /// Clicks a button while the window is driven, and expects it to be refused as the person's alone.
+    fn refused(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str) {
+        click(h, label);
+        let said = h.state_mut().message.take();
+        assert_eq!(said.as_ref().map(|(_, text)| text.as_str()), Some(presence::BY_HAND), "{label}");
+        h.run_steps(2);
+    }
+
+    /// The channel goes quiet: after a moment the window is the person's again.
+    fn quiet(h: &mut egui_kittest::Harness<'static, SheetApp>) {
+        h.state_mut().synthetic.clear();
+        // The frame after the channel's last input still counts as its own.
+        h.run_steps(2);
+        std::thread::sleep(std::time::Duration::from_millis(1_200));
+        h.run_steps(2);
+        assert!(!presence::driven(&h.ctx));
+    }
+
+    /// The control channel clicks as a person does. Trusting is refused while it is putting input
+    /// into the window: the operating system's question isn't even raised.
+    #[test]
+    fn the_control_channel_cannot_trust_a_module() {
+        let _s = Sandbox::new("driven-trust");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        click(&mut h, "Review…");
+        drive(&mut h);
+        refused(&mut h, "Trust this module");
+        assert!(asked.questions.borrow().is_empty());
+        assert_eq!(status(&list(), "clean-data").as_deref(), Some("untrusted"));
+        // The review is still open. A tick the channel makes on "keep trusting" doesn't count either.
+        click(&mut h, FOLLOW);
+        assert_eq!(h.state().dialog.as_ref().unwrap().values["follow"], json!(false));
+        // When the channel has been quiet for a moment, the person can.
+        quiet(&mut h);
+        click(&mut h, "Trust this module");
+        assert_eq!(asked.questions.borrow().len(), 1);
+        assert!(asked.questions.borrow()[0].contains("will ask you again"), "the channel's tick was not taken");
+        assert_eq!(status(&list(), "clean-data").as_deref(), Some("trusted"));
+    }
+
+    /// Nor can it run a trusted module's script, open its panel, or name the program to run as Python.
+    #[test]
+    fn the_control_channel_cannot_run_a_script_open_a_panel_or_name_a_python() {
+        let s = Sandbox::new("driven-run");
+        create("Clean Data").unwrap();
+        let opened = Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = opened.clone();
+        let mut a = app_with(Some(&yes()));
+        a.services.open_url = Some(Box::new(move |address: &str| seen.borrow_mut().push(address.to_string())));
+        trust(&a, "clean-data", &fingerprint(), false).unwrap();
+        let mut h = harness(a);
+        typed(&mut h, |state| state.python = "gridcraft-no-such-python-here".into());
+
+        drive(&mut h);
+        refused(&mut h, "clean.py");
+        assert!(h.state().dialog.as_ref().unwrap().values["run"].is_null(), "no script was started");
+        refused(&mut h, "Open Panel");
+        assert!(opened.borrow().is_empty() && panels::serving(&h.ctx).is_empty(), "no panel was served or opened");
+        refused(&mut h, "Check Python");
+        assert!(!s.0.join("developer.json").exists(), "the program named was not run or remembered");
+
+        quiet(&mut h);
+        click(&mut h, "Open Panel");
+        assert_eq!(opened.borrow().len(), 1, "{:?}", h.state().message);
+        assert_eq!(panels::serving(&h.ctx), ["clean-data"]);
+        // Taking trust back is the channel's to do as much as anyone's: it only ever closes doors.
+        drive(&mut h);
+        click(&mut h, "Stop trusting");
+        assert_eq!(status(&list(), "clean-data").as_deref(), Some("untrusted"));
+        assert!(panels::serving(&h.ctx).is_empty(), "and the panel is no longer served");
     }
 }

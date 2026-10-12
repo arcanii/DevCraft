@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted) and phase 1b (a trusted module's Python scripts run, in a process of their own). Panels are not served yet |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own) and phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge) |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -78,11 +78,13 @@ Modules the user installs live in a `modules` folder beside the user's settings.
 nothing until the user trusts it.
 
 **2. Panels are web pages, served by GridCraft over a local bridge.** The desktop app runs a small
-HTTP server on the loopback address only, on a random port. It serves the module's `panel` folder,
-a generated `spreadsheet.js` that gives the panel its `spreadsheet` object, and generated
-TypeScript typings. Calls arrive as JSON and are queued to the UI thread through the same request
-type the control channel uses. The panel opens in the browser first; later the same panel is
-docked in the window in the system web view (WebView2, WKWebView, WebKitGTK), unchanged.
+HTTP server on the loopback address only, with a random port for each module it serves (so the
+browser keeps two modules' panels apart). It serves the files of the module's panel folder, a
+`spreadsheet.js` that gives the panel its `spreadsheet` object, and TypeScript typings made from
+the command list. Calls arrive as JSON. Those that need the workbook are queued to the UI thread,
+in a queue of the same shape as the control channel's, and carried out once a frame. The panel
+opens in the browser first; later the same panel is docked in the window in the system web view
+(WebView2, WKWebView, WebKitGTK), unchanged.
 
 TypeScript is the developer's authoring language; a module ships the JavaScript their own tools
 build. GridCraft does not compile TypeScript.
@@ -130,6 +132,13 @@ The requirement: a module can do what a user could do, **and more**. Read here a
 Python gets the same model as the panel does: in phase 2 a script can call back into the
 spreadsheet through an object of the same shape, instead of only receiving data and returning it.
 
+**What phase 1 built of this.** `spreadsheet.run(id, params)` reaches every command of the engine
+(313 today). A module is a program calling GridCraft: commands never open a dialog for it, and the
+window's own commands (the theme, the dialogs) are not offered. `spreadsheet.batch([...])` runs
+several commands as one undo step, and if one fails none of them stays. `selection()`, `read()`
+and `write()` are shorthands over commands. The workbook as objects is **not built yet**: a
+module works through commands, and the typings list them by id with what each takes.
+
 This is the reading of "and more" that the design assumes. If the owner means something else by
 it (for instance reaching into the calculation engine, or changing how files are read and written)
 it belongs in this table.
@@ -151,8 +160,15 @@ The requirement: the user chooses to trust a module or not. The mechanics:
   | `network` | Let its panel talk to the internet |
   | `python` | Run its Python scripts. **This cannot be limited**: a script can do anything a program the user runs can do |
 
-  A module that was not granted an ability cannot use it: the bridge refuses the call, and a panel
-  without `network` is served with a policy that makes the browser block outside connections.
+  A module that was not granted an ability cannot use it. A command that only reports needs
+  `read`; any other needs `write`; one that reads or writes a file (the `file.` commands, and any
+  command given a `path`) needs `files`, and even then GridCraft's own settings folder, where
+  the modules and the user's decisions are kept, is out of reach. A panel without `network` is
+  served with a policy that makes the browser refuse its requests to anywhere but GridCraft.
+  **In a browser that policy cannot stop a page from sending the user to another address**,
+  which can carry data with it; that needs the panel docked in the window (phase 2), where
+  GridCraft decides where a page may go. Until then `read` without `network` limits what a
+  panel fetches, not where it can navigate.
 - **Trust is given to exact contents.** Trusting a module records a fingerprint (a SHA-256 over
   every file in it). If any file changes, the module is untrusted again until the user looks and
   decides again. So an update, or tampering, can never ride on an old decision. A developer working
@@ -169,9 +185,20 @@ The requirement: the user chooses to trust a module or not. The mechanics:
   decisions from disk on every call, and refuses, before any process exists, a module that is
   untrusted, changed, or was not granted `python`, and a script that is not one of its files.
   There is no command that runs a script, so agents cannot run one either (backlog).
-- **The bridge is closed to everyone else.** Loopback only, a random port, and a secret token made
-  for each session and each module, checked on every call along with the request's origin. A panel
-  may only run its own module's scripts, by name, from its own folder.
+- **The bridge is closed to everyone else.** Loopback only, a random port and a secret token for
+  each module, made anew each time GridCraft runs. Every request must name the bridge by its
+  loopback address (a name pointed at the machine is refused) and start with the token; a call
+  must come from the module's own page, as the browser reports it, and be JSON. The module is
+  read from disk, and the user's decisions with it, for every request: one that changed or lost
+  its trust stops being served at once. Only the files of the panel folder are served. The
+  address, which holds the token, goes to the browser and is shown nowhere else: not in the
+  dialog, not to the control channel. A panel may only run its own module's scripts, by name.
+- **Some things are for the person at the screen alone.** The control channel clicks and types
+  as a person does, and can rewrite a dialog's values. So trusting a module, running a script,
+  opening a panel and naming the Python to run are refused while the channel is putting input
+  into the window (and for a moment after), and the Modules dialog works from a state of its
+  own that the channel can't write. Without this, an agent could have named any program as
+  "Python" and pressed Check Python to run it: a gap in phase 1b, closed in 1c.
 - **Trust can be taken back** at any time, and the list of trusted modules is one readable file in
   the user's settings.
 
@@ -197,16 +224,19 @@ contents by the user. Directions to weigh when this is taken up:
 
 - The fork gains its first non-Rust runtime code: `spreadsheet.js`, the small client a panel loads.
   Upstream's rule is "Rust only (no handwritten JS/TS)". The exception is kept as small as it can
-  be: the client and the typings are generated by Rust code from the command list, live only in
-  the new crate, and nothing else in the repository is written in JavaScript. Starter modules are
-  created by a "New Module" command from templates compiled into the app, so no sample panel or
-  script is checked in. This exception has to be settled with upstream before the bridge is
-  offered there.
+  be: the client is about fifty lines of text inside the bridge's Rust source, the typings are
+  made by Rust code from the command list, both live only in the new crate, and the repository
+  holds no JavaScript or TypeScript file. Starter modules are created by "New Module" from
+  templates compiled into the app, so no sample panel or script is checked in. This exception
+  has to be settled with upstream before the bridge is offered there.
+- The crate gains one dependency, `getrandom`, for the bridge's tokens (already in the workspace
+  through other crates). The HTTP server is written on the standard library, so there is no web
+  framework to keep patched; it answers one request per connection, with every size bounded.
 - Python and a browser become things a module needs, not things GridCraft needs. The app, its
   tests and its gate keep working with neither installed. The tests that run a script use the
   machine's own Python and skip themselves, saying so, where there is none; everything that
-  decides whether a script may run is tested without it. The bridge will be tested in-process
-  over HTTP.
+  decides whether a script may run is tested without it. The bridge is tested in-process over
+  real connections, sent what a browser would send and what it never would.
 - A script's process is not confined: it can start processes of its own, and stopping the script
   stops only the Python that GridCraft started.
 - The web build has no local processes. There, panels can be frames in the page, but `runPython`
@@ -232,8 +262,8 @@ contents by the user. Directions to weigh when this is taken up:
 | 0 | File ▸ Options; the Developer tab, hidden by default; this record | **Done**, 2026-10-11 |
 | 1a | The crate's first piece: manifests, the module list, fingerprints, the trust store; Developer ▸ Modules to see modules and trust or stop trusting them; a "New Module" starter. Nothing runs yet | **Done**, 2026-10-11: a starter module can be created, inspected, trusted, changed (it becomes untrusted again) and trusted again |
 | 1b | The Python host, and the operating-system confirmation for giving trust | **Done**, 2026-10-11: a trusted module's script runs on data and returns JSON, with a time limit; an untrusted one is refused. Developer ▸ Modules can run a script on the selection and show what it returned |
-| 1c | The bridge, `spreadsheet.js`, the typings; panels open in the browser | A starter module reads the selection, runs a Python script on it and writes the result back as one undo step, from a panel in the browser |
-| 2 | Panels docked in the window; events; a Developer console; per-module Python environments; Python calling back into the spreadsheet | The same starter module runs docked, reacts to the selection changing, and shows its script's output in the console |
+| 1c | The bridge, `spreadsheet.js`, the typings; panels open in the browser | **Done**, 2026-10-11: the starter module's panel, open in a browser, reads the selection, runs its Python script on it and writes the result back as one undo step. The workbook as objects (the second layer of "Exposing the model") moved to phase 2 |
+| 2 | Panels docked in the window (which is what lets `network` be enforced fully); the workbook as objects; events; a Developer console; per-module Python environments; Python calling back into the spreadsheet | The same starter module runs docked, reacts to the selection changing, and shows its script's output in the console |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |
 
 ### Backlog

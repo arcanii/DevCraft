@@ -36,7 +36,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs`; it opens from the File page | Not offered |
 | **The File page:** the File button opens a page that fills the window (a column of pages and actions on the left; Home with the workbooks to start from and the recent ones) where upstream opens a dropdown menu. | `crates/ui-egui/src/aniefork/backstage.rs`, hooks in `ribbon.rs` and `dialogs.rs` | Offered 2026-10-11 as [storytold/gridcraft#337](https://github.com/storytold/gridcraft/pull/337). Branch `file-page`, rewritten in upstream's style, without Options… (the dialog is the fork's) |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
-| **Modules, trust and Python** (the Development subsystem, phases 1a and 1b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own. Panels are not served yet. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
+| **Modules, trust, Python and panels** (the Development subsystem, phases 1a to 1c): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser and calls GridCraft over a local bridge. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
 
 ## Selection glide
 
@@ -229,14 +229,46 @@ refuses trust; those two are still proposals.
   failed. The sheet is not changed: writing back belongs to panels, in phase 1c. The dialog also
   says which Python is used and lets the user name another, and opens the modules folder.
 
+**Phase 1c is built: a trusted module's panel opens in the browser and calls GridCraft.**
+
+- **Open Panel**, on a trusted module in Developer ▸ Modules, serves the module's panel folder
+  from a small server inside GridCraft and opens it in the user's browser. The server listens on
+  the loopback address only, on a port of the module's own, behind a secret token made for that
+  run. The address goes to the browser and is shown nowhere else.
+- **The panel gets a `spreadsheet` object** from `spreadsheet.js`, served beside its page:
+  `run(id, params)` for every command of the engine, `batch([...])` for several commands as one
+  undo step (all of them, or none), `runPython(script, data)`, and `selection()`, `read()` and
+  `write()` as shorthands. `spreadsheet.d.ts`, served beside it, lists every command for
+  TypeScript. The starter module's panel now does the whole round: the selection, through its
+  Python script, back into the sheet, undone with one Undo.
+- **A module runs only what it was granted.** A command that only reports needs `read`, any
+  other `write`, one that touches a file `files`. GridCraft's own settings folder is out of
+  reach even with `files`. A panel without `network` is served with a policy that makes the
+  browser refuse its requests to anywhere else.
+- **Trust is checked on every request.** A module whose files changed, or whose trust was taken
+  back, is served and answered nothing more, at once, with the panel still open.
+- **Commands never open dialogs for a module**, and the window's own commands (the theme, the
+  dialogs) are not offered to it: it is a program calling GridCraft, as an agent is.
+- **Some things are for the person at the screen alone.** Trusting a module, running a script,
+  opening a panel and naming the Python to run are refused while the control channel is putting
+  input into the window, and the Modules dialog no longer works from values the channel can
+  rewrite. This closes a gap phase 1b left: an agent could name any program as "Python" and
+  press Check Python to run it.
+
 The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
-own. Next is phase 1c: the bridge, `spreadsheet.js`, and panels in the browser.
+own. Next is phase 2: panels docked in the window, the workbook as objects, events.
 
 ### Open
+- **`network` is only partly enforced in a browser.** The policy stops a panel's requests, but
+  not the page sending the user to another address, which can carry data. Docking the panel in
+  the window (phase 2) is what closes this.
+- The workbook as objects is not built: a panel works through commands.
 - A script's process is not confined, and stopping it stops only the Python GridCraft started,
   not processes the script started itself.
-- The trust check hashes the whole module on every call. Fine for small modules; a large one will
-  want the fingerprint cached against its files' times.
+- The trust check hashes the whole module on every request. Fine for small modules; a large one
+  will want the fingerprint cached against its files' times.
+- A call that arrives while GridCraft shows a system dialog waits, and is given up after 30
+  seconds.
 - Wording of the fork's dialogs in other languages.
 
 ## Hooks in upstream files
@@ -253,6 +285,7 @@ still there:
 | `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the fields `animations: bool` (default `true`) and `developer_tab: bool` (default `false`), between `formula_bar_expanded` and `status_bar` |
+| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, and carries out the calls modules' panels made |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/ribbon.rs`, `view`, in the Display theme column, after the picker | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
 | `crates/ui-egui/src/ribbon.rs`, `file_menu`, after the File button is added | `if crate::aniefork::backstage::file_button(app, &file) { return; }` opens the fork's File page; upstream's menu below it is left as it is, and no longer runs |
@@ -265,7 +298,7 @@ still there:
 | `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
-| `Cargo.lock` | the new crate's entry. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
+| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
 
@@ -321,6 +354,16 @@ meaningful there.
 
 Newest first.
 
+- **2026-10-11 (Development subsystem, phase 1c: panels):** A trusted module's panel opens in
+  the browser, served by a small HTTP server inside GridCraft (loopback only, a port and a
+  secret token for each module, trust checked on every request), and calls GridCraft through a
+  `spreadsheet` object: every command of the engine, several commands as one undo step, its own
+  Python scripts. What a module may run follows what it was granted. The starter's panel takes
+  the selection through its Python script and back into the sheet as one undo step. Also: what
+  runs code or decides who may is now refused while the control channel is putting input into
+  the window, which closes a gap from phase 1b (an agent could name any program as "Python" and
+  have it run). Checked by 24 new tests (14 in the crate, over real connections; 10 through the
+  window) and with the starter's panel in a real browser.
 - **2026-10-11 (the File page offered upstream):** Sent as pull request #337 from the branch
   `file-page`, cut from `upstream/main` and independent of #265 and #266. The upstream version
   lives in `crates/ui-egui/src/backstage.rs` with its window tests in `tests/backstage.rs`,

@@ -3,7 +3,7 @@ name = "gridcraft-aniefork-dev"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GridCraft Development subsystem (aniefork): modules, their fingerprints and the user's trust in them"
+description = "GridCraft Development subsystem (aniefork): modules, the user's trust in them, their Python scripts and their panels"
 
 [lints]
 workspace = true
@@ -12,3 +12,8 @@ workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "1"
+
+# The bridge's tokens come from the operating system's source of randomness. The web build
+# serves nothing, and so needs none.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.3"

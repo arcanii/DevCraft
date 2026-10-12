@@ -1,0 +1,1433 @@
+//! The bridge: a small HTTP server, on the loopback address only, that serves a trusted module's
+//! panel to the user's browser and carries the panel's calls to GridCraft.
+//!
+//! Each module that is served gets a port of its own, so that the browser keeps the panels of two
+//! modules apart (a page's origin is its address and port), and a secret token made for this run,
+//! which starts every path. A request is answered only when all of this holds:
+//!
+//! - it names this bridge by its loopback address (a name someone pointed at this machine is
+//!   refused), and the browser doesn't say that a page of another site is asking;
+//! - its path starts with the module's token;
+//! - **the module is trusted as it is on disk now.** It is read, and the user's decisions with
+//!   it, for every request: a module that was changed or is no longer trusted stops being served
+//!   at once;
+//! - a file is one of the module's own, under its panel folder; a call comes from the module's
+//!   own page (the browser names the page that asks) and is JSON.
+//!
+//! What a panel may call:
+//!
+//! - `runPython` is answered here, by [`crate::python`], which checks trust again for itself.
+//! - `run`, `batch` and `selection` need the workbook, which only the app has. They are put in a
+//!   queue as [`Call`]s, with what the module was granted, for the app to carry out on its own
+//!   thread ([`Bridge::take_calls`]). The app decides what each command needs ([`needs`]).
+//!
+//! The panel is given its `spreadsheet` object by [`CLIENT`], a script served beside the page, and
+//! TypeScript is told its shape by [`typings`]. Both are text made here: the repository holds no
+//! JavaScript files.
+//!
+//! A module that wasn't granted `network` is served with a policy that makes the browser refuse
+//! its requests to anywhere but this bridge. In a browser that policy cannot stop a page from
+//! sending the user to another address, which can carry data with it: that needs the panel docked
+//! in the window, where GridCraft decides where a page may go.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
+
+use serde_json::Value as Json;
+
+use crate::manifest::Permission;
+
+/// Where this run keeps modules, the user's decisions and the subsystem's settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Places {
+    pub modules: PathBuf,
+    pub trust: PathBuf,
+    pub settings: PathBuf,
+}
+
+/// The most commands one `batch` may hold.
+pub const MAX_BATCH: usize = 1_000;
+/// The most calls that may wait for the app at once.
+pub const MAX_WAITING: usize = 256;
+/// The largest call read (bytes): what a script can be handed.
+pub const MAX_BODY_BYTES: usize = crate::python::MAX_REQUEST_BYTES;
+
+/// How long the bridge waits: for a request to arrive, and for the app to answer a call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub read: Duration,
+    pub answer: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits { read: Duration::from_secs(10), answer: Duration::from_secs(30) }
+    }
+}
+
+/// What a command does, as the app that owns it knows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// It only reports.
+    Reads,
+    /// Anything else: it changes the workbook, the selection, the view or files.
+    Changes,
+}
+
+/// What a module must have been granted to make this call.
+///
+/// A command given a `path` reads or writes a file, whatever else it is; so do the `file.`
+/// commands that aren't reports (`file.properties` only changes the workbook).
+pub fn needs(id: &str, kind: Kind, params: &Json) -> Permission {
+    let names_a_file = params.get("path").is_some_and(|path| !path.is_null());
+    let file_command = id.starts_with("file.") && kind == Kind::Changes && id != "file.properties";
+    if names_a_file || file_command {
+        Permission::Files
+    } else if kind == Kind::Reads {
+        Permission::Read
+    } else {
+        Permission::Write
+    }
+}
+
+/// A command as the typings describe it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandDoc {
+    pub id: String,
+    pub label: String,
+    pub params: String,
+    /// What a module needs to run it without a `path`.
+    pub needs: Permission,
+}
+
+/// What a panel asked of the workbook.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    /// One command.
+    Run { command: String, params: Json },
+    /// Several commands as one undo step: all of them, or none.
+    Batch { label: String, commands: Vec<(String, Json)> },
+    /// The selection, as a script is handed it: `{range, sheet, rows}`.
+    Selection,
+}
+
+/// A call waiting for the app: who asks, what they were granted, and what they ask.
+pub struct Call {
+    /// The module's id.
+    pub module: String,
+    /// Its name, for what the user sees (the label of an undo step).
+    pub name: String,
+    /// What the user granted it, as of this call.
+    pub granted: Vec<Permission>,
+    pub request: Request,
+    reply: mpsc::Sender<Result<Json, String>>,
+    /// The panel stopped waiting: the call must not be carried out late.
+    abandoned: Arc<AtomicBool>,
+}
+
+impl Call {
+    /// Sends the panel its answer.
+    pub fn answer(self, result: Result<Json, String>) {
+        let _ = self.reply.send(result);
+    }
+
+    fn is_abandoned(&self) -> bool {
+        self.abandoned.load(Ordering::SeqCst)
+    }
+}
+
+/// The script that gives a panel its `spreadsheet` object. Served as `spreadsheet.js` beside the
+/// panel's page, it finds the bridge from its own address.
+pub const CLIENT: &str = r#"// GridCraft: the `spreadsheet` object of a module's panel. Served by GridCraft; not a file to edit.
+(function () {
+  "use strict";
+  const api = new URL("api", document.currentScript.src).href;
+
+  class SpreadsheetError extends Error {
+    constructor(message, trace) {
+      super(message);
+      this.name = "SpreadsheetError";
+      if (trace) this.trace = trace;
+    }
+  }
+
+  async function call(body) {
+    let response;
+    try {
+      response = await fetch(api, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+    } catch (error) {
+      throw new SpreadsheetError("GridCraft can't be reached. Is it still running?");
+    }
+    let reply;
+    try {
+      reply = await response.json();
+    } catch (error) {
+      throw new SpreadsheetError("GridCraft did not answer (" + response.status + ").");
+    }
+    if (!reply || reply.ok !== true) throw new SpreadsheetError((reply && reply.error) || "The call failed.", reply && reply.trace);
+    return reply;
+  }
+
+  const step = (c) => (Array.isArray(c) ? { command: c[0], params: c[1] || {} } : { command: c.command, params: c.params || {} });
+
+  window.spreadsheet = Object.freeze({
+    Error: SpreadsheetError,
+    run: async (command, params) => (await call({ call: "run", command, params: params || {} })).result,
+    batch: async (commands, options) =>
+      (await call({ call: "batch", label: options && options.label, commands: Array.from(commands, step) })).results,
+    runPython: async (script, data, options) => {
+      const reply = await call({ call: "runPython", script, data: data === undefined ? null : data, timeout: options && options.timeout });
+      if (options && typeof options.printed === "function") options.printed(reply.printed || "");
+      return reply.result;
+    },
+    selection: async () => (await call({ call: "selection" })).result,
+    read: async (range, options) =>
+      (await call({ call: "run", command: "sheet.read", params: Object.assign({}, options, range ? { range } : {}) })).result.values,
+    write: async (range, rows, options) =>
+      (await call({ call: "run", command: "range.setValues", params: Object.assign({}, options, { range, values: rows }) })).result,
+    info: async () => (await call({ call: "info" })).result,
+  });
+})();
+"#;
+
+const TYPINGS: &str = r#"// GridCraft: the types of the `spreadsheet` object a module's panel is given.
+// Made from this copy of GridCraft's commands; not a file to edit.
+
+/** What a command takes. Each command's line in `SpreadsheetCommands` says what it reads. */
+type SpreadsheetParams = Record<string, unknown>;
+
+/** The selection, as `spreadsheet.selection()` gives it and a script is handed it. */
+interface SpreadsheetSelection {
+  sheet: string;
+  range: string;
+  rows: unknown[][];
+}
+
+interface SpreadsheetInfo {
+  module: { id: string; name: string; version: string };
+  /** What the user granted the module: "read", "write", "files", "network", "python". */
+  granted: string[];
+}
+
+/** One step of a batch: `["home.bold", {range: "A1:C1"}]` or `{command, params}`. */
+type SpreadsheetStep =
+  | [keyof SpreadsheetCommands, SpreadsheetParams?]
+  | { command: keyof SpreadsheetCommands; params?: SpreadsheetParams };
+
+interface Spreadsheet {
+  /** What a failed call throws. A failed script's traceback is in `trace`. */
+  Error: new (message: string, trace?: string) => Error & { trace?: string };
+  /** Runs one command, by its id. It never opens a dialog: what it needs goes in `params`. */
+  run<K extends keyof SpreadsheetCommands>(command: K, params?: SpreadsheetParams): Promise<any>;
+  /** Runs several commands as one undo step. If one fails, none of them stays. */
+  batch(commands: SpreadsheetStep[], options?: { label?: string }): Promise<any[]>;
+  /**
+   * Runs one of the module's own Python scripts. Its `main(data)` is handed `data`, and what it
+   * returns comes back. `timeout` is in seconds; `printed` is handed what the script printed.
+   */
+  runPython(script: string, data?: unknown, options?: { timeout?: number; printed?: (text: string) => void }): Promise<any>;
+  /** The selected cells and their values. */
+  selection(): Promise<SpreadsheetSelection>;
+  /** The values of a range (the used range when none is named), row by row. */
+  read(range?: string, options?: { sheet?: string; formulas?: boolean; formatted?: boolean }): Promise<unknown[][]>;
+  /** Writes rows of values from the range's first cell. Text that starts with = is a formula. */
+  write(range: string, rows: unknown[][], options?: { sheet?: string }): Promise<any>;
+  /** The module, and what the user granted it. */
+  info(): Promise<SpreadsheetInfo>;
+}
+
+declare const spreadsheet: Spreadsheet;
+
+/**
+ * Every command `spreadsheet.run` takes: its name, what it takes, and what the module must have
+ * been granted. A command given a `path` needs `files` as well.
+ */
+interface SpreadsheetCommands {
+"#;
+
+/// The TypeScript declarations for a panel, served as `spreadsheet.d.ts` beside its page.
+pub fn typings(commands: &[CommandDoc]) -> String {
+    let mut out = String::from(TYPINGS);
+    for command in commands {
+        let Ok(id) = serde_json::to_string(&command.id) else { continue };
+        // One line, which can't end the comment it sits in.
+        let doc = format!("{}: {} Needs `{}`.", command.label, command.params, command.needs.code());
+        let doc: String = doc.replace("*/", "* /").chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+        out.push_str(&format!("  /** {doc} */\n  {id}: SpreadsheetParams;\n"));
+    }
+    out.push_str("}\n");
+    out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use server::Bridge;
+
+#[cfg(target_arch = "wasm32")]
+pub use web::Bridge;
+
+/// The web build has no sockets to listen on: nothing is served.
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use super::*;
+
+    #[derive(Clone, Default)]
+    pub struct Bridge;
+
+    impl Bridge {
+        pub fn new(_wake: impl Fn() + Send + Sync + 'static) -> Bridge {
+            Bridge
+        }
+
+        pub fn with_limits(_wake: impl Fn() + Send + Sync + 'static, _limits: Limits) -> Bridge {
+            Bridge
+        }
+
+        pub fn set_commands(&self, _commands: Vec<CommandDoc>) {}
+
+        pub fn serve(&self, _places: &Places, _id: &str) -> Result<String, String> {
+            Err("Panels can't be opened from this copy of GridCraft.".into())
+        }
+
+        pub fn stop(&self, _id: &str) {}
+
+        pub fn serving(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        pub fn take_calls(&self, _most: usize) -> Vec<Call> {
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod server {
+    use std::collections::{HashMap, VecDeque};
+    use std::io::{Read, Write};
+    use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::thread;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::python::{self, PythonHost, RunError};
+    use crate::trust::{Status, TrustStore};
+    use crate::{manifest, module, settings};
+
+    /// The longest request line and headers read (bytes).
+    const MAX_HEAD: usize = 16 * 1024;
+    const MAX_HEADERS: usize = 100;
+    /// The most requests answered at once for one module; more are turned away.
+    const MAX_CONNECTIONS: usize = 32;
+
+    /// What the browser is told when the module wasn't granted `network`: load and call nothing
+    /// that isn't this bridge's.
+    const CLOSED: &str = "default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    /// With `network`: anything, but still in no other page's frame.
+    const OPEN: &str = "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
+    fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+        mutex.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// What every module's listener shares: the queue to the app.
+    struct Shared {
+        wake: Box<dyn Fn() + Send + Sync>,
+        calls: Mutex<VecDeque<Call>>,
+        commands: Mutex<Arc<Vec<CommandDoc>>>,
+        limits: Limits,
+    }
+
+    /// One module being served.
+    struct Site {
+        id: String,
+        token: String,
+        port: u16,
+        places: Places,
+        stop: AtomicBool,
+        open: AtomicUsize,
+        shared: Arc<Shared>,
+    }
+
+    struct Owner {
+        shared: Arc<Shared>,
+        sites: Mutex<HashMap<String, Arc<Site>>>,
+    }
+
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            for (_, site) in lock(&self.sites).drain() {
+                halt(&site);
+            }
+        }
+    }
+
+    /// The bridge of one running app. Cloning it gives another handle to the same bridge; when
+    /// the last handle goes, nothing is served any more.
+    #[derive(Clone)]
+    pub struct Bridge(Arc<Owner>);
+
+    impl Bridge {
+        /// A bridge that serves nothing yet. `wake` is called, from another thread, when a call
+        /// is waiting for the app.
+        pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Bridge {
+            Bridge::with_limits(wake, Limits::default())
+        }
+
+        pub fn with_limits(wake: impl Fn() + Send + Sync + 'static, limits: Limits) -> Bridge {
+            let shared = Shared { wake: Box::new(wake), calls: Mutex::default(), commands: Mutex::default(), limits };
+            Bridge(Arc::new(Owner { shared: Arc::new(shared), sites: Mutex::default() }))
+        }
+
+        /// The commands the typings list.
+        pub fn set_commands(&self, commands: Vec<CommandDoc>) {
+            *lock(&self.0.shared.commands) = Arc::new(commands);
+        }
+
+        /// Starts serving the module `id` and returns the address of its panel. The address holds
+        /// the module's token: it is for the user's browser, and nothing else should be shown it.
+        /// Refused unless the user trusts the module as it is on disk now and it has a panel.
+        pub fn serve(&self, places: &Places, id: &str) -> Result<String, String> {
+            let (found, _) = trusted(places, id)?;
+            if found.manifest.as_ref().is_none_or(|m| m.panel.is_none()) {
+                return Err(format!("{} has no panel.", found.name()));
+            }
+            let mut sites = lock(&self.0.sites);
+            if let Some(site) = sites.get(id).filter(|site| site.places == *places) {
+                return Ok(address(site));
+            }
+            if let Some(old) = sites.remove(id) {
+                halt(&old);
+            }
+            let failed = |e: std::io::Error| format!("The panel could not be served: {e}");
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(failed)?;
+            let port = listener.local_addr().map_err(failed)?.port();
+            let site = Arc::new(Site {
+                id: id.to_string(),
+                token: token()?,
+                port,
+                places: places.clone(),
+                stop: AtomicBool::new(false),
+                open: AtomicUsize::new(0),
+                shared: self.0.shared.clone(),
+            });
+            let serving = site.clone();
+            thread::Builder::new().name("gridcraft-bridge".into()).spawn(move || listen(&listener, &serving)).map_err(failed)?;
+            sites.insert(id.to_string(), site.clone());
+            Ok(address(&site))
+        }
+
+        /// Stops serving the module `id`.
+        pub fn stop(&self, id: &str) {
+            if let Some(site) = lock(&self.0.sites).remove(id) {
+                halt(&site);
+            }
+        }
+
+        /// The modules being served.
+        pub fn serving(&self) -> Vec<String> {
+            let mut ids: Vec<String> = lock(&self.0.sites).keys().cloned().collect();
+            ids.sort();
+            ids
+        }
+
+        /// The calls waiting for the app, oldest first, at most `most` of them. Calls whose panel
+        /// stopped waiting are dropped: they must not be carried out late.
+        pub fn take_calls(&self, most: usize) -> Vec<Call> {
+            let mut waiting = lock(&self.0.shared.calls);
+            let mut taken = Vec::new();
+            while taken.len() < most {
+                let Some(call) = waiting.pop_front() else { break };
+                if !call.is_abandoned() {
+                    taken.push(call);
+                }
+            }
+            taken
+        }
+    }
+
+    fn address(site: &Site) -> String {
+        format!("http://127.0.0.1:{}/{}/", site.port, site.token)
+    }
+
+    /// 64 hexadecimal digits from the operating system's source of randomness.
+    fn token() -> Result<String, String> {
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes).map_err(|e| format!("The panel could not be served: the system gave no random numbers ({e})."))?;
+        Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    /// Whether two texts are the same, taking as long whichever byte differs.
+    fn same(a: &str, b: &str) -> bool {
+        a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |differs, (x, y)| differs | (x ^ y)) == 0
+    }
+
+    fn halt(site: &Site) {
+        site.stop.store(true, Ordering::SeqCst);
+        // The listener is waiting for a connection: give it one, so that it sees it should stop.
+        let _ = TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, site.port)), Duration::from_secs(1));
+    }
+
+    fn listen(listener: &TcpListener, site: &Arc<Site>) {
+        for stream in listener.incoming() {
+            if site.stop.load(Ordering::SeqCst) {
+                break;
+            }
+            let Ok(stream) = stream else {
+                // Something is wrong with the socket: don't spin on it.
+                thread::sleep(Duration::from_millis(50));
+                continue;
+            };
+            if site.open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                site.open.fetch_sub(1, Ordering::SeqCst);
+                continue;
+            }
+            let serving = site.clone();
+            let started = thread::Builder::new().name("gridcraft-bridge-request".into()).spawn(move || {
+                answer(stream, &serving);
+                serving.open.fetch_sub(1, Ordering::SeqCst);
+            });
+            if started.is_err() {
+                site.open.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// The module as it is on disk now and what the user granted it, or why it isn't served.
+    fn trusted(places: &Places, id: &str) -> Result<(module::Module, Vec<Permission>), String> {
+        if !manifest::valid_id(id) {
+            return Err("That is not a module.".into());
+        }
+        let found = module::load(&places.modules.join(id));
+        match TrustStore::load(&places.trust).status(&found) {
+            Status::Trusted(granted) => Ok((found, granted)),
+            Status::Changed => Err(format!("{} has changed since you trusted it. Review it again in Developer > Modules.", found.name())),
+            Status::Untrusted => Err(format!("{} is not trusted. Trust it in Developer > Modules first.", found.name())),
+            Status::Problem(why) => Err(format!("{} can't be used: {why}.", found.name())),
+        }
+    }
+
+    struct Incoming {
+        method: String,
+        target: String,
+        /// Names in lower case.
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    }
+
+    impl Incoming {
+        /// The header's value; an error when it was sent more than once, which no honest browser does.
+        fn header(&self, name: &str) -> Result<Option<&str>, ()> {
+            let mut values = self.headers.iter().filter(|(n, _)| n == name).map(|(_, v)| v.as_str());
+            let first = values.next();
+            if values.next().is_some() { Err(()) } else { Ok(first) }
+        }
+    }
+
+    struct Reply {
+        status: u16,
+        reason: &'static str,
+        kind: &'static str,
+        body: Vec<u8>,
+        allow: Option<&'static str>,
+        /// The module was granted `network`.
+        network: bool,
+    }
+
+    impl Reply {
+        fn new(status: u16, reason: &'static str, kind: &'static str, body: Vec<u8>) -> Reply {
+            Reply { status, reason, kind, body, allow: None, network: false }
+        }
+
+        fn plain(status: u16, reason: &'static str, text: &str) -> Reply {
+            Reply::new(status, reason, "text/plain; charset=utf-8", text.as_bytes().to_vec())
+        }
+
+        fn json(status: u16, reason: &'static str, value: &Json) -> Reply {
+            Reply::new(status, reason, "application/json", serde_json::to_vec(value).unwrap_or_default())
+        }
+
+        fn missing() -> Reply {
+            Reply::plain(404, "Not Found", "There is nothing here.")
+        }
+
+        fn bad() -> Reply {
+            Reply::plain(400, "Bad Request", "That request makes no sense.")
+        }
+
+        fn bytes(&self) -> Vec<u8> {
+            let mut head = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCross-Origin-Resource-Policy: same-origin\r\nContent-Security-Policy: {}\r\n",
+                self.status,
+                self.reason,
+                self.kind,
+                self.body.len(),
+                if self.network { OPEN } else { CLOSED },
+            );
+            if let Some(allow) = self.allow {
+                head.push_str(&format!("Allow: {allow}\r\n"));
+            }
+            head.push_str("\r\n");
+            let mut out = head.into_bytes();
+            out.extend_from_slice(&self.body);
+            out
+        }
+    }
+
+    fn answer(mut stream: TcpStream, site: &Site) {
+        let wait = Some(site.shared.limits.read);
+        if stream.set_read_timeout(wait).is_err() || stream.set_write_timeout(wait).is_err() {
+            return;
+        }
+        let reply = match read(&mut stream) {
+            Ok(request) => respond(site, &request),
+            Err(Some(reply)) => reply,
+            // Nothing that makes a request arrived in time: there is nobody to answer.
+            Err(None) => return,
+        };
+        let _ = stream.write_all(&reply.bytes());
+        let _ = stream.flush();
+        let _ = stream.shutdown(Shutdown::Both);
+    }
+
+    fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|window| window == needle)
+    }
+
+    /// Reads one request. `Err(None)`: the connection gave nothing to answer.
+    fn read(stream: &mut TcpStream) -> Result<Incoming, Option<Reply>> {
+        let mut buffer = Vec::with_capacity(2048);
+        let mut chunk = [0u8; 4096];
+        let end = loop {
+            let found = find(&buffer, b"\r\n\r\n");
+            if found.unwrap_or(buffer.len()) > MAX_HEAD {
+                return Err(Some(Reply::plain(431, "Request Header Fields Too Large", "That request's headers are too long.")));
+            }
+            if let Some(at) = found {
+                break at;
+            }
+            let n = stream.read(&mut chunk).map_err(|_| None)?;
+            if n == 0 {
+                return Err(None);
+            }
+            buffer.extend_from_slice(chunk.get(..n).unwrap_or(&[]));
+        };
+        let head = std::str::from_utf8(buffer.get(..end).unwrap_or(&[])).map_err(|_| Some(Reply::bad()))?;
+        let mut lines = head.split("\r\n");
+        let mut first = lines.next().unwrap_or("").split(' ');
+        let (method, target, version) = (first.next().unwrap_or(""), first.next().unwrap_or(""), first.next().unwrap_or(""));
+        if method.is_empty() || !target.starts_with('/') || !version.starts_with("HTTP/1.") || first.next().is_some() {
+            return Err(Some(Reply::bad()));
+        }
+        let mut headers = Vec::new();
+        for line in lines {
+            let Some((name, value)) = line.split_once(':') else { return Err(Some(Reply::bad())) };
+            if name.is_empty() || name.contains(char::is_whitespace) || headers.len() >= MAX_HEADERS {
+                return Err(Some(Reply::bad()));
+            }
+            headers.push((name.to_ascii_lowercase(), value.trim().to_string()));
+        }
+        let mut request = Incoming { method: method.to_string(), target: target.to_string(), headers, body: Vec::new() };
+        // A body is taken by its stated length and no other way.
+        if request.header("transfer-encoding") != Ok(None) {
+            return Err(Some(Reply::bad()));
+        }
+        let length = match request.header("content-length") {
+            Ok(None) => 0,
+            Ok(Some(text)) => text.parse::<usize>().map_err(|_| Some(Reply::bad()))?,
+            Err(()) => return Err(Some(Reply::bad())),
+        };
+        if length > MAX_BODY_BYTES {
+            return Err(Some(Reply::plain(413, "Content Too Large", "That call is too large.")));
+        }
+        let mut body = buffer.get(end + 4..).unwrap_or(&[]).to_vec();
+        body.truncate(length);
+        while body.len() < length {
+            let n = stream.read(&mut chunk).map_err(|_| None)?;
+            if n == 0 {
+                return Err(None);
+            }
+            let room = length - body.len();
+            body.extend_from_slice(chunk.get(..n.min(room)).unwrap_or(&[]));
+        }
+        request.body = body;
+        Ok(request)
+    }
+
+    fn respond(site: &Site, request: &Incoming) -> Reply {
+        // The browser must be talking to this address, not to a name someone pointed here.
+        let Ok(Some(host)) = request.header("host") else { return Reply::bad() };
+        if host != format!("127.0.0.1:{}", site.port) && host != format!("localhost:{}", site.port) {
+            return Reply::plain(403, "Forbidden", "That is not this bridge's address.");
+        }
+        // A page of another site may load nothing from here. (Browsers that say where a request
+        // comes from say "none" for an address the user opened themselves.)
+        match request.header("sec-fetch-site") {
+            Ok(None | Some("same-origin" | "none")) => {}
+            _ => return Reply::plain(403, "Forbidden", "Only the module's own panel is served."),
+        }
+        let path = request.target.split(['?', '#']).next().unwrap_or("");
+        let mut parts = path.splitn(3, '/');
+        let (_, token, rest) = (parts.next(), parts.next().unwrap_or(""), parts.next());
+        if !same(token, &site.token) {
+            return Reply::missing();
+        }
+        let Some(rest) = rest else { return Reply::missing() };
+        let calling = rest == "api";
+        let (found, granted) = match trusted(&site.places, &site.id) {
+            Ok(checked) => checked,
+            Err(why) if calling => return Reply::json(403, "Forbidden", &json!({"ok": false, "error": why})),
+            Err(why) => return Reply::plain(403, "Forbidden", &why),
+        };
+        let mut reply = match (request.method.as_str(), rest) {
+            ("POST", "api") => api(site, request, &found, &granted, host),
+            (_, "api") => Reply { allow: Some("POST"), ..Reply::plain(405, "Method Not Allowed", "Calls are made with POST.") },
+            ("GET", "spreadsheet.js") => Reply::new(200, "OK", "text/javascript; charset=utf-8", CLIENT.as_bytes().to_vec()),
+            ("GET", "spreadsheet.d.ts") => {
+                let commands = lock(&site.shared.commands).clone();
+                Reply::new(200, "OK", "text/plain; charset=utf-8", typings(&commands).into_bytes())
+            }
+            ("GET", rest) => file(&found, rest),
+            _ => Reply { allow: Some("GET"), ..Reply::plain(405, "Method Not Allowed", "Pages are read with GET.") },
+        };
+        reply.network = granted.contains(&Permission::Network);
+        reply
+    }
+
+    /// Undoes the `%XX` of a path. `None` when it isn't a path a browser would send.
+    fn decode(text: &str) -> Option<String> {
+        let bytes = text.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while let Some(&byte) = bytes.get(i) {
+            if byte == b'%' {
+                out.push(u8::from_str_radix(text.get(i + 1..i + 3)?, 16).ok()?);
+                i += 3;
+            } else {
+                out.push(byte);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).ok()
+    }
+
+    fn content_type(path: &str) -> &'static str {
+        let extension = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        match extension.as_str() {
+            "html" | "htm" => "text/html; charset=utf-8",
+            "js" | "mjs" => "text/javascript; charset=utf-8",
+            "css" => "text/css; charset=utf-8",
+            "json" | "map" => "application/json",
+            "txt" | "md" | "ts" => "text/plain; charset=utf-8",
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "ico" => "image/x-icon",
+            "woff" => "font/woff",
+            "woff2" => "font/woff2",
+            "wasm" => "application/wasm",
+            _ => "application/octet-stream",
+        }
+    }
+
+    /// A file of the module's panel: the page itself for the bare address, otherwise the path
+    /// beside it. Only what is in the module's own list of files, which is what the user trusted.
+    fn file(found: &module::Module, rest: &str) -> Reply {
+        let Some(manifest) = &found.manifest else { return Reply::missing() };
+        let Some(entry) = manifest.panel.as_deref() else { return Reply::missing() };
+        let (folder, page) = entry.rsplit_once('/').map_or(("", entry), |(folder, page)| (folder, page));
+        let wanted = if rest.is_empty() {
+            page.to_string()
+        } else {
+            match decode(rest).and_then(|path| manifest::inner_path(&path).ok()) {
+                Some(path) => path,
+                None => return Reply::missing(),
+            }
+        };
+        let inner = if folder.is_empty() { wanted } else { format!("{folder}/{wanted}") };
+        // A panel at the top of its module doesn't get the manifest or the scripts with it.
+        let script = manifest.python.as_deref().is_some_and(|scripts| inner.starts_with(&format!("{scripts}/")));
+        if inner == manifest::FILE || script || !found.files.contains(&inner) {
+            return Reply::missing();
+        }
+        match std::fs::read(found.dir.join(&inner)) {
+            Ok(bytes) => Reply::new(200, "OK", content_type(&inner), bytes),
+            Err(_) => Reply::missing(),
+        }
+    }
+
+    fn api(site: &Site, request: &Incoming, found: &module::Module, granted: &[Permission], host: &str) -> Reply {
+        let refuse = |status, reason, why: &str| Reply::json(status, reason, &json!({"ok": false, "error": why}));
+        // Only the module's own page may call: the browser names the page that asks.
+        if request.header("origin") != Ok(Some(format!("http://{host}").as_str())) {
+            return refuse(403, "Forbidden", "Only this module's own panel may call GridCraft.");
+        }
+        let json_sent = request.header("content-type").ok().flatten().and_then(|kind| kind.split(';').next());
+        if !json_sent.is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json")) {
+            return refuse(415, "Unsupported Media Type", "Calls are sent as JSON.");
+        }
+        let Ok(body) = serde_json::from_slice::<Json>(&request.body) else {
+            return refuse(400, "Bad Request", "That call is not JSON.");
+        };
+        let answer = match call(site, found, granted, &body) {
+            Ok(Json::Object(mut fields)) => {
+                fields.insert("ok".into(), json!(true));
+                Json::Object(fields)
+            }
+            Ok(other) => json!({"ok": true, "result": other}),
+            Err(failure) => failure,
+        };
+        Reply::json(200, "OK", &answer)
+    }
+
+    fn fail(why: impl Into<String>) -> Json {
+        json!({"ok": false, "error": why.into()})
+    }
+
+    /// A command and its parameters, out of a call: `{command, params?}`, or the pair
+    /// `[command, params?]` that a batch may list instead.
+    fn step(from: &Json) -> Result<(String, Json), Json> {
+        let (name, params) = match from {
+            Json::Array(pair) if pair.len() <= 2 => (pair.first(), pair.get(1)),
+            _ => (from.get("command"), from.get("params")),
+        };
+        let command = name.and_then(Json::as_str).filter(|c| !c.is_empty() && c.len() <= 100);
+        let Some(command) = command else { return Err(fail("A command needs a `command`: its name.")) };
+        let params = match params {
+            None | Some(Json::Null) => json!({}),
+            Some(params @ Json::Object(_)) => params.clone(),
+            Some(_) => return Err(fail(format!("The `params` of {command} must be an object."))),
+        };
+        Ok((command.to_string(), params))
+    }
+
+    /// Carries out one call. `Ok` holds the fields of the answer; `Err` the whole answer.
+    fn call(site: &Site, found: &module::Module, granted: &[Permission], body: &Json) -> Result<Json, Json> {
+        let version = found.manifest.as_ref().map(|m| m.version.as_str()).unwrap_or("");
+        match body.get("call").and_then(Json::as_str) {
+            Some("info") => Ok(json!({"result": {
+                "module": {"id": found.id, "name": found.name(), "version": version},
+                "granted": granted.iter().map(|p| p.code()).collect::<Vec<_>>(),
+            }})),
+            Some("runPython") => run_python(site, body),
+            Some("selection") => ask(site, found, granted, Request::Selection).map(|result| json!({"result": result})),
+            Some("run") => {
+                let (command, params) = step(body)?;
+                ask(site, found, granted, Request::Run { command, params }).map(|result| json!({"result": result}))
+            }
+            Some("batch") => {
+                let Some(steps) = body.get("commands").and_then(Json::as_array) else { return Err(fail("A batch needs `commands`: a list.")) };
+                if steps.len() > MAX_BATCH {
+                    return Err(fail(format!("A batch can hold at most {MAX_BATCH} commands.")));
+                }
+                let commands = steps.iter().map(step).collect::<Result<Vec<_>, _>>()?;
+                // The label of the undo step: the module's name unless the panel gave a plain one.
+                let given = body.get("label").and_then(Json::as_str).unwrap_or("");
+                let label: String = given.chars().filter(|c| !c.is_control()).take(60).collect();
+                let label = if label.trim().is_empty() { found.name().to_string() } else { label.trim().to_string() };
+                ask(site, found, granted, Request::Batch { label, commands }).map(|results| json!({"results": results}))
+            }
+            _ => Err(fail("That is not a call GridCraft knows.")),
+        }
+    }
+
+    /// Runs one of the module's scripts. The Python host checks for itself that the module is
+    /// trusted and was granted `python`, and that the script is its own.
+    fn run_python(site: &Site, body: &Json) -> Result<Json, Json> {
+        let Some(script) = body.get("script").and_then(Json::as_str) else { return Err(fail("runPython needs the script's name.")) };
+        let data = body.get("data").cloned().unwrap_or(Json::Null);
+        let longest = python::MAX_TIMEOUT.as_secs_f64();
+        let asked = body.get("timeout").and_then(Json::as_f64).filter(|seconds| seconds.is_finite() && *seconds >= 0.001);
+        let timeout = asked.map_or(python::DEFAULT_TIMEOUT, |seconds| Duration::from_secs_f64(seconds.min(longest)));
+        let interpreter = settings::load(&site.places.settings).python;
+        match PythonHost::global().run(&site.places.modules, &site.places.trust, &interpreter, &site.id, script, &data, timeout) {
+            Ok(output) => Ok(json!({"result": output.result, "printed": output.printed})),
+            Err(RunError::Script { error, trace }) => Err(json!({"ok": false, "error": error, "trace": trace})),
+            Err(other) => Err(fail(other.to_string())),
+        }
+    }
+
+    /// Puts a call in the queue for the app and waits for its answer.
+    fn ask(site: &Site, found: &module::Module, granted: &[Permission], request: Request) -> Result<Json, Json> {
+        let (reply, answer) = mpsc::channel();
+        let abandoned = Arc::new(AtomicBool::new(false));
+        {
+            let mut waiting = lock(&site.shared.calls);
+            if waiting.len() >= MAX_WAITING {
+                return Err(fail("GridCraft has too many calls waiting. Try again in a moment."));
+            }
+            waiting.push_back(Call {
+                module: site.id.clone(),
+                name: found.name().to_string(),
+                granted: granted.to_vec(),
+                request,
+                reply,
+                abandoned: abandoned.clone(),
+            });
+        }
+        (site.shared.wake)();
+        match answer.recv_timeout(site.shared.limits.answer) {
+            Ok(result) => result.map_err(fail),
+            Err(_) => {
+                abandoned.store(true, Ordering::SeqCst);
+                Err(fail("GridCraft did not answer in time. It may be waiting for you to answer a dialog."))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_call_needs_what_it_touches() {
+        use Kind::{Changes, Reads};
+        let none = serde_json::json!({});
+        for (id, kind, params, permission) in [
+            ("sheet.read", Reads, none.clone(), Permission::Read),
+            ("document.inspect", Reads, none.clone(), Permission::Read),
+            ("file.printPreview", Reads, none.clone(), Permission::Read),
+            ("cell.set", Changes, none.clone(), Permission::Write),
+            ("selection.set", Changes, none.clone(), Permission::Write),
+            ("file.properties", Changes, none.clone(), Permission::Write),
+            ("file.save", Changes, none.clone(), Permission::Files),
+            ("file.new", Changes, none.clone(), Permission::Files),
+            ("file.close", Changes, none.clone(), Permission::Files),
+            // Whatever the command, a path is a file.
+            ("insert.picture", Changes, serde_json::json!({"path": "C:/x.png"}), Permission::Files),
+            ("data.fromTextCsv", Changes, serde_json::json!({"path": "secrets.txt"}), Permission::Files),
+            ("sheet.read", Reads, serde_json::json!({"path": 3}), Permission::Files),
+            ("cell.set", Changes, serde_json::json!({"path": null}), Permission::Write),
+        ] {
+            assert_eq!(needs(id, kind, &params), permission, "{id} {params}");
+        }
+        assert_eq!(needs("cell.set", Changes, &Json::Null), Permission::Write, "parameters that aren't an object");
+    }
+
+    #[test]
+    fn the_typings_list_every_command_on_a_line_of_its_own() {
+        let commands = vec![
+            CommandDoc { id: "cell.set".into(), label: "Enter Cell".into(), params: "{cell?, input}".into(), needs: Permission::Write },
+            CommandDoc { id: "odd\"id".into(), label: "Ends */ a comment\nand a line".into(), params: String::new(), needs: Permission::Read },
+        ];
+        let text = typings(&commands);
+        assert!(text.contains("declare const spreadsheet: Spreadsheet;"));
+        assert!(text.contains("  /** Enter Cell: {cell?, input} Needs `write`. */\n  \"cell.set\": SpreadsheetParams;\n"), "{text}");
+        assert!(text.contains("  /** Ends * / a comment and a line:  Needs `read`. */\n  \"odd\\\"id\": SpreadsheetParams;\n"), "{text}");
+        assert!(text.ends_with("}\n"));
+        assert!(typings(&[]).ends_with("interface SpreadsheetCommands {\n}\n"));
+    }
+
+    #[test]
+    fn the_client_finds_the_bridge_from_its_own_address_and_holds_no_secret() {
+        assert!(CLIENT.contains("new URL(\"api\", document.currentScript.src)"));
+        for call in ["run:", "batch:", "runPython:", "selection:", "read:", "write:", "info:"] {
+            assert!(CLIENT.contains(call), "{call}");
+        }
+        assert!(!CLIENT.contains("127.0.0.1") && !CLIENT.contains("token"));
+    }
+}
+
+/// The bridge over real connections, as a browser would use it.
+#[cfg(test)]
+mod served {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::atomic::AtomicUsize;
+    use std::thread;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::module;
+    use crate::module::tests::TempDir;
+    use crate::python::PythonHost;
+    use crate::trust::TrustStore;
+
+    const PAGE: &str = "<!doctype html><title>Clean Data</title><script src=\"spreadsheet.js\"></script>";
+
+    fn manifest(permissions: &str, entry: &str) -> String {
+        format!(
+            "id = \"clean-data\"\nname = \"Clean Data\"\nversion = \"0.1.0\"\npermissions = [{permissions}]\n\n[panel]\nentry = \"{entry}\"\n\n[python]\nscripts = \"python\"\n"
+        )
+    }
+
+    /// A trusted module being served, and what a test needs to reach it.
+    struct Served {
+        t: TempDir,
+        places: Places,
+        bridge: Bridge,
+        port: u16,
+        token: String,
+        woken: Arc<AtomicUsize>,
+    }
+
+    impl Served {
+        fn new(tag: &str, permissions: &str, limits: Limits) -> Served {
+            Served::with_entry(tag, permissions, "panel/index.html", limits)
+        }
+
+        fn with_entry(tag: &str, permissions: &str, entry: &str, limits: Limits) -> Served {
+            let t = TempDir::new(tag);
+            t.write("modules/clean-data/module.toml", &manifest(permissions, entry));
+            t.write(&format!("modules/clean-data/{entry}"), PAGE);
+            t.write("modules/clean-data/panel/app.js", "console.log('panel');");
+            t.write("modules/clean-data/python/clean.py", "def main(data):\n    print('cleaning')\n    return {'got': data}\n");
+            t.write("modules/clean-data/python/broken.py", "def main(data):\n    raise ValueError('no good')\n");
+            let places = Places { modules: t.0.join("modules"), trust: t.0.join("trusted-modules.json"), settings: t.0.join("developer.json") };
+            let woken = Arc::new(AtomicUsize::new(0));
+            let counted = woken.clone();
+            let bridge = Bridge::with_limits(
+                move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                },
+                limits,
+            );
+            let mut served = Served { t, places, bridge, port: 0, token: String::new(), woken };
+            served.trust(false);
+            let address = served.bridge.serve(&served.places, "clean-data").unwrap();
+            let rest = address.strip_prefix("http://127.0.0.1:").unwrap();
+            let (port, token) = rest.split_once('/').unwrap();
+            served.port = port.parse().unwrap();
+            served.token = token.trim_end_matches('/').to_string();
+            assert_eq!(served.token.len(), 64, "{address}");
+            served
+        }
+
+        fn trust(&self, follow_changes: bool) {
+            let found = module::load(&self.places.modules.join("clean-data"));
+            assert!(found.is_sound(), "{:?}", found.problem);
+            TrustStore::load(&self.places.trust).trust(&found, follow_changes).unwrap();
+        }
+
+        /// Sends a request as written and returns the status, the headers and the body.
+        fn send(&self, request: &str) -> (u16, String, String) {
+            let mut stream = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+            stream.write_all(request.as_bytes()).unwrap();
+            let mut reply = Vec::new();
+            let _ = stream.read_to_end(&mut reply);
+            let text = String::from_utf8_lossy(&reply).into_owned();
+            let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text.as_str(), ""));
+            let status = head.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            (status, head.to_string(), body.to_string())
+        }
+
+        fn host(&self) -> String {
+            format!("127.0.0.1:{}", self.port)
+        }
+
+        /// What a browser sends to read `path` (after the token).
+        fn get(&self, path: &str) -> (u16, String, String) {
+            self.send(&format!("GET /{}/{path} HTTP/1.1\r\nHost: {}\r\nSec-Fetch-Site: none\r\n\r\n", self.token, self.host()))
+        }
+
+        fn post(&self, body: &str) -> String {
+            format!(
+                "POST /{}/api HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                self.token,
+                body.len(),
+                host = self.host()
+            )
+        }
+
+        /// What the panel's own page sends to make a call, and the answer as JSON.
+        fn call(&self, body: Json) -> Json {
+            let (status, _, answer) = self.send(&self.post(&body.to_string()));
+            assert_eq!(status, 200, "{answer}");
+            serde_json::from_str(&answer).unwrap()
+        }
+
+        /// Acts as the app: waits for one call and answers it with what `answer` makes of it.
+        fn app_answers(&self, answer: impl FnOnce(&Call) -> Result<Json, String>) {
+            for _ in 0..2_000 {
+                if let Some(call) = self.bridge.take_calls(1).pop() {
+                    let result = answer(&call);
+                    call.answer(result);
+                    return;
+                }
+                thread::sleep(Duration::from_millis(2));
+            }
+            panic!("no call arrived");
+        }
+    }
+
+    fn quick() -> Limits {
+        Limits { read: Duration::from_millis(300), answer: Duration::from_millis(300) }
+    }
+
+    #[test]
+    fn a_trusted_module_is_served_its_page_the_script_and_the_typings() {
+        let s = Served::new("page", "\"read\", \"python\"", Limits::default());
+        let (status, head, body) = s.get("");
+        assert_eq!((status, body.as_str()), (200, PAGE));
+        for header in [
+            "Content-Type: text/html; charset=utf-8",
+            "Cache-Control: no-store",
+            "X-Content-Type-Options: nosniff",
+            "Referrer-Policy: no-referrer",
+            "Cross-Origin-Resource-Policy: same-origin",
+            "Connection: close",
+            // Not granted `network`: the browser is told to reach nothing but this bridge.
+            "connect-src 'self'",
+            "frame-ancestors 'none'",
+        ] {
+            assert!(head.contains(header), "{header} is missing from\n{head}");
+        }
+        assert_eq!(s.get("index.html").2, PAGE);
+        let (status, head, body) = s.get("app.js?v=2#top");
+        assert_eq!((status, body.as_str()), (200, "console.log('panel');"));
+        assert!(head.contains("Content-Type: text/javascript"));
+        let (status, head, body) = s.get("spreadsheet.js");
+        assert_eq!((status, body.as_str()), (200, CLIENT));
+        assert!(head.contains("Content-Type: text/javascript"));
+        s.bridge.set_commands(vec![CommandDoc {
+            id: "cell.set".into(),
+            label: "Enter Cell".into(),
+            params: "{input}".into(),
+            needs: Permission::Write,
+        }]);
+        let (status, _, body) = s.get("spreadsheet.d.ts");
+        assert!(status == 200 && body.contains("\"cell.set\": SpreadsheetParams;"), "{body}");
+        // Asking again gives the same address: the panel that is open stays valid.
+        assert_eq!(s.bridge.serve(&s.places, "clean-data").unwrap(), format!("http://127.0.0.1:{}/{}/", s.port, s.token));
+        assert_eq!(s.bridge.serving(), ["clean-data"]);
+        assert_eq!(s.woken.load(Ordering::SeqCst), 0, "reading pages doesn't concern the app");
+    }
+
+    #[test]
+    fn a_module_granted_network_is_served_with_an_open_policy() {
+        let s = Served::new("network", "\"network\"", Limits::default());
+        let (status, head, _) = s.get("");
+        assert_eq!(status, 200);
+        assert!(head.contains("default-src *") && !head.contains("connect-src 'self'"), "{head}");
+        assert!(head.contains("frame-ancestors 'none'"));
+    }
+
+    #[test]
+    fn nothing_is_served_without_the_token_the_address_or_the_users_trust() {
+        let s = Served::new("closed", "\"read\"", Limits::default());
+        let host = s.host();
+        let wrong = "0".repeat(64);
+        for (request, status) in [
+            (format!("GET /{wrong}/ HTTP/1.1\r\nHost: {host}\r\n\r\n"), 404),
+            (format!("GET / HTTP/1.1\r\nHost: {host}\r\n\r\n"), 404),
+            (format!("GET /{} HTTP/1.1\r\nHost: {host}\r\n\r\n", s.token), 404),
+            (format!("GET /{}x/ HTTP/1.1\r\nHost: {host}\r\n\r\n", s.token), 404),
+            // A name pointed at this machine is not this bridge's address.
+            (format!("GET /{}/ HTTP/1.1\r\nHost: evil.example:{}\r\n\r\n", s.token, s.port), 403),
+            (format!("GET /{}/ HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", s.token), 403),
+            (format!("GET /{}/ HTTP/1.1\r\n\r\n", s.token), 400),
+            (format!("GET /{}/ HTTP/1.1\r\nHost: {host}\r\nHost: {host}\r\n\r\n", s.token), 400),
+            // A page of another site may load nothing from here.
+            (format!("GET /{}/app.js HTTP/1.1\r\nHost: {host}\r\nSec-Fetch-Site: cross-site\r\n\r\n", s.token), 403),
+            (format!("GET /{}/app.js HTTP/1.1\r\nHost: {host}\r\nSec-Fetch-Site: same-site\r\n\r\n", s.token), 403),
+            (format!("DELETE /{}/ HTTP/1.1\r\nHost: {host}\r\n\r\n", s.token), 405),
+            ("nonsense\r\n\r\n".to_string(), 400),
+            (format!("GET /{}/ HTTP/2\r\nHost: {host}\r\n\r\n", s.token), 400),
+            (format!("GET /{}/ HTTP/1.1\r\nHost: {host}\r\nTransfer-Encoding: chunked\r\n\r\n", s.token), 400),
+            (format!("GET /{}/ HTTP/1.1\r\nHost: {host}\r\nX-Long: {}\r\n\r\n", s.token, "x".repeat(20_000)), 431),
+        ] {
+            let (got, _, body) = s.send(&request);
+            assert_eq!(got, status, "{}\n{body}", request.chars().take(120).collect::<String>());
+            assert!(!body.contains(PAGE));
+        }
+        assert_eq!(s.get("").0, 200, "the right request is still answered");
+
+        // A file changes: what was trusted is no longer what is on disk.
+        s.t.write("modules/clean-data/panel/app.js", "console.log('changed');");
+        let (status, _, body) = s.get("");
+        assert!(status == 403 && body.contains("changed since you trusted it"), "{status} {body}");
+        assert_eq!(s.get("app.js").0, 403);
+        let answer = s.send(&s.post("{\"call\": \"info\"}"));
+        assert!(answer.0 == 403 && answer.2.contains("\"ok\":false"), "{answer:?}");
+        // Trusted again as it is now, to follow its changes: served through further changes.
+        s.trust(true);
+        s.t.write("modules/clean-data/panel/app.js", "console.log('changed again');");
+        assert_eq!(s.get("app.js").2, "console.log('changed again');");
+        // Trust is taken back: at once, nothing.
+        TrustStore::load(&s.places.trust).revoke("clean-data").unwrap();
+        let (status, _, body) = s.get("");
+        assert!(status == 403 && body.contains("is not trusted"), "{status} {body}");
+        assert!(s.bridge.serve(&s.places, "clean-data").is_err(), "and it can't be served anew");
+        assert!(s.bridge.serve(&s.places, "no-such-module").is_err());
+        assert!(s.bridge.serve(&s.places, "../clean-data").is_err());
+    }
+
+    #[test]
+    fn only_the_panels_own_files_are_served() {
+        let s = Served::new("files", "\"read\"", Limits::default());
+        for path in [
+            "../module.toml",
+            "%2e%2e/module.toml",
+            "..%2fmodule.toml",
+            "..%2Fpython/clean.py",
+            "%2e%2e%2fpython%2fclean.py",
+            "..%5cmodule.toml",
+            "/module.toml",
+            "//module.toml",
+            "C:/Windows/win.ini",
+            "C%3a/Windows/win.ini",
+            "app.js%00.png",
+            "app.js/",
+            "app.js.",
+            "%zz",
+            "%",
+            "%e9",
+            "no-such-file.js",
+            "module.toml",
+            "python/clean.py",
+            "api",
+        ] {
+            let (status, _, body) = s.get(path);
+            assert!(status == 404 || status == 405, "{path} gave {status}");
+            assert!(!body.contains("permissions") && !body.contains("def main"), "{path} leaked {body}");
+        }
+        // A panel kept at the top of its module still doesn't get the manifest or the scripts.
+        let top = Served::with_entry("top", "\"read\"", "index.html", Limits::default());
+        assert_eq!(top.get("").2, PAGE);
+        assert_eq!(top.get("panel/app.js").0, 200);
+        for path in ["module.toml", "python/clean.py", "python/broken.py"] {
+            assert_eq!(top.get(path).0, 404, "{path}");
+        }
+        // A module with no panel is not served at all.
+        let t = TempDir::new("no-panel");
+        t.write("modules/plain/module.toml", "id = \"plain\"\nname = \"Plain\"\nversion = \"1\"\npermissions = []\n");
+        let places = Places { modules: t.0.join("modules"), trust: t.0.join("trust.json"), settings: t.0.join("developer.json") };
+        TrustStore::load(&places.trust).trust(&module::load(&places.modules.join("plain")), false).unwrap();
+        assert_eq!(Bridge::new(|| {}).serve(&places, "plain"), Err("Plain has no panel.".to_string()));
+    }
+
+    #[test]
+    fn calls_come_only_from_the_panels_own_page_and_as_json() {
+        let s = Served::new("calls", "\"read\"", Limits::default());
+        let (host, token) = (s.host(), s.token.clone());
+        let body = "{\"call\": \"info\"}";
+        let with = |headers: &str, body: &str| {
+            format!("POST /{token}/api HTTP/1.1\r\nHost: {host}\r\n{headers}Content-Length: {}\r\n\r\n{body}", body.len())
+        };
+        let json = "Content-Type: application/json\r\n";
+        for (request, status) in [
+            // No page named, or another one: not the module's panel.
+            (with(json, body), 403),
+            (with(&format!("{json}Origin: https://evil.example\r\n"), body), 403),
+            (with(&format!("{json}Origin: http://127.0.0.1:1\r\n"), body), 403),
+            (with(&format!("{json}Origin: null\r\n"), body), 403),
+            (with(&format!("{json}Origin: http://{host}\r\nOrigin: http://{host}\r\n"), body), 403),
+            (with(&format!("{json}Origin: http://{host}\r\nSec-Fetch-Site: cross-site\r\n"), body), 403),
+            // What a page of another site can send without asking: a form's kinds of body.
+            (with(&format!("Content-Type: text/plain\r\nOrigin: http://{host}\r\n"), body), 415),
+            (with(&format!("Origin: http://{host}\r\n"), body), 415),
+            (with(&format!("{json}Origin: http://{host}\r\n"), "not json"), 400),
+            (format!("GET /{token}/api HTTP/1.1\r\nHost: {host}\r\n\r\n"), 405),
+            (format!("POST /{token}/ HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\n{json}Content-Length: 0\r\n\r\n"), 405),
+            (
+                format!(
+                    "POST /{token}/api HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\n{json}Content-Length: {}\r\n\r\n",
+                    MAX_BODY_BYTES + 1
+                ),
+                413,
+            ),
+            (format!("POST /{token}/api HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\n{json}Content-Length: many\r\n\r\n"), 400),
+            (
+                format!(
+                    "POST /{token}/api HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\n{json}Content-Length: 2\r\nContent-Length: 2\r\n\r\n{{}}"
+                ),
+                400,
+            ),
+        ] {
+            let (got, _, answer) = s.send(&request);
+            assert_eq!(got, status, "{}\n{answer}", request.chars().take(200).collect::<String>());
+        }
+        assert_eq!(s.bridge.take_calls(10).len(), 0, "none of that reached the app");
+        // The panel's own page, with JSON, is answered. `localhost` names the same bridge.
+        let info = s.call(json!({"call": "info"}));
+        assert_eq!(
+            info,
+            json!({"ok": true, "result": {"module": {"id": "clean-data", "name": "Clean Data", "version": "0.1.0"}, "granted": ["read"]}})
+        );
+        let local = format!("localhost:{}", s.port);
+        let (status, _, _) = s.send(&format!(
+            "POST /{token}/api HTTP/1.1\r\nHost: {local}\r\nOrigin: http://{local}\r\ncontent-type: Application/JSON; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ));
+        assert_eq!(status, 200);
+        // Calls GridCraft doesn't know, or can't make sense of, are refused without reaching the app.
+        for bad in [
+            json!({"call": "trust"}),
+            json!({"call": 7}),
+            json!([]),
+            json!({"call": "run"}),
+            json!({"call": "run", "command": ""}),
+            json!({"call": "run", "command": "x".repeat(101)}),
+            json!({"call": "run", "command": "cell.set", "params": [1]}),
+            json!({"call": "batch"}),
+            json!({"call": "batch", "commands": "cell.set"}),
+            json!({"call": "batch", "commands": [{"params": {}}]}),
+            json!({"call": "batch", "commands": vec![json!({"command": "cell.set"}); MAX_BATCH + 1]}),
+            json!({"call": "runPython"}),
+        ] {
+            let answer = s.call(bad.clone());
+            assert!(answer["ok"] == false && answer["error"].is_string(), "{bad} gave {answer}");
+        }
+        assert_eq!(s.bridge.take_calls(10).len(), 0);
+    }
+
+    #[test]
+    fn a_call_for_the_workbook_waits_for_the_app_and_says_what_was_granted() {
+        let s = Arc::new(Served::new("ask", "\"read\", \"write\"", Limits::default()));
+        let panel = |body: Json| {
+            let s = s.clone();
+            thread::spawn(move || s.call(body))
+        };
+        let asking = panel(json!({"call": "run", "command": "cell.set", "params": {"cell": "A1", "input": "7"}}));
+        s.app_answers(|call| {
+            assert_eq!((call.module.as_str(), call.name.as_str()), ("clean-data", "Clean Data"));
+            assert_eq!(call.granted, [Permission::Read, Permission::Write]);
+            assert_eq!(call.request, Request::Run { command: "cell.set".into(), params: json!({"cell": "A1", "input": "7"}) });
+            Ok(json!({"cell": "A1"}))
+        });
+        assert_eq!(asking.join().unwrap(), json!({"ok": true, "result": {"cell": "A1"}}));
+        assert!(s.woken.load(Ordering::SeqCst) >= 1, "the app was woken for it");
+
+        // What the app refuses comes back as the reason.
+        let asking = panel(json!({"call": "run", "command": "file.save"}));
+        s.app_answers(|call| {
+            assert_eq!(call.request, Request::Run { command: "file.save".into(), params: json!({}) });
+            Err("This module wasn't granted `files`.".into())
+        });
+        assert_eq!(asking.join().unwrap(), json!({"ok": false, "error": "This module wasn't granted `files`."}));
+
+        // A batch arrives whole, under the module's name unless the panel names it.
+        let steps = json!([{"command": "cell.set", "params": {"input": "1"}}, {"command": "home.bold"}]);
+        let asking = panel(json!({"call": "batch", "commands": steps}));
+        s.app_answers(|call| {
+            let expected = vec![("cell.set".to_string(), json!({"input": "1"})), ("home.bold".to_string(), json!({}))];
+            assert_eq!(call.request, Request::Batch { label: "Clean Data".into(), commands: expected });
+            Ok(json!([1, 2]))
+        });
+        assert_eq!(asking.join().unwrap(), json!({"ok": true, "results": [1, 2]}));
+        let asking = panel(json!({"call": "batch", "label": "  Tidy\u{7} up  ", "commands": []}));
+        s.app_answers(|call| {
+            assert_eq!(call.request, Request::Batch { label: "Tidy up".into(), commands: vec![] });
+            Ok(json!([]))
+        });
+        assert_eq!(asking.join().unwrap()["ok"], true);
+
+        let asking = panel(json!({"call": "selection"}));
+        s.app_answers(|call| {
+            assert_eq!(call.request, Request::Selection);
+            Ok(json!({"range": "A1", "sheet": "Sheet1", "rows": [[1]]}))
+        });
+        assert_eq!(asking.join().unwrap()["result"]["range"], "A1");
+    }
+
+    #[test]
+    fn a_call_the_app_never_answers_is_given_up_and_never_carried_out_late() {
+        let s = Served::new("late", "\"write\"", quick());
+        let answer = s.call(json!({"call": "run", "command": "cell.set"}));
+        assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("did not answer in time"), "{answer}");
+        assert_eq!(s.woken.load(Ordering::SeqCst), 1);
+        assert!(s.bridge.take_calls(10).is_empty(), "the app is never handed a call nobody waits for");
+    }
+
+    #[test]
+    fn a_connection_that_says_nothing_is_dropped() {
+        let s = Served::new("silent", "\"read\"", quick());
+        let mut silent = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+        silent.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let mut half = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+        half.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        half.write_all(b"GET / HTTP/1.1\r\nHost: ").unwrap();
+        let mut got = Vec::new();
+        assert_eq!(silent.read_to_end(&mut got).unwrap_or(0), 0, "it is closed without an answer");
+        assert_eq!(half.read_to_end(&mut got).unwrap_or(0), 0);
+        assert_eq!(s.get("").0, 200, "and the bridge goes on serving");
+    }
+
+    #[test]
+    fn a_script_runs_for_a_module_granted_python_and_for_no_other() {
+        // Refused before any process exists: this needs no Python on the machine.
+        let without = Served::new("no-python", "\"read\"", Limits::default());
+        let answer = without.call(json!({"call": "runPython", "script": "clean.py", "data": 1}));
+        assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("permission to run Python"), "{answer}");
+
+        let s = Served::new("python", "\"python\"", Limits::default());
+        for script in ["../module.toml", "nothing.py", "", "clean.py/../clean.py"] {
+            let answer = s.call(json!({"call": "runPython", "script": script}));
+            assert_eq!(answer["ok"], false, "{script} gave {answer}");
+        }
+        if PythonHost::global().interpreter("").is_err() {
+            eprintln!("skipped the rest: there is no Python on this machine");
+            return;
+        }
+        let answer = s.call(json!({"call": "runPython", "script": "clean.py", "data": {"rows": [[" a "]]}, "timeout": 30}));
+        assert_eq!(answer["result"], json!({"got": {"rows": [[" a "]]}}), "{answer}");
+        assert_eq!((answer["ok"].clone(), answer["printed"].as_str().map(str::trim)), (json!(true), Some("cleaning")));
+        // No data is `None` to the script; a timeout that makes no sense is the usual one.
+        for timeout in [json!(null), json!(-1), json!("soon"), json!(1e300)] {
+            let answer = s.call(json!({"call": "runPython", "script": "clean.py", "timeout": timeout}));
+            assert_eq!(answer["result"], json!({"got": null}), "{answer}");
+        }
+        let answer = s.call(json!({"call": "runPython", "script": "broken.py"}));
+        assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("no good"), "{answer}");
+        assert!(answer["trace"].as_str().unwrap().contains("ValueError"), "{answer}");
+        PythonHost::global().stop(&s.places.modules, "clean-data");
+        assert!(s.bridge.take_calls(10).is_empty(), "scripts never concern the app");
+    }
+
+    #[test]
+    fn stopping_closes_the_door() {
+        let s = Served::new("stop", "\"read\"", quick());
+        assert_eq!(s.get("").0, 200);
+        s.bridge.stop("clean-data");
+        s.bridge.stop("clean-data");
+        assert!(s.bridge.serving().is_empty());
+        let unanswered = |port: u16| {
+            for _ in 0..200 {
+                let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else { return true };
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let _ = stream.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+                let mut reply = Vec::new();
+                if stream.read_to_end(&mut reply).unwrap_or(0) == 0 {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            false
+        };
+        assert!(unanswered(s.port), "nothing answers on the old port");
+        // Served again, it is at a new address with a new token.
+        let again = s.bridge.serve(&s.places, "clean-data").unwrap();
+        assert!(!again.contains(&s.token));
+        let port: u16 = again.strip_prefix("http://127.0.0.1:").and_then(|rest| rest.split('/').next()).unwrap().parse().unwrap();
+        // The bridge going away closes every door.
+        let Served { bridge, t, .. } = s;
+        drop(bridge);
+        assert!(unanswered(port));
+        drop(t);
+    }
+
+    #[test]
+    fn tokens_are_long_and_never_the_same() {
+        let a = Served::new("token-a", "\"read\"", Limits::default());
+        let b = Served::new("token-b", "\"read\"", Limits::default());
+        assert!(a.token != b.token && a.port != b.port);
+        assert!(a.token.chars().all(|c| c.is_ascii_hexdigit()));
+        // One module's token opens nothing at another's door.
+        assert_eq!(b.send(&format!("GET /{}/ HTTP/1.1\r\nHost: {}\r\n\r\n", a.token, b.host())).0, 404);
+    }
+}

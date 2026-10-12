@@ -66,15 +66,52 @@ fn panel_text(name: &str) -> String {
   <meta charset="utf-8">
   <title>{name}</title>
   <style>
-    body {{ font: 14px system-ui, sans-serif; margin: 16px; color: #222; }}
+    body {{ font: 14px system-ui, sans-serif; margin: 20px; color: #222; max-width: 40em; }}
     h1 {{ font-size: 18px; }}
+    button {{ font: inherit; padding: 6px 12px; margin-right: 6px; }}
+    pre {{ background: #f4f4f4; padding: 10px; white-space: pre-wrap; min-height: 3em; }}
   </style>
 </head>
 <body>
   <h1>{name}</h1>
-  <p>This is the module's panel. GridCraft serves this folder to the browser once the module is trusted.</p>
-  <p>From here the panel will call the spreadsheet, for example:</p>
-  <pre>const result = await spreadsheet.runPython("clean.py", data);</pre>
+  <p>Select some cells in GridCraft, then:</p>
+  <p>
+    <button id="clean">Clean the selection</button>
+    <button id="show">Show the selection</button>
+  </p>
+  <pre id="out"></pre>
+
+  <!-- GridCraft serves spreadsheet.js beside this page: it gives the page its `spreadsheet`
+       object. The types of that object, for TypeScript, are served beside it as
+       spreadsheet.d.ts. -->
+  <script src="spreadsheet.js"></script>
+  <script>
+    const out = document.getElementById("out");
+    const say = (value) => {{
+      out.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    }};
+
+    document.getElementById("show").onclick = async () => {{
+      try {{
+        say(await spreadsheet.selection());
+      }} catch (error) {{
+        say(String(error));
+      }}
+    }};
+
+    document.getElementById("clean").onclick = async () => {{
+      try {{
+        const data = await spreadsheet.selection();
+        const result = await spreadsheet.runPython("clean.py", data);
+        // One call is one undo step. Several commands that should be undone together go in
+        // spreadsheet.batch([...]). Every command a user can give is spreadsheet.run(id, params).
+        await spreadsheet.write(data.range, result.rows);
+        say("Cleaned " + data.range + ". Undo in GridCraft puts it back.");
+      }} catch (error) {{
+        say(String(error));
+      }}
+    }};
+  </script>
 </body>
 </html>
 "#
@@ -183,6 +220,7 @@ mod tests {
         let manifest = m.manifest.unwrap();
         assert_eq!(manifest.permissions, [Permission::Read, Permission::Write, Permission::Python], "the name added nothing to the manifest");
         let page = std::fs::read_to_string(m.dir.join("panel/index.html")).unwrap();
-        assert!(!page.contains("<script>"), "nor markup to the panel");
+        assert!(!page.contains("<script>alert") && !page.contains("</script> ..") && !page.contains('\\'), "nor markup to the panel");
+        assert_eq!(page.matches("<script").count(), 2, "the panel's scripts are the starter's own two");
     }
 }
