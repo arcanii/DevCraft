@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(read["result"]["values"], json!([["total", "=SUM(B1:B2)"]]));
 
         // What isn't a command of the engine is not a call: nothing of the window's own.
-        for id in ["no.such.command", "view.theme", "ui.dialog", "developer.modules", "file.options", ""] {
+        for id in ["no.such.command", "view.theme", "ui.dialog", "ui.backstage", "developer.modules", "developer.tab", "app.userName", ""] {
             let answer = run(&mut h, &address, id, json!({"name": "about", "mode": "dark"}));
             assert_eq!(answer["ok"], json!(false), "{id}: {answer}");
         }
@@ -388,6 +388,9 @@ mod tests {
         let asked = run(&mut h, &address, "home.formatCells", json!({}));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("modules"), "{asked}");
         assert!(h.state().message.is_none());
+        // Nor does the command that opens the Options page for a user.
+        let asked = run(&mut h, &address, "file.options", json!({}));
+        assert!(h.state().backstage.is_none(), "{asked}");
         // Files weren't granted to the starter.
         let refused = run(&mut h, &address, "file.open", json!({}));
         assert!(refused["error"].as_str().is_some_and(|why| why.contains("wasn't granted `files`")), "{refused}");

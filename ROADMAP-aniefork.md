@@ -20,9 +20,9 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-11, upstream `9f896c1` (GridCraft 0.5.0), 222 commits |
+| Last merge of upstream | 2026-10-12, upstream `3926d21` (GridCraft 0.5.0 and 352 commits after it) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 6 changes upstream lacks (below) |
+| Fork carries | 3 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -31,149 +31,45 @@ merged; delete the row once a merge of upstream brings it back.
 
 | Change | Where | Upstream |
 |---|---|---|
-| **Selection glide:** the selection outline slides to a new selection instead of jumping, like the cell cursor in Excel for Windows. First version; the timing is estimated, not yet measured against Excel. | `crates/ui-egui/src/aniefork/` (`selection.rs`; the Animations setting in `mod.rs`), hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs` (listed below) | Offered 2026-10-11 as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266), stacked on #265. Branch `selection-glide`, rewritten in upstream's style |
-| **The active cell stays clear inside a selection.** Upstream shades every cell of a selected range alike: its line for the clear cell paints a fully transparent rectangle, which changes nothing. The fill now leaves the active cell unshaded, so it is plain where typing will go. | `fill_rects` in `crates/ui-egui/src/aniefork/selection.rs`, one hook in `grid.rs` | Offered 2026-10-11 as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265). Branch `active-cell-clear` |
-| **File ▸ Options:** a settings dialog. Upstream has none (its catalog lists `file.options` as missing) and keeps its settings on the View tab. | `crates/ui-egui/src/aniefork/options.rs`, hooks in `dialogs.rs`; it opens from the File page | Not offered |
-| **The File page:** the File button opens a page that fills the window (a column of pages and actions on the left; Home with the workbooks to start from and the recent ones) where upstream opens a dropdown menu. | `crates/ui-egui/src/aniefork/backstage.rs`, hooks in `ribbon.rs` and `dialogs.rs` | Offered 2026-10-11 as [storytold/gridcraft#337](https://github.com/storytold/gridcraft/pull/337). Branch `file-page`, rewritten in upstream's style, without Options… (the dialog is the fork's) |
+| **Two settings on upstream's Options page:** the user name (the author of comments and notes) and whether the ribbon shows the Developer tab, with a command for each (`app.userName`, `developer.tab`). | `crates/ui-egui/src/aniefork/options.rs`, a hook in `backstage.rs` | Not offered |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
-| **Modules, trust, Python and panels** (the Development subsystem, phases 1a to 1c): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser and calls GridCraft over a local bridge. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/modules.rs`; hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven, then in phases ([ADR-0001](docs/decisions-aniefork.md)) |
+| **Modules, trust, Python and panels** (the Development subsystem, phases 1a to 1c): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser and calls GridCraft over a local bridge. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
 
-## Selection glide
+## What upstream took in, and what it built itself
 
-Excel for Windows doesn't move its cell cursor instantly: press an arrow key or click a cell and
-the border slides to the new place; extend the selection and it grows. Upstream GridCraft jumps.
-The fork glides. WordCraft's fork does the same for the text caret.
+The fork no longer carries these. They are kept here as the record of what happened to them.
 
-- **What glides:** the outline of the selection's current area, together with its fill and its
-  fill handle, when the selection changes: arrows, Enter, Tab, Home/End, a click, a drag,
-  Shift+arrows, the Name Box, Go To, any command. A new move takes over from wherever the outline
-  is drawn, so a held arrow key reads as one continuous motion. A selection that grows or shrinks
-  moves edge by edge; the anchored corner stays put.
-- **What doesn't:** the same cells moving on screen (scrolling, zoom, a resized column or window)
-  keep their outline glued to them. Another sheet or workbook, an outline that wasn't drawn the
-  frame before, and moves that start or end off screen appear in place. An arrow key held at the
-  edge of the window scrolls the sheet under an outline that stays where it is. The header
-  highlight, the Name Box and the other areas of a multiple selection change at once.
-- **Only painting waits.** The selection itself, hit testing (the fill handle, the border you drag)
-  and the cell editor use the real cells immediately; typing is never held up by a glide.
-- **Timing:** 0.12 s with a decelerating (ease-out cubic) curve, the same at any frame rate.
-  `GRIDCRAFT_SELECTION_GLIDE_MS` overrides the duration: `0` turns the glide off, a large value (up
-  to 10000) slows it down enough to study.
-- **Turning it off:** View › **Animations** (a checkbox under the Display theme picker: settings
-  live in the View tab, and there is no Options dialog). Its label and hint are worded in the
-  languages upstream translates, from a table of the fork's own (`tr` in `aniefork/mod.rs`); any
-  other language shows them in English. Off, the outline jumps as upstream's does. The choice
-  is saved with the other UI preferences (`animations` in `ui.json`; on by default, and a file
-  written before the setting existed leaves it on). Agents: `view.animations {on?}` sets or
-  toggles it and returns `{on}`; it is listed by `engine.commands` and shown by `ui.inspect`.
-- **Other off switches:** the glide stands down when egui's animations are off
-  (`style.animation_time == 0`). The headless test harness (`egui_kittest`, so the offscreen
-  `snapshot` example too) turns them off. In the desktop app, a screenshot asked for over the
-  control channel (`ui.screenshot`) holds the outline on its cells from the request until the
-  picture is delivered. Either way, scripted pictures never catch an outline in flight.
-- **Marching ants:** the dashes around a copied range now advance by the clock (the same pace as
-  before at rest) instead of once per painted frame; otherwise every glide, which repaints each
-  frame, made them lurch forward.
-- **Clean room:** the behaviour is from using Excel as a user; nothing was read from the Excel
-  program. The duration and curve are our estimate.
-- **Tests:** `cargo test -p gridcraft-ui-egui aniefork` (the motion, frame-rate independence,
-  retargeting, scrolling and view changes, off-screen and far edges, hostile numbers, the outline
-  gliding in the real grid, and a control-channel screenshot holding it still).
+| Change | What happened |
+|---|---|
+| **The active cell stays clear inside a selection** | Offered as [storytold/gridcraft#265](https://github.com/storytold/gridcraft/pull/265) and **merged** on 2026-10-11. The fork's copy (`fill_rects` and its hook in `grid.rs`) was deleted at the merge of 2026-10-12. |
+| **Selection glide**, with View ▸ Animations | Offered as [storytold/gridcraft#266](https://github.com/storytold/gridcraft/pull/266) and **merged** on 2026-10-11. Upstream merged its `main` into the branch first, so the glide respects frozen-pane clipping and right-to-left sheets, and added Spanish, German and Czech strings. The fork's copy (`aniefork/selection.rs`, the `view.animations` command, the hooks in `grid.rs`, `control.rs`, `lib.rs` and `ribbon.rs`, and the `GRIDCRAFT_SELECTION_GLIDE_MS` override) was deleted at the merge. |
+| **The File page** (Backstage view) | Offered as [storytold/gridcraft#337](https://github.com/storytold/gridcraft/pull/337) and **closed as a duplicate**: another contributor's #331 had added the same view, with more pages (Save As, Print, Options), translations and a control-channel method, and was merged minutes earlier. The fork's page (`aniefork/backstage.rs` and its hooks) was deleted at the merge; upstream's is used. The maintainers asked for one part of ours as a follow-up: see Open below. |
+| **File ▸ Options** as a dialog, and a `file.options` command | Upstream now has an Options page in its File view and a `file.options` command that opens it. The fork's dialog and command were retired at the merge; its two settings moved onto upstream's page. |
 
 ### Open
-- Measure Excel's cell cursor (duration, curve, what long jumps and scrolling moves do) from a
-  capture of its window and set `GLIDE_SECS` and the curve to match. WordCraft's fork has done
-  this for Word's caret (its `ROADMAP-aniefork.md` has the method): 100 ms along
-  `cubic-bezier(0,0,0,1)`, a second key snaps to where the caret was heading before gliding on,
-  and clicks and scripted moves don't glide. Excel may or may not behave the same.
-- Following the system's reduced-motion setting (Windows: Settings › Accessibility › Visual
-  effects › Animation effects), which Excel does. Today the Animations setting is the user's own.
-- An Options dialog (Excel: File › Options, where "Provide feedback with animation" lives).
-  Neither the fork nor upstream has one; until then the setting is on the View tab.
+- **A follow-up pull request the maintainers invited:** the recent list's "modified" column, read
+  on a thread of its own so a slow drive never holds up the page, on top of upstream's File page.
+  Cut it from `upstream/main`.
+- Following the system's reduced-motion setting, and measuring Excel's glide, are upstream's to
+  take up now; a change would be a pull request there.
 
-## The active cell stays clear
+## The fork's settings on the Options page
 
-In Excel the active cell of a selected range is not shaded: it shows where typing will go.
-Upstream GridCraft shades the whole range alike. The fork leaves the active cell clear.
+Upstream's Options page (File ▸ Options) holds the display theme, the interface language, the
+formula bar, AutoSave and the calculation mode. The fork adds two settings at the end of its
+General section, applied at once like upstream's own:
 
-- **What is left clear:** the active cell in every area of the selection that contains it; the
-  whole merged cell when the active cell is merged; a lone active cell among several areas
-  (Ctrl+click) is not shaded at all. The other areas are shaded whole, and a single selected cell
-  has no fill, as before.
-- **How:** the fill is translucent, so a cell can't be cleared by painting over it. Each area is
-  shaded as up to four rectangles around the active cell (above, below and beside it) that never
-  overlap. Their joins fall on the lines that continue the cell's edges and don't show: checked
-  with gridlines off at 100 %, 115 % and 137 % zoom, at 1× and 1.5× display scale.
-- **With the glide:** the current area's fill follows its gliding outline; the clear cell is at
-  the active cell's real place from the first frame.
-- **Tests:** `cargo test -p gridcraft-ui-egui aniefork` (the rectangles around a hole in every
-  position, hostile numbers, and the fill for a real sheet: one area, several areas, a merged
-  active cell).
+- **User name**: the author of the comments and notes the user adds. It is set when the field is
+  left. `app.userName {name?}` is the command: without a name it only reports.
+- **Show the Developer tab**. `developer.tab {on?}` is the command: without `on` it toggles.
 
-## The File page
-
-What the File button opens: a page over the whole window, laid out the way Excel lays out its
-File view (which it calls the Backstage view), in place of upstream's dropdown menu.
-
-- **A column on the left** turns between the pages (Home, New, Open, Info, Export) and holds the
-  actions that go back to the workbook (Save, Save As…, Close, and About and Options… at the
-  foot). A round button at its head, or Escape, goes back without doing anything.
-- **Home** shows what a new workbook can start from (an empty one and upstream's three samples,
-  each under a small drawing made in code) and the workbooks opened before, each with its folder
-  and how long ago it was changed. A click opens one; the row under the pointer offers to drop
-  its workbook from the list. A workbook that can't be opened says why and stays listed.
-- **Info** shows where the workbook is and the properties saved with it. A property is changed by
-  typing: it is set through `file.properties`, as one undo step, when its field is left.
-- **Export** hands over to the dialog upstream's Share menu opens (CSV, web page). A PDF is
-  offered only on the web build: see Open below.
-- **It has no commands of its own.** Every button runs one of upstream's (`file.new`,
-  `file.open`, `file.save`…), and the buttons keep the labels upstream's menu had, so upstream's
-  own tests of the File menu pass unchanged against the page.
-- **To the rest of the app it is a dialog named `backstage`**, so what upstream does for dialogs
-  holds: the grid and the ribbon's keys stand down while it is up, `ui.dialog {name:
-  "backstage", page?}` opens it for an agent, `ui.dialog.set {field: "page", value}` turns the
-  page, `ui.dialog.cancel` leaves, and `ui.inspect` reports it.
-- **What is being typed into a cell is entered first** when the page opens, since the page is
-  about that workbook. An entry the cell refuses keeps the user in the cell, with the reason.
-- **The list tells ages, not dates** ("3 days ago"): the clock's time zone isn't known to the UI
-  crate, and a date could be a day out. The files are asked about on a thread of their own, so a
-  network drive that is slow or away never holds up the page.
-- **A workbook saved under a name joins the list of recent ones** when the page opens. Upstream
-  adds a workbook only when it is opened from a file.
-
-### Open
-- **Print and PDF.** The desktop app has no way to ask where a PDF should go (its save dialog
-  offers only workbook formats), and upstream's `file.print` hands back a PDF that nothing sends
-  to a printer yet. So the column has no Print, and Export offers PDF only on the web build.
-- Dates in the list once the local time zone is known; pinning a workbook to the list.
-- Upstream's title bar still opens its small Start dialog from the Home button there.
-- Wording in other languages: upstream's labels follow the interface language, the page's own
-  are in English.
-
-## File ▸ Options
-
-The settings dialog Excel has and upstream doesn't. It opens from the foot of the File page's
-column. It holds the settings that work today:
-
-- **General:** the display theme and the interface language (upstream's settings, changed through
-  upstream's own commands, and still on the View tab too), and the user name, which is the author
-  of comments and notes.
-- **Feedback:** Animations (the selection glide).
-- **Ribbon:** Show the Developer tab.
-
-The dialog edits a copy and nothing changes until OK. `file.options` is the command behind it:
-with parameters it changes the settings named (`theme`, `language`, `userName`, `animations`,
-`developerTab`) and returns all of them; without parameters it only reports them and never opens
-the dialog. A value that makes no sense is an error and changes nothing. It is a UI command of the
-fork's, so upstream's generated command checklist is not affected.
-
-Upstream's labels in the dialog follow the interface language; the fork's own are in English.
+A value that makes no sense is an error and changes nothing, and neither command opens anything.
+Animations, which the fork's old dialog also held, is upstream's setting now (View ▸ Animations).
 
 ### Open
 - The rest of what Excel's Options holds, as the features behind it come to exist: the direction
-  Enter moves, the default font and sheets of a new workbook, R1C1 references. The engine has
-  preferences for these, but nothing reads them yet.
-- Translations of the fork's labels in the dialog.
+  Enter moves, the default font and sheets of a new workbook, R1C1 references.
+- Translations of the fork's two labels on the page.
 
 ## The Developer tab and the Development subsystem
 
@@ -279,26 +175,22 @@ still there:
 | File | Hook |
 |---|---|
 | `crates/ui-egui/src/lib.rs` | `pub mod aniefork;` |
-| `crates/ui-egui/src/grid.rs`, `paint_selection` | `cur` (the current area's rectangle) comes from `crate::aniefork::selection::glide(…)`, at the top of the function, instead of `geo.range_rect(sh, sel.current())` further down |
-| `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill loop | each area is filled with the rectangles from `crate::aniefork::selection::fill_rects(…)` (the current area at `cur`, the active cell left out) instead of its whole `geo.range_rect(sh, *r)` |
-| `crates/ui-egui/src/grid.rs`, `show`, the marching ants | `marching_phase` comes from `crate::aniefork::selection::ants_phase(…)` instead of stepping by 0.5 per frame |
-| `crates/ui-egui/src/control.rs`, after `struct Shots` | `Shots::in_flight()`, which the glide asks so that screenshots show a settled outline |
-| `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
-| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the fields `animations: bool` (default `true`) and `developer_tab: bool` (default `false`), between `formula_bar_expanded` and `status_bar` |
-| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, and carries out the calls modules' panels made |
+| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `developer_tab: bool` (default `false`), after `animations` |
+| `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
-| `crates/ui-egui/src/ribbon.rs`, `view`, in the Display theme column, after the picker | `crate::aniefork::view_options(app, ui);` draws the fork's settings |
-| `crates/ui-egui/src/ribbon.rs`, `file_menu`, after the File button is added | `if crate::aniefork::backstage::file_button(app, &file) { return; }` opens the fork's File page; upstream's menu below it is left as it is, and no longer runs |
-| `crates/ui-egui/src/dialogs.rs`, `show`, first thing | `if crate::aniefork::backstage::show(app, ctx) { return; }` draws the File page over the whole window when it is the open dialog |
+| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, and carries out the calls modules' panels made |
+| `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
 | `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
-| `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them; every fork dialog comes through here |
+| `crates/ui-egui/src/backstage.rs`, `options`, after the formula bar checkbox | `crate::aniefork::options_page(app, ui);` draws the fork's two settings |
+| `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them |
 | `crates/ui-egui/src/dialogs.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
-| `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
+
+The fork changes no line of `grid.rs` any more.
 
 ## Syncing with upstream
 
@@ -350,10 +242,28 @@ for byte, and with `core.autocrlf=true` the checked-out file has CRLF line endin
 sign that the catalog changed. The other steps (fmt, clippy, tests, assets, layers, wasm) are
 meaningful there.
 
+As merged on 2026-10-12, upstream's `main` (`3926d21`) fails three of its own tests on this
+machine, in files the fork doesn't touch, on an untouched checkout as well: two in the engine
+(`csv_save_keeps_the_separator_it_was_opened_with` and
+`saving_an_opened_semicolon_csv_keeps_semicolons`: a twelve-digit number is saved to CSV as
+`1.24412E+11`) and one in the UI crate (`translations_are_unique_and_preserve_unknown_text`: the
+French catalog lacks "Different First Page"). They are upstream's to fix.
+
 ## Log
 
 Newest first.
 
+- **2026-10-12 (merge of upstream, 352 commits):** Upstream had merged the clear active cell
+  (#265) and the selection glide (#266), and had built its own File page with an Options page
+  (#331), closing ours (#337) as a duplicate. At the merge the fork's copies of all four were
+  deleted and upstream's are used: `aniefork/selection.rs` and `aniefork/backstage.rs` are gone,
+  the fork's `view.animations` and `file.options` commands are retired, and its Options dialog
+  became two settings on upstream's Options page (the user name, and Show the Developer tab),
+  with the commands `app.userName` and `developer.tab`. The five conflicts were all at hooks;
+  upstream's code was taken and the hooks the fork still needs were put back (the table above).
+  The fork's footprint in upstream's files is now nine files and about fifty lines. After the
+  merge the fork's own tests pass, and every step of the gate passes but for three tests that
+  upstream's `main` fails by itself (see Building).
 - **2026-10-11 (Development subsystem, phase 1c: panels):** A trusted module's panel opens in
   the browser, served by a small HTTP server inside GridCraft (loopback only, a port and a
   secret token for each module, trust checked on every request), and calls GridCraft through a

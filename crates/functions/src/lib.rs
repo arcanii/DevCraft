@@ -65,6 +65,7 @@ pub(crate) mod database;
 pub(crate) mod date;
 pub(crate) mod dynamic;
 pub(crate) mod engineering;
+pub(crate) mod ets;
 pub(crate) mod financial;
 pub(crate) mod info;
 pub(crate) mod lift;
@@ -75,6 +76,7 @@ pub(crate) mod stat;
 pub(crate) mod text;
 pub(crate) mod util;
 
+pub use ets::Timeline;
 pub use stat::{aggregate_values, aggregate_values_k};
 
 /// An evaluated argument. Ranges arrive as `Value::Array` (blank cells = `Value::Empty`) with
@@ -122,6 +124,8 @@ pub enum Category {
     Compatibility,
     Web,
     Cube,
+    /// Excel's "Add-in and Automation" category (EUROCONVERT).
+    AddIn,
 }
 
 pub struct FnSpec {
@@ -156,6 +160,11 @@ impl FnSpec {
             None => self.scalar_args.last().copied().unwrap_or(false),
         }
     }
+
+    /// Whether a call with `n` arguments is valid (Excel allows at most 255).
+    pub fn accepts(&self, n: usize) -> bool {
+        (self.min_args..=self.max_args).contains(&n) && n <= 255
+    }
 }
 
 /// Variadic marker for `max_args`.
@@ -168,6 +177,7 @@ fn registry() -> &'static (Vec<FnSpec>, HashMap<&'static str, usize>) {
         for list in [
             math::specs(),
             stat::specs(),
+            ets::specs(),
             text::specs(),
             date::specs(),
             lookup::specs(),
@@ -210,7 +220,7 @@ pub fn all() -> &'static [FnSpec] {
 
 /// Calls a function with array lifting applied. Wrong arity gives `#VALUE!`.
 pub fn call(spec: &FnSpec, args: &[Arg], ctx: &mut dyn Ctx) -> Value {
-    if args.len() < spec.min_args || args.len() > spec.max_args || args.len() > 255 {
+    if !spec.accepts(args.len()) {
         return Value::Error(CellError::Value);
     }
     lift::call_lifted(spec, args, ctx)

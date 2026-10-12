@@ -3,8 +3,7 @@
 //! It is hidden until File ▸ Options ▸ "Show the Developer tab" turns it on, as Excel's is. Today
 //! it gathers the tools that already exist for that audience (the command palette, the action
 //! journal, how agents connect), and Modules: the first piece of the Development subsystem
-//! designed in `docs/decisions-aniefork.md` (ADR-0001). Modules can be created, inspected and
-//! trusted there; nothing of a module runs yet.
+//! designed in `docs/decisions-aniefork.md` (ADR-0001).
 
 use egui::{Sense, Stroke, pos2, vec2};
 use serde_json::json;
@@ -53,7 +52,8 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
     separator(ui);
     if big_button(ui, Icon::Settings, "Options", "Settings, and whether this tab is shown", false).clicked() {
-        app.open_dialog(super::options::NAME, json!({}));
+        // Upstream's command: it opens the Options page, where the fork's settings are too.
+        app.run_or_alert("file.options", json!({}));
     }
 }
 
