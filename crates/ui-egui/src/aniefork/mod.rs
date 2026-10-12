@@ -9,6 +9,7 @@ pub mod console;
 pub mod developer;
 pub mod development;
 pub mod diff;
+pub mod dock;
 pub mod modules;
 pub mod options;
 pub mod panels;
@@ -80,12 +81,13 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
 /// Hook of `SheetApp::logic`, right after the control channel is polled: the fork's work of
 /// every frame. It notes whether the control channel is putting input into the window (see
 /// [`presence`]), carries out the calls that modules' panels made and tells the panels what
-/// changed (see [`panels`]), and sees to what agents asked of the Development server (see
-/// [`agents`]).
+/// changed (see [`panels`]), sees to what agents asked of the Development server (see
+/// [`agents`]), and notes whether a docked panel's place is covered (see [`dock`]).
 pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     presence::watch(app, ctx);
     panels::poll(app, ctx);
     agents::poll(app, ctx);
+    dock::watch(app, ctx);
 }
 
 /// Hook of the control channel, before it does anything: what it may not reach.

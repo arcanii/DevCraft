@@ -37,6 +37,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
+| **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted module's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a module without `network` is kept to its own address there. Developer ▸ Development creates a showcase module whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Modules, trust, Python, panels, events, a console and the workbook as objects** (the Development subsystem, phases 1a to 2b): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what modules print and log; a script can work on the sheet itself, and panels and scripts share one set of objects for the workbook. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
 
@@ -342,17 +343,38 @@ full control, and approved plans after single requests.
   token, or answers a request; and the control channel can no longer read or write
   GridCraft's own settings folder.
 
+**Phase 2d, first slice, is built: a panel docked in the window, and a Svelte showcase.**
+The owner asked on 2026-10-12 for Svelte and the web view to be showcased in the Developer
+section.
+
+- **Developer ▸ Modules ▸ Dock Panel** shows a trusted module's panel beside the sheet, in
+  the system's web view (WebView2), on Windows. It is the page a browser would be given,
+  from the same bridge. Without `network` the page is kept to its own address: that is the
+  part of `network` a browser could not enforce.
+- **The view gives way** to dialogs, messages, menus and the File view, which it would
+  otherwise hide.
+- **Developer ▸ Development ▸ Create Showcase** makes a module whose panel is a Svelte app:
+  it follows the selection, sums it up, draws its numbers as bars, and writes to the sheet.
+  It is created untrusted like any module; once trusted, "Dock Showcase" shows it. Its
+  Svelte source is in the module, with how to rebuild it.
+- **`GRIDCRAFT_DOCK=<module>`** docks a trusted module's panel as GridCraft starts.
+
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next in 2e are approved
-plans, which the owner staged after single requests. Then **2c** per-module Python environments
-and **2d** panels docked in the window.
+plans, which the owner staged after single requests. Then **2c** per-module Python
+environments, and the rest of **2d**: macOS and Linux.
 
 The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
 own.
 
 ### Open
 - **`network` is only partly enforced in a browser.** The policy stops a panel's requests, but
-  not the page sending the user to another address, which can carry data. Docking the panel in
-  the window (phase 2) is what closes this.
+  not the page sending the user to another address, which can carry data. A panel docked in
+  the window is kept to its own address; a panel opened in the browser is not.
+- **Docked panels are Windows only**, one at a time, and are not docked again at the next
+  start. The web view is hidden while anything of GridCraft's own is drawn over its place.
+- The showcase's built script is 55 KB of generated text in `showcase_files.rs`. To change the
+  showcase: change its source, build it with npm outside the repository, and regenerate the
+  file with all of it together.
 - The workbook as objects covers sheets, ranges and what `workbook()` lists. Tables, names
   and charts are listed as data, not yet as objects with methods of their own: they are
   changed through `run`.
@@ -405,6 +427,10 @@ still there:
 | `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls modules' panels made, and sees to what agents asked of the Development server |
+| `crates/ui-egui/src/lib.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a module's docked panel, before the grid takes what is left |
+| `apps/gridcraft/src/main.rs`, the `mod` lines | `mod aniefork;`: the fork's part of the shell |
+| `apps/gridcraft/src/main.rs`, `App::ui`, after `self.0.ui(ui);` | `aniefork::frame(&mut self.0, ui.ctx(), _frame);` puts the docked panel's web view in its place |
+| `apps/gridcraft/Cargo.toml`, the Windows dependencies | `wry = { version = "0.57", default-features = false }`: the system web view |
 | `crates/ui-egui/src/control.rs`, `handle`, first thing | `if let Some(why) = crate::aniefork::control_refuses(p) { return err(why); }`: GridCraft's own settings folder is out of the control channel's reach |
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
@@ -415,7 +441,7 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
-| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
+| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` with what it brings (`webview2-com`, `dpi` and others). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
 
@@ -479,6 +505,18 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (Development subsystem, phase 2d, first slice: a docked panel and the Svelte
+  showcase):** The owner asked for Svelte and the web view to be showcased in the Developer
+  section. A trusted module's panel can now be docked beside the sheet in the system's web
+  view (WebView2, through `wry`, Windows only), over the same bridge, and is kept to its own
+  address unless the module was granted `network`. The UI crate knows what is docked and
+  where; the desktop shell has the web view. Developer ▸ Development creates a showcase
+  module whose panel is a Svelte app (source and built script both in the module, generated
+  into `showcase_files.rs`). Hooks: one in `lib.rs`, two in the app's `main.rs`, one line in
+  its `Cargo.toml`. Checked by 8 more tests (2 in the crate, 4 in the UI, 2 in the app), in
+  the real window on Windows 11 (the showcase docked, following the selection, giving way to
+  a dialog), and in a browser against a copy of the app with settings of its own (both of
+  the panel's buttons wrote to the sheet).
 - **2026-10-12 (the Development server: the owner's two answers on the card):** A yes to a
   request is one click when GridCraft runs without the control channel, since nothing else
   can click in its window then; with the channel it is still confirmed by the operating

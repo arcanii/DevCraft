@@ -24,7 +24,9 @@
 //! be said yes to.
 //!
 //! **Tools.** The modules, the Developer console and the Python that runs scripts, each with
-//! where it stands and the way to its own window.
+//! where it stands and the way to its own window. And a showcase: a module whose panel is a
+//! Svelte app, which the window creates and, once the person has trusted it, docks beside the
+//! sheet in the system's web view ([`super::dock`]).
 //!
 //! The control channel can click and type in this window as a person does, and rewrite a
 //! dialog's values. So the window works from a state of its own that the channel can't reach,
@@ -35,7 +37,7 @@
 use gridcraft_aniefork_dev::agents::{Action, Asked, Kind, Level};
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::trust::TrustStore;
-use gridcraft_aniefork_dev::{module, settings, starter};
+use gridcraft_aniefork_dev::{module, settings, showcase, starter};
 use serde_json::{Value as Json, json};
 
 use super::diff::{self, Line, Row};
@@ -88,6 +90,12 @@ enum Act {
     Whole(bool),
     Open(&'static str),
     OpenFolder,
+    /// Create the Svelte showcase module (untrusted, like any new module).
+    CreateShowcase,
+    /// Show the showcase's panel: docked in the window, or in the browser.
+    ShowShowcase {
+        docked: bool,
+    },
 }
 
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
@@ -687,6 +695,34 @@ fn tools_part(app: &SheetApp, ui: &mut egui::Ui, action: &mut Option<Act>) {
             *action = Some(Act::OpenFolder);
         }
     });
+    // The showcase: a panel written with a web toolkit, shown inside the window.
+    ui.add_space(4.0);
+    let standing = all.iter().find(|m| m["id"] == showcase::ID).map(|m| m["status"].as_str().unwrap_or("").to_string());
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("Showcase").strong());
+        match standing.as_deref() {
+            None => {
+                ui.label("A panel that is a Svelte app, docked beside the sheet.");
+                if ui.button("Create Showcase").on_hover_text("Creates the Svelte Showcase module. It does nothing until you trust it.").clicked() {
+                    *action = Some(Act::CreateShowcase);
+                }
+            }
+            Some("trusted") => {
+                ui.label("Svelte Showcase is ready.");
+                if super::dock::available(ui.ctx())
+                    && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
+                {
+                    *action = Some(Act::ShowShowcase { docked: true });
+                }
+                if app.services.open_url.is_some() && ui.button("Open in Browser").clicked() {
+                    *action = Some(Act::ShowShowcase { docked: false });
+                }
+            }
+            Some(_) => {
+                ui.label("Svelte Showcase is not trusted yet: review and trust it in Modules, then come back.");
+            }
+        }
+    });
 }
 
 /// Hook of the fork's dialogs: draws Developer ▸ Development.
@@ -753,7 +789,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, driven: bool, open: &mut bool) -> Result<String, String> {
     // Going to another of the fork's windows is anyone's. Everything else is the person's: what
     // is set, what is answered, and which request is under their eyes.
-    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder | Act::AskAgain(..));
+    let anyones = matches!(action, Act::Open(_) | Act::OpenFolder | Act::AskAgain(..) | Act::CreateShowcase);
     if !anyones && driven {
         return Err(presence::BY_HAND.to_string());
     }
@@ -813,6 +849,16 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Act, 
             *open = false;
             Ok(String::new())
         }
+        Act::CreateShowcase => modules::create_showcase(),
+        // Showing a panel is opening it: the person's alone to do (checked above).
+        Act::ShowShowcase { docked: true } => {
+            let said = super::dock::dock(app, ctx, showcase::ID)?;
+            // The window makes way: the panel is shown where it would be standing.
+            *open = false;
+            app.toast = Some((said, crate::now_ms()));
+            Ok(String::new())
+        }
+        Act::ShowShowcase { docked: false } => super::panels::open(app, ctx, showcase::ID),
         Act::OpenFolder => match (modules::places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
                 std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
@@ -1931,6 +1977,56 @@ mod tests {
         h.state_mut().ui.ribbon_tab = crate::aniefork::developer::TAB.into();
         h.run_steps(3);
         assert_eq!(h.state().ui.ribbon_tab, crate::aniefork::developer::TAB);
+    }
+
+    #[test]
+    fn the_showcase_is_created_trusted_by_the_person_and_then_docked() {
+        use crate::aniefork::dock;
+        let s = Sandbox::new("agents-showcase");
+        let asked = yes();
+        let mut app = app_with(Some(&asked));
+        let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let seen = opened.clone();
+        app.services.open_url = Some(Box::new(move |address: &str| seen.borrow_mut().push(address.to_string())));
+        let mut h = harness(app);
+        open(&mut h);
+        // Created like any module: on disk, and not trusted.
+        click(&mut h, "Create Showcase");
+        assert!(s.0.join("modules/svelte-showcase/panel/app.js").is_file() && s.0.join("modules/svelte-showcase/source/src/App.svelte").is_file());
+        let listed = list();
+        let made = listed["modules"].as_array().unwrap().iter().find(|m| m["id"] == showcase::ID).unwrap().clone();
+        assert_eq!((made["status"].as_str(), made["name"].as_str()), (Some("untrusted"), Some("Svelte Showcase")));
+        assert_eq!(made["asks"].as_array().unwrap().iter().map(|a| a["permission"].as_str().unwrap()).collect::<Vec<_>>(), ["read", "write"]);
+        h.get_by_label_contains("Svelte Showcase was created. It is not trusted yet");
+        h.get_by_label_contains("review and trust it in Modules, then come back");
+        assert!(h.query_by_label("Dock Showcase").is_none() && h.query_by_label("Create Showcase").is_none());
+        assert!(asked.questions().is_empty(), "creating it asked nothing and trusted nothing");
+        // The person trusts it, as they would any module: the operating system asks.
+        trust(h.state(), showcase::ID, made["fingerprint"].as_str().unwrap(), false).unwrap();
+        assert_eq!(asked.questions().len(), 1);
+        h.run_steps(3);
+        h.get_by_label("Svelte Showcase is ready.");
+        // A copy of GridCraft without a web view offers the browser, and only that.
+        assert!(h.query_by_label("Dock Showcase").is_none());
+        click(&mut h, "Open in Browser");
+        assert_eq!(opened.borrow().len(), 1);
+        // With one, the panel is docked beside the sheet, and the window makes way for it.
+        let ctx = h.ctx.clone();
+        dock::host_is_here(&ctx);
+        h.run_steps(3);
+        // Not by the control channel: showing a panel is the person's to do.
+        drive(&mut h);
+        click(&mut h, "Dock Showcase");
+        assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
+        assert!(dock::docked(&ctx).is_none());
+        quiet(&mut h);
+        click(&mut h, "Dock Showcase");
+        assert!(h.state().dialog.is_none(), "{:?}", h.state().message);
+        let docked = dock::docked(&ctx).unwrap();
+        assert_eq!((docked.module.as_str(), docked.name.as_str(), docked.network), (showcase::ID, "Svelte Showcase", false));
+        h.run_steps(3);
+        assert!(dock::wanted(&ctx).is_some_and(|wanted| wanted.rect.is_some()));
+        assert_eq!(docked.address, opened.borrow()[0], "the same panel the browser was given, on the same bridge");
     }
 
     #[test]

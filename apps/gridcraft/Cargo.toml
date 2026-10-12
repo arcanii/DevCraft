@@ -33,6 +33,8 @@ arboard = { workspace = true, features = ["wayland-data-control"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 # Blocks on the start-up DirectX 12 adapter probe (`graphics.rs`); already in the tree via eframe.
 pollster = "1"
+# The system web view (WebView2), which shows a module's panel docked in the window (aniefork).
+wry = { version = "0.57", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }

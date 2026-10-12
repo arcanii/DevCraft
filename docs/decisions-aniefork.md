@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge), phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log), phase 2b (the workbook as objects, for panels and scripts alike; a script calls the spreadsheet while it runs) and the first slice of phase 2e (a Development server for agents, a second MCP server; the Development window; how far agents may go is the user's to set) |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge), phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log), phase 2b (the workbook as objects, for panels and scripts alike; a script calls the spreadsheet while it runs), the first slice of phase 2e (a Development server for agents, a second MCP server; the Development window; how far agents may go is the user's to set) and the first slice of phase 2d (a panel docked in the window, in the system web view, on Windows; a Svelte showcase) |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -209,9 +209,10 @@ The requirement: the user chooses to trust a module or not. The mechanics:
   the modules and the user's decisions are kept, is out of reach. A panel without `network` is
   served with a policy that makes the browser refuse its requests to anywhere but GridCraft.
   **In a browser that policy cannot stop a page from sending the user to another address**,
-  which can carry data with it; that needs the panel docked in the window (phase 2), where
-  GridCraft decides where a page may go. Until then `read` without `network` limits what a
-  panel fetches, not where it can navigate.
+  which can carry data with it; that needs the panel docked in the window, where GridCraft
+  decides where a page may go. In a browser `read` without `network` limits what a panel
+  fetches, not where it can navigate. Docked (phase 2d, on Windows) a panel without
+  `network` is kept to its own bridge: no other address, no other window, no download.
 - **Trust is given to exact contents.** Trusting a module records a fingerprint (a SHA-256 over
   every file in it). If any file changes, the module is untrusted again until the user looks and
   decides again. So an update, or tampering, can never ride on an old decision. A developer working
@@ -336,7 +337,7 @@ contents by the user. Directions to weigh when this is taken up:
 | 2a | Events, and the Developer console | **Done**, 2026-10-12: the starter module's panel, open in a browser, shows the selection as it moves, and what its script prints and its panel logs shows in Developer ▸ Console |
 | 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | **Done**, 2026-10-12: a script changes the sheet itself through `import spreadsheet`, with what its module was granted, from a panel and from Developer ▸ Modules; a panel and a script work with the same `sheet`, `range` and `workbook` |
 | 2c | Per-module Python environments: the packages of `requirements.txt` in an environment of the module's own, installed only when the user asks | The starter module's script uses pandas without the user installing anything by hand |
-| 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | The same starter module runs docked, unchanged |
+| 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | **First slice done**, 2026-10-12, on Windows: a trusted module's panel is docked beside the sheet over the same bridge, kept to its own address without `network`, and the Svelte showcase runs there. macOS and Linux are open |
 | 2e | Agents and the development tools: the Development server, a second MCP server, and the Development window (below) | **First slice done**, 2026-10-12: an agent asks to write a module's file or run its script, the user reads the request on a card and answers, and it is carried out only on their yes, at a level they set. Approved plans are the next slice |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |
 
@@ -470,17 +471,77 @@ module is broken, which quotes its manifest, was told outside the fence.
   scripts are not on it yet, nor is naming the Python (the user's, by hand). "Projects", in
   the owner's words, are read here as the modules a user is writing; if more is meant
   (folders outside the modules folder, a build step) it belongs here.
-- **How the window is built.** The owner asked (2026-10-12) whether the dialogs could be
-  made with a web toolkit such as Svelte. The window is drawn with the app's own toolkit,
-  like every other dialog. A web toolkit needs the system web view (phase 2d), a build step
-  outside Rust, and an answer to upstream's "Rust only" rule; and the place where a request
-  is answered should not be a page a script could drive. A module's own panel is already a
-  web page, and can be written in Svelte today. Not decided.
+- **How the window is built** was settled the same day: the Development window stays drawn
+  with the app's own toolkit, like every other dialog (the place where a request is answered
+  should not be a page a script could drive), and Svelte is showcased in a module's panel,
+  docked in the window (phase 2d, below).
 - The token is on the clipboard after the user copies the setup: whatever can paste can
   read it.
 - The Trust card shows what the module asks and holds, not what changed since it was last
   trusted.
 - It has been used over real connections by a test client, not yet by Claude Code itself.
+
+### Panels docked in the window, and the Svelte showcase (phase 2d)
+
+**What the owner decided (2026-10-12).** Asked whether the fork's own windows should be built
+with a web toolkit such as Svelte, the owner chose to showcase Svelte and the web view in the
+Developer section. So the windows GridCraft draws itself stay as they are, and the web toolkit
+is shown where it belongs: in a module's panel, docked in the window.
+
+**What the first slice built.**
+
+- **A trusted module's panel is docked beside the sheet**, in the system's web view, on
+  Windows (WebView2). Developer ▸ Modules has "Dock Panel" beside "Open Panel". The page is
+  the one a browser would be given, from the same bridge with the same checks: docking
+  changes where a panel is shown, not what it may do.
+- **The window decides where a docked page may go**, which a browser doesn't let it. A module
+  that wasn't granted `network` is kept to its own bridge: another address is refused, no
+  other window opens, nothing is downloaded. That is the part of `network` the browser
+  could not enforce.
+- **Two halves.** The UI crate knows which panel is docked and where its place is
+  (`aniefork::dock`): a pane on the right, with the panel's name, a way to send it to the
+  browser instead, and a way to close it. The desktop shell has the window, and so the web
+  view (`apps/gridcraft/src/aniefork.rs`, through the `wry` crate): once a frame it puts the
+  view where the UI wants it. A shell without a web view never says it has one, and docking
+  says so; the UI crate gains no dependency and stays swappable.
+- **The web view gives way to what the window draws.** It is a window of its own laid over
+  GridCraft's, so anything GridCraft drew there would be hidden under it: while a dialog, a
+  message, a menu or the File view is up, the view is hidden.
+- **Docking a panel is opening it:** the user's alone to do, refused while the control
+  channel is putting input into the window. Whoever starts GridCraft can name a trusted
+  module to dock as it starts (`GRIDCRAFT_DOCK`), which is how it was checked.
+- **The Svelte showcase** is a module the Development window creates: a Svelte app that
+  follows the selection (its range, a summary of its numbers, bars), and writes to the
+  sheet. Like any module it is created untrusted; it asks for `read` and `write`, runs no
+  Python and loads nothing from the network. Once the user has trusted it, the window docks
+  it. Its Svelte source goes into the module with the built panel, so that whoever makes
+  the module can change it.
+
+**What it costs.**
+
+- **A dependency, on Windows only:** `wry`, in the desktop app's crate. Other systems build
+  as before and open panels in the browser.
+- **The fork's second exception to "Rust only".** The showcase's Svelte source and its built
+  script (55 KB, which holds the parts of Svelte it uses) are text inside a generated Rust
+  file, `showcase_files.rs`, as the panel's `spreadsheet.js` is text inside the bridge's.
+  The repository still holds no JavaScript file, and GridCraft still compiles none: the
+  script was built once, with npm, outside the repository. What it holds of other people's
+  work (Svelte, clsx, esm-env: MIT) is named with its notices in a file every showcase
+  module carries. This is fork-only: it is not something to offer upstream as it is.
+- The web view keeps its cache in a folder of its own beside the settings.
+
+**Open.**
+
+- macOS and Linux (WKWebView, WebKitGTK), which `wry` also reaches.
+- One panel at a time, on the right, and it is not docked again when GridCraft next starts.
+- Keyboard focus moves into the web view on a click and back on a click in the sheet;
+  nothing more was done about it. Links that would open a window are refused, not handed to
+  the browser.
+- A module's `node_modules` can't live inside the module (a module holds 2000 files, all of
+  them part of what is trusted): the showcase's source is built somewhere else and its
+  output copied in.
+- Checked in the real window on Windows 11 with the showcase. The starter module's panel,
+  which runs Python, was not tried docked.
 
 ### Backlog
 

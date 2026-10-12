@@ -134,6 +134,14 @@ pub(super) fn create(name: &str) -> Result<String, String> {
     Ok(format!("{} was created. It is not trusted yet.", created.name()))
 }
 
+/// Creates the Svelte showcase module. Like any module it is not trusted until the user says.
+pub(super) fn create_showcase() -> Result<String, String> {
+    let at = places().ok_or(UNAVAILABLE)?;
+    std::fs::create_dir_all(&at.modules).map_err(|e| format!("The modules folder could not be created: {e}"))?;
+    let created = gridcraft_aniefork_dev::showcase::create(&at.modules)?;
+    Ok(format!("{} was created. It is not trusted yet: review and trust it in Modules.", created.name()))
+}
+
 /// Remembers which Python to use and says whether it answers.
 fn check_python(python: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
@@ -218,6 +226,7 @@ enum Action {
     CheckPython(String),
     OpenFolder,
     OpenPanel(String),
+    DockPanel(String),
     Run { id: String, script: String },
     StopRun(String),
 }
@@ -258,7 +267,8 @@ fn scripts(m: &Json) -> Vec<String> {
     files.into_iter().filter_map(|f| f.strip_prefix(&prefix)).filter(|f| f.ends_with(".py")).take(12).map(str::to_string).collect()
 }
 
-fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool, follow: &mut bool, action: &mut Option<Action>) {
+#[allow(clippy::too_many_arguments)]
+fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool, can_dock: bool, follow: &mut bool, action: &mut Option<Action>) {
     let id = m["id"].as_str().unwrap_or("").to_string();
     let status = m["status"].as_str().unwrap_or("");
     egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -286,6 +296,12 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
                         && ui.button("Open Panel").on_hover_text("Opens this module's panel in your browser").clicked()
                     {
                         *action = Some(Action::OpenPanel(id.clone()));
+                    }
+                    if can_dock
+                        && m["panel"].is_string()
+                        && ui.button("Dock Panel").on_hover_text("Shows this module's panel inside the window, beside the sheet").clicked()
+                    {
+                        *action = Some(Action::DockPanel(id.clone()));
                     }
                     if ui.button("Stop trusting").clicked() {
                         *action = Some(Action::StopTrusting(id.clone()));
@@ -388,6 +404,8 @@ struct State {
     python: String,
     python_status: String,
     run: Json,
+    /// The dialog is to close: what was asked for is shown behind it.
+    close: bool,
 }
 
 fn state_id() -> egui::Id {
@@ -469,6 +487,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         ui.separator();
         let modules = listing["modules"].as_array().cloned().unwrap_or_default();
         let can_open = app.services.open_url.is_some();
+        let can_dock = super::dock::available(&ctx);
         let mut follow = state.follow;
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             if modules.is_empty() {
@@ -476,7 +495,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             }
             for m in &modules {
                 let reviewing = !state.review.is_empty() && m["id"].as_str() == Some(state.review.as_str());
-                card(ui, m, reviewing, busy, can_open, &mut follow, &mut action);
+                card(ui, m, reviewing, busy, can_open, can_dock, &mut follow, &mut action);
             }
         });
         // A choice about trust is the person's: a tick the control channel made doesn't count.
@@ -531,6 +550,9 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
     });
 
     let outcome = action.map(|action| act(app, &ctx, &mut state, action, driven));
+    if std::mem::take(&mut state.close) {
+        *open = false;
+    }
     state.report(d);
     ctx.data_mut(|data| data.insert_temp(state_id(), state));
     match outcome {
@@ -545,7 +567,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 /// and naming the Python to run are for the person at the screen: asked for while the control
 /// channel is putting input into the window, they are refused.
 fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Action, driven: bool) -> Result<String, String> {
-    let by_hand = matches!(action, Action::Trust { .. } | Action::CheckPython(_) | Action::Run { .. } | Action::OpenPanel(_));
+    let by_hand = matches!(action, Action::Trust { .. } | Action::CheckPython(_) | Action::Run { .. } | Action::OpenPanel(_) | Action::DockPanel(_));
     let outcome = match action {
         _ if by_hand && driven => Err(presence::BY_HAND.to_string()),
         Action::Refresh => Ok(String::new()),
@@ -581,6 +603,8 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Actio
             _ => Err(UNAVAILABLE.into()),
         },
         Action::OpenPanel(id) => panels::open(app, ctx, &id),
+        // The dialog makes way: the panel is shown where it would be standing.
+        Action::DockPanel(id) => super::dock::dock(app, ctx, &id).inspect(|_| state.close = true),
         Action::Run { id, script } => start(app, ctx, &id, &script).map(|()| {
             state.run = json!({"state": "running", "module": id, "script": script});
             String::new()

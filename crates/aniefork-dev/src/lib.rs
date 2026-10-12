@@ -17,6 +17,7 @@
 //! - [`agents`]: the Development server, a second MCP server for agents that help with
 //!   development work, as far as the user lets them go.
 //! - [`starter`]: "New Module".
+//! - [`showcase`]: a module whose panel is a Svelte app, to show a web toolkit at work.
 //! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
 //!
 //! It has no dependency on the UI toolkit or on the rest of GridCraft, so that it can be offered
@@ -35,6 +36,8 @@ pub mod paths;
 pub mod python;
 pub mod settings;
 pub mod sha256;
+pub mod showcase;
+mod showcase_files;
 pub mod starter;
 pub mod trust;
 

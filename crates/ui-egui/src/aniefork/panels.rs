@@ -84,6 +84,13 @@ pub fn open(app: &SheetApp, ctx: &egui::Context, id: &str) -> Result<String, Str
     Ok("The panel is opening in your browser.".into())
 }
 
+/// Starts serving the panel of the module `id` and gives its address, for a web view of the
+/// window's own ([`super::dock`]). The address holds the module's token: it goes to the view,
+/// and is shown nowhere. Refused unless the user trusts the module as it is on disk now.
+pub(super) fn serve(ctx: &egui::Context, at: &bridge::Places, id: &str) -> Result<String, String> {
+    the_bridge(ctx).serve(at, id)
+}
+
 /// What answers the calls a script of the module `id` makes to the spreadsheet while it runs,
 /// for a script started from this window rather than by a panel (Developer ▸ Modules ▸ Run).
 /// The calls are carried out on the UI thread by [`poll`], like a panel's.
