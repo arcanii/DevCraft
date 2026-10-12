@@ -32,7 +32,19 @@ fn plain(name: &str) -> String {
     name.trim().chars().filter(|c| !c.is_control() && !matches!(c, '"' | '\\' | '<' | '>' | '&')).take(80).collect::<String>().trim().to_string()
 }
 
-fn manifest_text(id: &str, name: &str) -> String {
+/// The line of a manifest that names the workbook the module is the code of. The name is
+/// written so that nothing in it can end the quotes it sits in.
+fn workbook_line(workbook: Option<&str>) -> String {
+    let Some(name) = workbook else { return String::new() };
+    let quoted: String =
+        name.chars().filter(|c| !c.is_control()).flat_map(|c| if matches!(c, '"' | '\\') { vec!['\\', c] } else { vec![c] }).collect();
+    format!(
+        "\n# The workbook this is the code of, by its file's name. Without this line it is a library,\n# for any workbook.\nworkbook = \"{quoted}\"\n"
+    )
+}
+
+fn manifest_text(id: &str, name: &str, workbook: Option<&str>) -> String {
+    let workbook = workbook_line(workbook);
     format!(
         r#"# A GridCraft module. See docs/decisions-aniefork.md (ADR-0001).
 id = "{id}"
@@ -40,7 +52,7 @@ name = "{name}"
 version = "0.1.0"
 author = ""
 description = "A starter module: a panel, and a Python script it can run."
-
+{workbook}
 # What this module asks to be allowed. The user sees this list before trusting it.
 #   read     see what is in the open workbooks
 #   write    change the open workbooks
@@ -160,19 +172,38 @@ pub fn id_for(name: &str) -> String {
 /// What a starter module named `name` holds: its id, and its files (path and text). `None` when
 /// the name makes no id.
 pub fn files(name: &str) -> Option<(String, Vec<(&'static str, String)>)> {
+    files_for(name, None)
+}
+
+/// The same, for a module that is the code of the workbook named `workbook`.
+fn files_for(name: &str, workbook: Option<&str>) -> Option<(String, Vec<(&'static str, String)>)> {
     let shown = plain(name);
     let id = slug(&shown);
     if shown.is_empty() || !manifest::valid_id(&id) {
         return None;
     }
-    let files = vec![(manifest::FILE, manifest_text(&id, &shown)), ("panel/index.html", panel_text(&shown)), ("python/clean.py", SCRIPT.to_string())];
+    let files = vec![
+        (manifest::FILE, manifest_text(&id, &shown, workbook)),
+        ("panel/index.html", panel_text(&shown)),
+        ("python/clean.py", SCRIPT.to_string()),
+    ];
     Some((id, files))
 }
 
 /// Creates a starter module named `name` in `modules_dir` and returns it as read back from disk.
 /// Refuses a name that makes no id, and never touches a folder that already exists.
 pub fn create(modules_dir: &Path, name: &str) -> Result<Module, String> {
-    let Some((id, files)) = files(name) else {
+    create_for(modules_dir, name, None)
+}
+
+/// The same, for a module that is the code of the workbook named `workbook` (a library when
+/// there is none). A name that can't be a workbook's is refused before anything is written.
+pub fn create_for(modules_dir: &Path, name: &str, workbook: Option<&str>) -> Result<Module, String> {
+    let workbook = match workbook {
+        Some(named) => manifest::workbook_name(named).map_err(|why| format!("The module can't be that workbook's code: {why}."))?,
+        None => None,
+    };
+    let Some((id, files)) = files_for(name, workbook.as_deref()) else {
         return Err("Give the module a name with at least one letter or digit.".into());
     };
     let dir = modules_dir.join(&id);
@@ -242,6 +273,27 @@ mod tests {
         assert_eq!(manifest.permissions, [Permission::Read, Permission::Write, Permission::Python]);
         assert_eq!((manifest.panel.as_deref(), manifest.python.as_deref()), (Some("panel/index.html"), Some("python")));
         assert_eq!(module::scan(&t.0).len(), 1);
+    }
+
+    #[test]
+    fn a_starter_can_be_the_code_of_a_workbook() {
+        let t = TempDir::new("starter-workbook");
+        let m = create_for(&t.0, "Budget Macros", Some("Budget.xlsm")).unwrap();
+        assert!(m.is_sound(), "{:?}", m.problem);
+        assert_eq!(m.manifest.as_ref().unwrap().workbook.as_deref(), Some("Budget.xlsm"));
+        // Without a workbook, and with an empty one, it is a library like any starter.
+        assert_eq!(create_for(&t.0, "Tools", None).unwrap().manifest.unwrap().workbook, None);
+        assert_eq!(create_for(&t.0, "More Tools", Some("  ")).unwrap().manifest.unwrap().workbook, None);
+        // A name with quotes in it stays a name: it adds nothing to the manifest.
+        let odd = create_for(&t.0, "Odd", Some("My \"best\" book.xlsm\"\npermissions = [\"network\"] #")).unwrap_err();
+        assert!(odd.contains("not a file's name"), "a line break is refused: {odd}");
+        let quoted = create_for(&t.0, "Quoted", Some("My \"best\" book.xlsm")).unwrap();
+        let manifest = quoted.manifest.unwrap();
+        assert_eq!(manifest.workbook.as_deref(), Some("My \"best\" book.xlsm"));
+        assert_eq!(manifest.permissions, [Permission::Read, Permission::Write, Permission::Python]);
+        // What can't be a workbook's name is refused before anything is written.
+        assert!(create_for(&t.0, "Elsewhere", Some("C:/books/Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
+        assert!(!t.0.join("elsewhere").exists());
     }
 
     #[test]

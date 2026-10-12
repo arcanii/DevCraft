@@ -799,7 +799,10 @@ the package undeclared breaks the workbook for Excel. (One machine, one version,
 cases: enough to rule the first out, and to be checked again for the second when it is
 built on.)
 
-**Proposed, for the owner to decide.**
+**Decided (2026-10-13).** The owner: "phases stand". With them stands what phase V3 rests
+on, which is the first point here. The second question put with them, whether "Read only"
+should reach a workbook's macros or a level of its own should, was not answered: it stays
+as built.
 
 - **No file format of GridCraft's own.** The workbook stays an `.xlsm` that Excel opens:
   its VBA untouched for those who use Excel, and what GridCraft adds carried where Excel
@@ -814,7 +817,7 @@ built on.)
 | Phase | What | Stands |
 |---|---|---|
 | V0 | Read the project: the viewer, the command, the agent's two tools | **Built**, 2026-10-13 |
-| V1 | An agent rebuilds what the macros do as a module (Python scripts, a panel), through the requests and plans that exist: it reads the VBA and the workbook, proposes a plan, the person reads every file and trusts it. With it, a note the module keeps of which procedure became which script | Next. Needs nothing new in GridCraft but the note's shape; it needs trying with a real agent and a real workbook |
+| V1 | An agent rebuilds what the macros do as a module (Python scripts, a panel), through the requests and plans that exist: it reads the VBA and the workbook, proposes a plan, the person reads every file and trusts it. With it, a note the module keeps of which procedure became which script | **Built** in the Development crate, 2026-10-13 (below); what the windows show of it, and a trial, come next |
 | V2 | What Excel ran by itself (`Workbook_Open`, `Worksheet_Change`) answered by the module's events, for a module the person trusts, with a visible switch | Needs the events of phase 2a taken further ("a workbook was opened by this module's workbook"), and a decision on what may run without a click |
 | V3 | The module carried in the workbook (a custom XML part), so that the workbook and what replaces its macros are one file | Needs the decision above, and Excel asked again at more length |
 | later | Help with the language itself: a real parser, for mechanical translation of the easy cases | Only if V1 shows the need |
@@ -828,6 +831,40 @@ built on.)
   gives (what there is, what runs by itself, what reaches outside). A parser earns its place
   when GridCraft itself has to translate, which is "later" in the table.
 
+**V1, in the Development crate (2026-10-13): what an agent needs to rebuild the macros as a
+project.** What the windows show of it comes with the Development window's new shape.
+
+- **A project can say which workbook it is the code of**: `workbook = "Budget.xlsm"` in its
+  `module.toml`. A file's name only, never a path (a path is another on every computer). It
+  says what the project is for and nothing else: nothing is allowed or run because of it.
+- **The note of what became of each procedure** is `rebuilt.toml`, beside `module.toml`
+  (`gridcraft_aniefork_dev::rebuilt`):
+
+  ```toml
+  [[procedure]]
+  module = "Totals"            # the VBA module
+  name = "AddUp"               # the procedure in it
+  state = "rebuilt"            # rebuilt | partly | left
+  script = "add_up.py"         # the script that does it now, in the scripts folder
+  note = "Sums A1:A10 and writes the total below."
+  ```
+
+  It is checked like a manifest (256 KB, 2000 entries, names and notes of one line, a script
+  that is a path inside the project) and a note that can't be understood says nothing. **It
+  is the project's own word**: nothing checks that a script does what a procedure did, so it
+  is data to an agent.
+- **An agent is told of it**: `list_macros` carries what the projects that name the open
+  workbook say became of each procedure (`rebuilt`, beside each), so that an agent picks up
+  where the work was left. A module is listed with its kind, its workbook and its note.
+- **What the agent is told.** `reference` has a topic `macros`: read first; what each kind
+  of procedure becomes (a script; the panel for a form; an event is rebuilt as a script the
+  person runs, since GridCraft runs nothing by itself; a door into a Windows library is
+  left, with a note); one plan for the whole; the two files' shapes; how VBA's ways of
+  reaching the sheet read in a script; and not to carry a password or an address out of the
+  VBA.
+- **Nothing else was needed**, as expected: the plan, its one card and its steps are those
+  of phase 2e.
+
 **Open.**
 
 - The outline misses what a line-reader misses: a procedure written on one line, or split
@@ -837,6 +874,10 @@ built on.)
 - A project protected with a password still has its source in the file, and it is shown:
   that protection is Excel's editor's, not the file's.
 - The viewer is not in the Development window's list of tools yet (the ribbon has it).
+- **Whether "Read only" should reach macros** is the owner's to say (above).
+- Nothing compares a script with the procedure it says it rebuilds. The note is a claim.
+- An agent that rebuilds has no way to try the macro itself (GridCraft runs none), so it
+  can't compare what the two give: the person has to.
 - Only the workbook that is open is read; an agent is told of another when it is opened.
 
 ### Backlog

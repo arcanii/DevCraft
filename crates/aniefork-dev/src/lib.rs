@@ -7,6 +7,8 @@
 //! serves anything of a module asks first, here, whether the module is trusted and what it was
 //! granted.
 //!
+//! - [`kit`]: the development kits that are loaded (this is the Anie Development Kit), and
+//!   the two kinds of project: the code of one workbook, and a library.
 //! - [`manifest`]: `module.toml`, and the permissions a module can ask for.
 //! - [`module`]: modules on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
@@ -20,6 +22,7 @@
 //! - [`showcase`]: a module whose panel is a Svelte app, to show a web toolkit at work.
 //! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
 //! - [`vba`]: looking inside a workbook's VBA project, to read it. Nothing of it is ever run.
+//! - [`rebuilt`]: a project's note of what it rebuilds of a workbook's macros.
 //!
 //! It has no dependency on the UI toolkit or on the rest of GridCraft, so that it can be offered
 //! upstream as a piece of its own.
@@ -31,10 +34,12 @@ pub mod bridge;
 pub mod console;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;
+pub mod kit;
 pub mod manifest;
 pub mod module;
 pub mod paths;
 pub mod python;
+pub mod rebuilt;
 pub mod settings;
 pub mod sha256;
 pub mod showcase;
@@ -66,6 +71,11 @@ pub fn describe(module: &Module, store: &TrustStore) -> Json {
         "version": manifest.map(|m| m.version.as_str()).unwrap_or(""),
         "author": manifest.map(|m| m.author.as_str()).unwrap_or(""),
         "description": manifest.map(|m| m.description.as_str()).unwrap_or(""),
+        // What it is for: the code of the workbook it names, or a library.
+        "kind": kit::ProjectKind::of(manifest).code(),
+        "workbook": manifest.and_then(|m| m.workbook.as_deref()),
+        // What it says it rebuilds of a workbook's macros: its own word.
+        "rebuilt": rebuilt::describe(module),
         "status": status.code(),
         "problem": match &status { Status::Problem(why) => Json::String(why.clone()), _ => Json::Null },
         "asks": asks,
@@ -99,9 +109,15 @@ mod tests {
         assert_eq!(before["asks"][1]["unlimited"], json!(true), "Python is marked as the one that can't be limited");
         assert!(before["asks"].as_array().unwrap().iter().all(|a| a["means"].as_str().is_some_and(|text| !text.is_empty())));
         assert_eq!(before["files"], json!(["module.toml", "panel/index.html", "python/clean.py"]));
+        assert_eq!((&before["kind"], &before["workbook"], &before["rebuilt"]), (&json!("library"), &Json::Null, &Json::Null));
         store.trust(&m, false).unwrap();
         let after = describe(&m, &store);
         assert_eq!((after["status"].as_str(), &after["granted"]), (Some("trusted"), &json!(["read", "python"])));
+        // One that names a workbook is that workbook's code, and its note is reported with it.
+        t.write("budget/module.toml", "id = \"budget\"\nname = \"Budget\"\nversion = \"1\"\nworkbook = \"Budget.xlsm\"\n");
+        t.write("budget/rebuilt.toml", "[[procedure]]\nmodule = \"Totals\"\nname = \"AddUp\"\nstate = \"left\"\n");
+        let code = describe(&module::load(&t.0.join("budget")), &store);
+        assert_eq!((&code["kind"], &code["workbook"], &code["rebuilt"]["left"]), (&json!("workbook"), &json!("Budget.xlsm"), &json!(1)));
         // A broken module says why.
         t.write("broken/readme.txt", "x");
         let broken = describe(&module::load(&t.0.join("broken")), &store);

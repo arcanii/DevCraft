@@ -7,6 +7,7 @@
 //! author = "Ada Lovelace"            # optional
 //! description = "Tidies a table"     # optional
 //! permissions = ["read", "write", "python"]
+//! workbook = "Budget.xlsm"           # optional: the workbook this is the code of, by its file's name
 //!
 //! [panel]
 //! entry = "panel/index.html"         # optional: the page GridCraft serves as its panel
@@ -86,6 +87,9 @@ pub struct Manifest {
     pub panel: Option<String>,
     /// The folder of scripts its panel may run, as a path inside the module.
     pub python: Option<String>,
+    /// The workbook it is the code of, by its file's name. `None`: it is a library, for any
+    /// workbook. It only says what the module is for: nothing is allowed or run because of it.
+    pub workbook: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,6 +100,7 @@ struct Raw {
     author: Option<String>,
     description: Option<String>,
     permissions: Option<Vec<String>>,
+    workbook: Option<String>,
     panel: Option<RawPanel>,
     python: Option<RawPython>,
 }
@@ -155,6 +160,30 @@ pub fn inner_path(path: &str) -> Result<String, String> {
     Ok(path.to_string())
 }
 
+/// The longest name of a workbook a manifest may give (characters).
+pub const MAX_WORKBOOK: usize = 255;
+
+/// The name of the workbook a module is the code of: a file's name, not a path, since a path
+/// is another on every computer. Empty is none.
+pub fn workbook_name(name: &str) -> Result<Option<String>, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > MAX_WORKBOOK {
+        return Err(format!("its workbook's name is longer than {MAX_WORKBOOK} characters"));
+    }
+    if name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':')) {
+        return Err(format!("its workbook, {name:?}, is not a file's name (a name only, without folders)"));
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// Whether two names are the same workbook's: a file's name, whatever its capitals.
+pub fn same_workbook(one: &str, other: &str) -> bool {
+    one.trim().to_lowercase() == other.trim().to_lowercase()
+}
+
 /// Reads and checks a manifest. `folder` is the name of the folder it was found in, which the id
 /// must match.
 pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
@@ -186,6 +215,7 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
         permissions,
         panel: raw.panel.and_then(|p| p.entry).map(|p| inner_path(&p)).transpose()?,
         python: raw.python.and_then(|p| p.scripts).map(|p| inner_path(&p)).transpose()?,
+        workbook: raw.workbook.map(|name| workbook_name(&name)).transpose()?.flatten(),
     })
 }
 
@@ -217,6 +247,7 @@ scripts = "python"
         // The least a manifest can say: it asks for nothing and has no panel or scripts.
         let m = parse("id = \"x\"\nname = \"X\"\nversion = \"1\"", "x").unwrap();
         assert!(m.permissions.is_empty() && m.panel.is_none() && m.python.is_none() && m.author.is_empty());
+        assert_eq!(m.workbook, None, "a module that names no workbook is a library");
         // Keys it doesn't know are ignored: a newer module still loads.
         assert!(parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nfuture = true\n[panel]\nwidth = 300", "x").is_ok());
     }
@@ -242,6 +273,21 @@ scripts = "python"
         }
         assert!(parse(&format!("id = \"x\"\nname = \"{}\"\nversion = \"1\"", "n".repeat(81)), "x").is_err(), "a name too long");
         assert!(parse(&" ".repeat(MAX_BYTES as usize + 1), "x").is_err(), "a manifest too large");
+    }
+
+    #[test]
+    fn a_module_can_name_the_workbook_it_is_the_code_of() {
+        let named = |name: &str| parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\nworkbook = {name}"), "x");
+        assert_eq!(named("\"Budget.xlsm\"").unwrap().workbook.as_deref(), Some("Budget.xlsm"));
+        assert_eq!(named("\"  Q3 report (v2).xlsm \"").unwrap().workbook.as_deref(), Some("Q3 report (v2).xlsm"));
+        assert_eq!(named("\"   \"").unwrap().workbook, None, "an empty name is none");
+        // A name only: a path is another on every computer, and could say more than a name.
+        for bad in ["\"C:/Users/ada/Budget.xlsm\"", "\"../Budget.xlsm\"", "'folder\\Budget.xlsm'", "\"a\\u0007b.xlsm\"", "7"] {
+            assert!(named(bad).is_err(), "{bad}");
+        }
+        assert!(named(&format!("\"{}\"", "n".repeat(MAX_WORKBOOK + 1))).is_err(), "a name too long");
+        assert!(same_workbook("Budget.xlsm", " budget.XLSM ") && same_workbook("Übersicht.xlsm", "übersicht.xlsm"));
+        assert!(!same_workbook("Budget.xlsm", "Budget.xlsx") && !same_workbook("Budget.xlsm", ""));
     }
 
     #[test]
