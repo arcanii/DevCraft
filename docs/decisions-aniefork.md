@@ -1030,9 +1030,8 @@ not compiled in gets loaded, which stays open.
   First a compiler that takes the usual command line (`zig cc`, clang, gcc); Microsoft's
   after. **This machine has none on its path** (looked, 2026-10-13). zig is the candidate:
   one download without an installer, the same on every system, and it brings the C library
-  and the Windows headers with it. `doomgeneric` is plain C with a port for Windows and a
-  makefile for it, which is the kind of thing `zig cc` builds; **whether it builds as it
-  stands has not been tried**, and is the first thing to try. GridCraft ships no compiler.
+  and the Windows headers with it. **It builds `doomgeneric` as it stands** (tried the same
+  day: below). GridCraft ships no compiler.
 - **A build is not harmless, so it is a request like running a script.** It runs the
   person's compiler over files an agent may have written, and `#include` of a file outside
   the project puts that file's lines into the compiler's messages, which the agent would
@@ -1057,6 +1056,41 @@ not compiled in gets loaded, which stays open.
   it, so its projects would be the first that are *held* to what they were granted. It
   would run in a project's panel, or inside GridCraft by an interpreter written in Rust.
 
+**The trial with zig (2026-10-13), on the owner's word** ("go ahead and try zig with
+doomgeneric"). Done in a scratch folder outside the repository: nothing was installed, put
+on the path, or added here.
+
+- **What was fetched.** zig 0.17.0 for Windows from ziglang.org (one zip of 100 MB, 399 MB
+  unpacked; its SHA-256 matched the one ziglang.org publishes), and `doomgeneric` cloned
+  from GitHub as it stood (`e257a09`, 2026-10-11; 8 MB).
+- **What was built.** The 81 files its makefile for Windows lists, by one `zig cc` command
+  that names them (the makefile was read for the list and the options, not run: there is
+  no `make` here), for `x86_64-windows-gnu`, with `-Os`, the makefile's two definitions,
+  and the system's drawing library to link. **25 seconds from nothing, no errors**, two
+  warnings (both in Doom's own code), and a program of 453 KB.
+- **It runs** (the same day, on the owner's word). Freedoom 0.13.0 was fetched from its
+  releases on GitHub (one zip of 24 MB; its SHA-256 matched the one published beside it),
+  and the built program started on `freedoom1.wad` from a scratch folder. It opened its
+  window, titled "Freedoom: Phase 1", and played Freedoom's recorded demo by itself; it
+  was stopped after 50 seconds. It keeps its settings and saved games in the folder it is
+  started from, and wrote nowhere else. Nobody played it: the keys were not tried.
+- **What it tells the kit.**
+  - A list of sources and a few named options is all Doom's build needs, so the recipe as
+    a list in `project.toml` holds for the showcase. With 81 files, the list should be able
+    to name a folder.
+  - The target has to be said, and zig keeps a cache (61 MB after these builds; by default
+    in the person's own folders, which the kit can leave or point elsewhere).
+  - **zig stops a program at undefined behaviour unless the build asks for optimisation or
+    says otherwise**, and Doom's arithmetic overflows on purpose. Checked with ten lines of
+    C that add one to the largest `int`: built plainly, the program stops with "signed
+    integer overflow"; with `-Os`, or with `-fno-sanitize=undefined`, it wraps and goes on.
+    The trial passed both. The kit's named options need the second, or a project built
+    without optimisation to find a fault would stop for this instead.
+  - Doom prints its start-up lines to its standard output. So the calls to the spreadsheet
+    can't share that pipe as it is: the kit's C file has to keep the pipe for the calls
+    and send what the program prints elsewhere, as the runner does for a Python script's
+    `print`. For phase K3.
+
 **3. Doom.**
 
 - **A repository of its own, "GridCraft Doom"**, made to demonstrate the kit: `doomgeneric`
@@ -1070,13 +1104,58 @@ not compiled in gets loaded, which stays open.
 - **Its window, at first, is its own**: the one `doomgeneric`'s port for Windows opens.
   Docked beside the sheet comes with the WebAssembly kit, or with frames carried over to
   GridCraft; not in the first showing.
-- **Its live variables update in the cells** as it is played (the owner's addition):
-  health, armour, ammunition, where the player stands, what was killed, the level's clock;
-  and formulas and a chart over them that move with the game. It makes the showcase about
-  the spreadsheet, not only beside it. Doom asks for `write` and to run its program.
+- **Its live variables update in the cells** as it is played (the owner's addition), in a
+  table (below): health, armour, ammunition, the monsters nearby, what was killed, the
+  level's clock, where the player stands; and formulas and a chart over them that move
+  with the game. It makes the showcase about the spreadsheet, not only beside it. Doom asks
+  for `write` and to run its program.
 - **Its game data is Freedoom's by default** (3-clause BSD, which may be passed on with its
   licence text; the shareware WAD may not be, and the rule on assets keeps it out of here
   in any case), kept with the Doom project, not in GridCraft's repository.
+
+**The table of the game's variables** (the owner, 2026-10-13: "can we expose some of the
+internal variables in a table that will update with the game? Variables like Health, Ammo,
+Nearby monsters, etc - something to demonstrate the linkage"). Yes. Every one of them is a
+variable the game already keeps, and the project's one file of glue can read them with no
+file of Doom's own changed. Looked up in `doomgeneric`'s source, and **tried as far as
+building**: a scratch file that has the program's loop, reads the variables below four times
+a second and writes them as one call (`range.setValues`, the call a Python script makes) was
+built with zig together with the 81 files, with no warning of its own. **Run the same day**
+on Freedoom's demo: 169 lines of values in 50 seconds, and they move as the game does
+(health 100, 85, 81, then 100 again at a medical kit; the pistol given up for the shotgun;
+17 of the level's 192 monsters killed), in step with the game's own status bar. They were
+written to the program's output: nothing puts them in a sheet until the kit can run a
+program (phase K3).
+
+A sheet named for the game, one row a variable, the values in one column:
+
+| Rows | What | Where the game keeps it |
+|---|---|---|
+| Health, Armor | The player's | The player's record |
+| Weapon, Ammo | The weapon in hand, by name, and what is left for it | The player's record, and the game's table of weapons |
+| Bullets, Shells, Rockets, Cells | Each kind of ammunition carried | The player's record |
+| Monsters nearby | Alive, and within 1024 of the map's units of the player | Counted from the game's list of the things it moves |
+| Monsters in sight | Of those, the ones with a clear line to the player | The game's own test of sight |
+| Monsters alive | On the level | The same list |
+| Kills, Items, Secrets | Each with the level's total beside it | The player's record, and the level's totals |
+| Level, Time | Which map, and the seconds played in it | The game's state |
+| X, Y, Facing | Where the player stands, and which way | The player's thing on the map |
+
+- **"Monsters nearby" is the one that is worked out**, not read: the glue walks the game's
+  list of the things it moves each time it writes. The rest are read as they stand.
+- **What the workbook does with them is the workbook's**: a bar on health, a line that says
+  so when something is in sight, kills as a share of the total, and a chart of health and
+  of the monsters nearby over the last minute, from rows the project adds once a second.
+  That is the linkage shown: the game moves a cell, and formulas, formats and a chart
+  follow it.
+- **Four times a second**, all the values in one call. Until values can be published
+  (below), each call is a step of undo: 240 for a minute of play.
+- Doom plays its recorded demos by itself when nobody is at the keys, and the variables
+  move then too (seen: Freedoom's demo plays in `doomgeneric`): the table can be seen
+  updating before anyone plays.
+- **"Nearby" at 1024 units is too wide to say much**: on the demo's level it counted 29 to
+  40 monsters throughout, while "in sight" moved between 1 and 5. The distance is to be
+  made smaller, or the workbook's to set.
 
 **Files a project changes itself** (decision 2: "we should allow for a project to change
 project files as a feature"). As things are, any change to a project's files ends its
@@ -1146,9 +1225,9 @@ is built, with what must hold whatever the design:
 | Phase | What | Waits for |
 |---|---|---|
 | K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | |
-| K2 | The C kit builds: the compiler found or named, the recipe, a build as a request, what is built kept outside the project | zig (or another) on the machine; `doomgeneric` tried with it |
+| K2 | The C kit builds: the compiler found or named, the recipe, a build as a request, what is built kept outside the project | K1. (zig builds `doomgeneric` as it stands: tried, 2026-10-13) |
 | K3 | The C kit runs a program: started and stopped by the person, the spreadsheet called from C, held to nothing but its grants' checks | K2 |
-| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built, run in its own window; its live variables written into a sheet a few times a second; then the "GridCraft Doom" repository | K3 |
+| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built, run in its own window; the table of its variables written four times a second, with formulas and a chart over it; then the "GridCraft Doom" repository | K3. (Built and run by hand, 2026-10-13) |
 | P1 | Files a project changes itself | D1 shows what it needs |
 | G1 | Source control, local: repositories among the projects, changes, a commit | |
 | G2 | Clone from an address; fetch and pull | G1 |
@@ -1159,8 +1238,7 @@ is built, with what must hold whatever the design:
 
 - Whether "a project changes project files" is read rightly above.
 - Live variables by plain writes first (taken so, as the easiest), or the function first.
-- The go-ahead to put zig on a machine and try `doomgeneric` with it, and later to make the
-  "GridCraft Doom" repository on GitHub.
+- The go-ahead, later, to make the "GridCraft Doom" repository on GitHub.
 
 ### Backlog
 

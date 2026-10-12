@@ -456,8 +456,9 @@ decisions, 2026-10-13; ADR-0001 has the plan).
   held to what they were granted, can come later.
 - **Doom as its demonstration**, in a repository of its own ("GridCraft Doom"), never in
   this one: its code is under the GPL. It runs in its own window at first, **with its live
-  variables updating in the cells** (health, ammunition, where the player stands) and
-  formulas and a chart over them. Freedoom's game data by default.
+  variables updating in a table** (health, armour, ammunition, the monsters nearby and in
+  sight, kills, the level and its clock, where the player stands) and formulas and a chart
+  over them. Freedoom's game data by default.
 - **Files a project changes itself** (its data, apart from the code that was trusted): asked
   for by the owner, to be designed.
 - **Live values**: first by the project writing cells a few times a second, which works
@@ -467,8 +468,12 @@ decisions, 2026-10-13; ADR-0001 has the plan).
   inside GridCraft (never by running `git` in a folder that came from elsewhere). Until
   then `doomgeneric` is cloned by hand, so a project's `.git` is left out of its
   fingerprint from the kit's first slice. Push and signing in to GitHub are later.
-- **Known so far**: this machine has no C compiler on its path; whether zig builds
-  `doomgeneric` as it stands is the first thing to try; nothing was built.
+- **Tried (2026-10-13), in a scratch folder outside the repository**: zig 0.17.0 builds
+  `doomgeneric`'s port for Windows as it stands (81 files, 25 seconds, no errors), and a
+  file of glue that reads the game's variables for the table builds with it. **It runs**:
+  on Freedoom's data it played the recorded demo in its own window, and the variables
+  came out four times a second, moving as the game did. They went to the program's
+  output, not to a sheet: that needs the kit, of which nothing is built.
 
 Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table). Next are **2c**
 per-project Python environments, and the rest of **2d**: macOS and Linux.
@@ -648,6 +653,23 @@ included.
 
 Newest first.
 
+- **2026-10-13 (tried: zig builds `doomgeneric`; the table of the game's variables):** On
+  the owner's word, zig 0.17.0 was fetched from ziglang.org (its checksum matched) and
+  `doomgeneric` cloned, both into a scratch folder outside the repository; nothing was
+  installed or added here. One `zig cc` command over the 81 files of its makefile for
+  Windows gave a program in 25 seconds with no errors. Then, on the owner's word again,
+  Freedoom 0.13.0 was fetched (its checksum matched) and the program run for 50 seconds
+  from the scratch folder: it opened its window and played Freedoom's recorded demo.
+  Nobody played it. Found on the way: zig stops a program at a
+  signed overflow unless the build says otherwise (checked with ten lines of C), and Doom
+  overflows on purpose, so the kit's options must say so; and Doom prints to its standard
+  output, so the calls to the spreadsheet need the pipe kept for them. The owner asked for
+  the game's variables in a table that updates with the game ("Health, Ammo, Nearby
+  monsters, etc"): each is a variable the game keeps, a scratch file that reads them and
+  writes them as one call builds with Doom without a file of Doom's changed, and in the
+  run its 169 lines of values moved in step with the game's status bar (to the program's
+  output: no sheet yet). The table is set down in ADR-0001. No code of GridCraft's was
+  written.
 - **2026-10-13 (planned: a C kit, Doom, source control):** The owner asked for a second
   Development kit (C), Doom ported in as a project of it, and git with GitHub at the top of
   the Development window. Recorded as proposed in ADR-0001, with phases and seven
