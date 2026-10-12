@@ -79,6 +79,7 @@ fn panel_text(name: &str) -> String {
     <button id="clean">Clean the selection</button>
     <button id="show">Show the selection</button>
   </p>
+  <p id="where">The selection shows here as it moves.</p>
   <pre id="out"></pre>
 
   <!-- GridCraft serves spreadsheet.js beside this page: it gives the page its `spreadsheet`
@@ -107,10 +108,20 @@ fn panel_text(name: &str) -> String {
         // spreadsheet.batch([...]). Every command a user can give is spreadsheet.run(id, params).
         await spreadsheet.write(data.range, result.rows);
         say("Cleaned " + data.range + ". Undo in GridCraft puts it back.");
+        // A line for Developer > Console in GridCraft. What clean.py prints goes there too.
+        spreadsheet.log("Cleaned", data.range);
       }} catch (error) {{
         say(String(error));
       }}
     }};
+
+    // The panel is told when the selection moves. The other events are workbookChanged and
+    // workbookActivated; the function this resolves to stops the telling.
+    spreadsheet
+      .on("selectionChanged", (event) => {{
+        document.getElementById("where").textContent = "Selected: " + event.sheet + "!" + event.range;
+      }})
+      .catch((error) => say(String(error)));
   </script>
 </body>
 </html>
@@ -130,6 +141,8 @@ and sends back what it returns.
 def main(data):
     rows = data.get("rows", []) if isinstance(data, dict) else []
     cleaned = [[cell.strip() if isinstance(cell, str) else cell for cell in row] for row in rows]
+    # What a script prints shows in Developer > Console in GridCraft.
+    print(f"cleaned {len(cleaned)} rows")
     return {"rows": cleaned}
 "#;
 

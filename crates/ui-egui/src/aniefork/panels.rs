@@ -14,14 +14,20 @@
 //!   the user's decisions are kept, is out of reach.
 //!
 //! A batch is several commands as **one undo step**: all of them, or, if one fails, none.
+//!
+//! Panels are also **told what happens** ([`tell`]): once a frame, what the window shows now is
+//! compared with what the panels were last told, and the difference is handed to the bridge as
+//! events. Whether a module's panel is given them is the bridge's to decide, by what the user
+//! granted it. A call that is refused for want of an ability is noted in the Developer console.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gridcraft_aniefork_dev::Permission;
-use gridcraft_aniefork_dev::bridge::{self, Bridge, Call, CommandDoc, Kind, Request};
+use gridcraft_aniefork_dev::bridge::{self, Bridge, Call, CommandDoc, Event, Kind, Request};
+use gridcraft_aniefork_dev::console::{self, Console};
 use gridcraft_engine::{CommandSpec, HistoryEntry};
-use serde_json::Value as Json;
+use serde_json::{Value as Json, json};
 
 use super::modules;
 use crate::SheetApp;
@@ -90,19 +96,80 @@ pub fn serving(ctx: &egui::Context) -> Vec<String> {
     running(ctx).map(|bridge| bridge.serving()).unwrap_or_default()
 }
 
-/// Carries out the calls panels made since the last frame. Called once a frame.
+/// Carries out the calls panels made since the last frame, and tells the panels what changed.
+/// Called once a frame.
 pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
     let Some(bridge) = running(ctx) else { return };
     let calls = bridge.take_calls(CALLS_A_FRAME);
-    if calls.is_empty() {
-        return;
-    }
+    let any = !calls.is_empty();
     for call in calls {
         let result = carry_out(app, &call);
         call.answer(result);
     }
-    // What was done should show, and more calls may be waiting.
-    ctx.request_repaint();
+    tell(app, ctx, &bridge);
+    if any {
+        // What was done should show, and more calls may be waiting.
+        ctx.request_repaint();
+    }
+}
+
+/// What the panels were last told of: the workbook being worked on, how far it has changed, and
+/// where the selection is.
+#[derive(Clone, Default, PartialEq)]
+struct Told {
+    doc: Option<u64>,
+    workbook: String,
+    revision: u64,
+    /// Which copy of the workbook's contents is the current one: an edit, an undo and a redo
+    /// each make another.
+    contents: usize,
+    sheet: String,
+    range: String,
+    active: String,
+}
+
+fn told_id() -> egui::Id {
+    egui::Id::new("aniefork.panels.told")
+}
+
+fn showing(app: &SheetApp) -> Told {
+    let Some(doc) = app.session.active() else { return Told::default() };
+    Told {
+        doc: Some(doc.uid),
+        workbook: doc.title.clone(),
+        revision: doc.revision,
+        contents: Arc::as_ptr(&doc.wb) as usize,
+        sheet: doc.wb.active().map(|sheet| sheet.name.clone()).unwrap_or_default(),
+        range: doc.selection.current().a1(),
+        active: doc.selection.active.a1(),
+    }
+}
+
+/// Tells the panels being served what changed since the last frame: another workbook became the
+/// one worked on, the workbook changed, the selection moved. The first frame after a panel is
+/// opened tells nothing: a panel begins from how things are.
+fn tell(app: &SheetApp, ctx: &egui::Context, bridge: &Bridge) {
+    if bridge.serving().is_empty() {
+        ctx.data_mut(|d| d.remove::<Told>(told_id()));
+        return;
+    }
+    let now = showing(app);
+    let before: Option<Told> = ctx.data(|d| d.get_temp(told_id()));
+    if before.as_ref() == Some(&now) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(told_id(), now.clone()));
+    let (Some(before), Some(_)) = (before, now.doc) else { return };
+    let emit = |name: &'static str, detail: Json| bridge.emit(&Event { name, detail });
+    let another = now.doc != before.doc;
+    if another {
+        emit("workbookActivated", json!({"workbook": now.workbook}));
+    } else if now.revision != before.revision || now.contents != before.contents {
+        emit("workbookChanged", json!({"workbook": now.workbook}));
+    }
+    if another || (&now.sheet, &now.range, &now.active) != (&before.sheet, &before.range, &before.active) {
+        emit("selectionChanged", json!({"workbook": now.workbook, "sheet": now.sheet, "range": now.range, "active": now.active}));
+    }
 }
 
 fn carry_out(app: &mut SheetApp, call: &Call) -> Result<Json, String> {
@@ -121,8 +188,12 @@ fn carry_out(app: &mut SheetApp, call: &Call) -> Result<Json, String> {
     }
 }
 
+/// Why a call is refused for want of an ability. It is noted in the Developer console too, where
+/// the module's author will look for it.
 fn not_granted(call: &Call, needed: Permission, what: &str) -> String {
-    format!("{} wasn't granted `{}`, which {what} needs.", call.name, needed.code())
+    let why = format!("{} wasn't granted `{}`, which {what} needs.", call.name, needed.code());
+    Console::global().push(&call.module, "panel", console::Kind::Refused, &why);
+    why
 }
 
 /// Whether the module may make this call; if so, what the call needs.
@@ -334,6 +405,125 @@ mod tests {
     fn history(h: &Harness) -> (usize, usize) {
         let doc = h.state().session.active().unwrap();
         (doc.undo.len(), doc.redo.len())
+    }
+
+    /// What the panel is told after the place `next`, which is moved on. The names, in order.
+    fn told(h: &mut Harness, address: &str, next: &mut u64) -> Vec<Json> {
+        h.run_steps(2);
+        let answer = call(h, address, json!({"call": "events", "after": *next}));
+        assert_eq!(answer["ok"], true, "{answer}");
+        *next = answer["next"].as_u64().unwrap();
+        answer["events"].as_array().cloned().unwrap()
+    }
+
+    fn names(events: &[Json]) -> Vec<&str> {
+        events.iter().filter_map(|e| e["name"].as_str()).collect()
+    }
+
+    /// In the real window: a panel that listens is told when the selection moves, when the
+    /// workbook changes and when another workbook is the one worked on.
+    #[test]
+    fn an_open_panel_is_told_what_happens_in_the_window() {
+        let s = Sandbox::new("events");
+        install(&s, "watcher", &["read"]);
+        let (a, opened) = app();
+        let mut h = harness(a);
+        let address = open_panel(&mut h, &opened, "watcher");
+        let title = h.state().session.active().unwrap().title.clone();
+        // A panel begins from how things are: nothing that came before it is told.
+        h.state_mut().session.run("selection.set", json!({"range": "D5"})).unwrap();
+        h.run_steps(2);
+        let begin = call(&mut h, &address, json!({"call": "events"}));
+        let mut next = begin["next"].as_u64().unwrap();
+        assert_eq!(begin["events"], json!([]), "{begin}");
+
+        // The selection moves.
+        h.state_mut().session.run("selection.set", json!({"range": "B2:C4"})).unwrap();
+        let events = told(&mut h, &address, &mut next);
+        assert_eq!(names(&events), ["selectionChanged"], "{events:?}");
+        let moved = &events[0];
+        assert_eq!(
+            (&moved["workbook"], &moved["sheet"], &moved["range"], &moved["active"]),
+            (&json!(title), &json!("Sheet1"), &json!("B2:C4"), &json!("B2"))
+        );
+        assert!(moved.get("rows").is_none() && moved.get("values").is_none(), "an event says where, not what is there");
+
+        // An edit: the workbook changed, the selection did not.
+        h.state_mut().session.run("cell.set", json!({"cell": "B2", "input": "hello"})).unwrap();
+        let events = told(&mut h, &address, &mut next);
+        assert_eq!(names(&events), ["workbookChanged"], "{events:?}");
+        assert_eq!(events[0]["workbook"], json!(title));
+        // Undoing it and doing it again are changes too.
+        for command in ["edit.undo", "edit.redo"] {
+            h.state_mut().session.run(command, json!({})).unwrap();
+            assert_eq!(names(&told(&mut h, &address, &mut next)), ["workbookChanged"], "{command}");
+        }
+        // Several things in one frame: each kind is told once, the latest of it.
+        h.state_mut().session.run("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+        h.state_mut().session.run("cell.set", json!({"cell": "A2", "input": "2"})).unwrap();
+        h.state_mut().session.run("selection.set", json!({"range": "A1"})).unwrap();
+        h.state_mut().session.run("selection.set", json!({"range": "A2"})).unwrap();
+        let events = told(&mut h, &address, &mut next);
+        assert_eq!(names(&events), ["workbookChanged", "selectionChanged"], "{events:?}");
+        assert_eq!(events[1]["range"], json!("A2"));
+
+        // Another sheet is chosen: the selection is on that sheet now.
+        h.state_mut().session.run("home.insertSheet", json!({})).unwrap();
+        let events = told(&mut h, &address, &mut next);
+        assert!(names(&events).contains(&"selectionChanged"), "{events:?}");
+        let on_new = events.iter().find(|e| e["name"] == "selectionChanged").unwrap();
+        assert_ne!(on_new["sheet"], json!("Sheet1"), "{on_new}");
+
+        // Another workbook becomes the one worked on.
+        h.state_mut().session.new_workbook();
+        let other = h.state().session.active().unwrap().title.clone();
+        let events = told(&mut h, &address, &mut next);
+        assert_eq!(names(&events), ["workbookActivated", "selectionChanged"], "{events:?}");
+        assert_eq!((&events[0]["workbook"], &events[1]["workbook"]), (&json!(other), &json!(other)));
+
+        // What the panel itself changes is told like any other change.
+        let wrote = run(&mut h, &address, "sheet.read", json!({}));
+        assert_eq!(wrote["ok"], true, "{wrote}");
+        h.state_mut().session.run("cell.set", json!({"cell": "A1", "input": "by hand"})).unwrap();
+        assert_eq!(names(&told(&mut h, &address, &mut next)), ["workbookChanged"]);
+    }
+
+    /// A module that wasn't granted `read` is told nothing, and what it was refused is noted in
+    /// the Developer console.
+    #[test]
+    fn a_panel_that_may_not_read_is_told_nothing_and_refusals_are_noted() {
+        use gridcraft_aniefork_dev::console::{Console, Kind};
+        let s = Sandbox::new("events-blind");
+        install(&s, "blind-panel", &["write"]);
+        install(&s, "reader-panel", &["read"]);
+        let (a, opened) = app();
+        let mut h = harness(a);
+        let blind = open_panel(&mut h, &opened, "blind-panel");
+        let reader = open_panel(&mut h, &opened, "reader-panel");
+        // The panels have been open for a frame: what happens from here on is told.
+        h.run_steps(2);
+        h.state_mut().session.run("selection.set", json!({"range": "B2"})).unwrap();
+        h.run_steps(2);
+        let refused = call(&mut h, &blind, json!({"call": "events", "after": 0}));
+        assert!(refused["ok"] == false && refused["error"].as_str().unwrap().contains("`read`"), "{refused}");
+        assert!(refused.get("events").is_none());
+        // The module beside it, which may read, is told.
+        let told = call(&mut h, &reader, json!({"call": "events", "after": 0}));
+        assert_eq!(told["events"][0]["range"], json!("B2"), "{told}");
+        // A command it wasn't granted is refused, and the console says so under the module's id.
+        let write = run(&mut h, &reader, "cell.set", json!({"cell": "A1", "input": "x"}));
+        assert!(write["ok"] == false && write["error"].as_str().unwrap().contains("`write`"), "{write}");
+        let noted = |module: &str, text: &str| {
+            Console::global().entries().iter().any(|e| e.module == module && e.kind == Kind::Refused && e.text.contains(text))
+        };
+        assert!(noted("reader-panel", "wasn't granted `write`, which cell.set needs"));
+        assert!(noted("blind-panel", "which events need"));
+        // What a panel logs is there as well.
+        let logged = call(&mut h, &reader, json!({"call": "log", "text": "the reader panel says hello"}));
+        assert_eq!(logged["ok"], true);
+        assert!(
+            Console::global().entries().iter().any(|e| e.module == "reader-panel" && e.kind == Kind::Log && e.text == "the reader panel says hello")
+        );
     }
 
     /// The whole path in the real window: Open Panel, and then the panel's page, as a browser

@@ -50,6 +50,9 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
     if big_button(ui, Icon::Folder, "Modules", "The modules you have installed, and whether you trust them", false).clicked() {
         app.open_dialog(super::modules::NAME, json!({}));
     }
+    if big_button(ui, Icon::Script, "Console", "What your modules print and log, and what failed", false).clicked() {
+        app.open_dialog(super::console::NAME, json!({}));
+    }
     separator(ui);
     if big_button(ui, Icon::Settings, "Options", "Settings, and whether this tab is shown", false).clicked() {
         // Upstream's command: it opens the Options page, where the fork's settings are too.

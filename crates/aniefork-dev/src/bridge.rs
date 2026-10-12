@@ -20,6 +20,10 @@
 //! - `run`, `batch` and `selection` need the workbook, which only the app has. They are put in a
 //!   queue as [`Call`]s, with what the module was granted, for the app to carry out on its own
 //!   thread ([`Bridge::take_calls`]). The app decides what each command needs ([`needs`]).
+//! - `events` hands a panel what happened in GridCraft since it last asked ([`EVENTS`]), waiting a
+//!   while for something to happen if nothing has. The app says what happened ([`Bridge::emit`]);
+//!   a module that wasn't granted `read` is told nothing.
+//! - `log` writes a line to the Developer console ([`crate::console`]).
 //!
 //! The panel is given its `spreadsheet` object by [`CLIENT`], a script served beside the page, and
 //! TypeScript is told its shape by [`typings`]. Both are text made here: the repository holds no
@@ -60,12 +64,39 @@ pub const MAX_BODY_BYTES: usize = crate::python::MAX_REQUEST_BYTES;
 pub struct Limits {
     pub read: Duration,
     pub answer: Duration,
+    /// How long a panel that asks for events is kept waiting for one before it is told there
+    /// were none, and asks again.
+    pub hold: Duration,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { read: Duration::from_secs(10), answer: Duration::from_secs(30) }
+        Limits { read: Duration::from_secs(10), answer: Duration::from_secs(30), hold: Duration::from_secs(20) }
     }
+}
+
+/// The events a panel can listen for (`spreadsheet.on`), and what each tells. All of them say
+/// something about the open workbooks, so a module needs `read` to be told any.
+pub const EVENTS: &[(&str, &str)] = &[
+    ("selectionChanged", "{workbook, sheet, range, active}: the selection moved, or another sheet was chosen"),
+    ("workbookChanged", "{workbook}: something in the workbook changed (an edit, an undo, a redo)"),
+    ("workbookActivated", "{workbook}: another workbook became the one being worked on (it was opened, or switched to)"),
+];
+
+/// The most events kept for a module's panels to collect. When more pile up the oldest are
+/// dropped, and a panel that hadn't collected them is told it missed some.
+pub const MAX_EVENTS: usize = 256;
+/// The most panels of one module that can be kept waiting for events at once. More are answered
+/// at once and told to ask again in a moment.
+pub const MAX_LISTENERS: usize = 8;
+
+/// Something that happened in GridCraft.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    /// One of [`EVENTS`].
+    pub name: &'static str,
+    /// What it tells: the fields of an object.
+    pub detail: Json,
 }
 
 /// What a command does, as the app that owns it knows.
@@ -178,8 +209,74 @@ pub const CLIENT: &str = r#"// GridCraft: the `spreadsheet` object of a module's
 
   const step = (c) => (Array.isArray(c) ? { command: c[0], params: c[1] || {} } : { command: c.command, params: c.params || {} });
 
+  // Events: one request is kept open for as long as anything listens, and asked again when it is answered.
+  const handlers = new Map();
+  let listening = false;
+  const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+
+  async function listen(after) {
+    if (listening) return;
+    listening = true;
+    let wait = 0;
+    while (handlers.size) {
+      let reply;
+      try {
+        reply = await call({ call: "events", after });
+        wait = 0;
+      } catch (error) {
+        wait = Math.min(wait ? wait * 2 : 1000, 15000);
+        await pause(wait);
+        continue;
+      }
+      after = reply.next;
+      for (const event of reply.events) {
+        for (const handler of Array.from(handlers.get(event.name) || [])) {
+          try {
+            handler(event);
+          } catch (error) {
+            console.error(error);
+          }
+        }
+      }
+      if (reply.again) await pause(reply.again * 1000);
+    }
+    listening = false;
+  }
+
+  function off(name, handler) {
+    const listeners = handlers.get(name);
+    if (!listeners) return;
+    listeners.delete(handler);
+    if (!listeners.size) handlers.delete(name);
+  }
+
+  async function on(name, handler) {
+    if (typeof handler !== "function") throw new SpreadsheetError("spreadsheet.on needs a function to call.");
+    const reply = await call({ call: "events", names: [name] });
+    if (!handlers.has(name)) handlers.set(name, new Set());
+    handlers.get(name).add(handler);
+    listen(reply.next);
+    return () => off(name, handler);
+  }
+
+  const words = (value) => {
+    if (typeof value === "string") return value;
+    try {
+      const text = JSON.stringify(value);
+      return text === undefined ? String(value) : text;
+    } catch (error) {
+      return String(value);
+    }
+  };
+
   window.spreadsheet = Object.freeze({
     Error: SpreadsheetError,
+    on,
+    off,
+    log: (...values) => call({ call: "log", text: values.map(words).join(" ") }).then(
+      () => undefined,
+      () => undefined
+    ),
     run: async (command, params) => (await call({ call: "run", command, params: params || {} })).result,
     batch: async (commands, options) =>
       (await call({ call: "batch", label: options && options.label, commands: Array.from(commands, step) })).results,
@@ -217,6 +314,16 @@ interface SpreadsheetInfo {
   granted: string[];
 }
 
+/** What a function given to `spreadsheet.on` is handed, for each event. */
+interface SpreadsheetEvents {
+  /** The selection moved, or another sheet was chosen. */
+  selectionChanged: { name: "selectionChanged"; seq: number; workbook: string; sheet: string; range: string; active: string };
+  /** Something in the workbook changed: an edit, an undo, a redo. */
+  workbookChanged: { name: "workbookChanged"; seq: number; workbook: string };
+  /** Another workbook became the one being worked on: it was opened, or switched to. */
+  workbookActivated: { name: "workbookActivated"; seq: number; workbook: string };
+}
+
 /** One step of a batch: `["home.bold", {range: "A1:C1"}]` or `{command, params}`. */
 type SpreadsheetStep =
   | [keyof SpreadsheetCommands, SpreadsheetParams?]
@@ -242,6 +349,16 @@ interface Spreadsheet {
   write(range: string, rows: unknown[][], options?: { sheet?: string }): Promise<any>;
   /** The module, and what the user granted it. */
   info(): Promise<SpreadsheetInfo>;
+  /**
+   * Calls `handler` each time the event happens, until the function this resolves to is called.
+   * Needs `read`. Events that pile up are thinned: a handler is told where the selection is now,
+   * not every place it has been.
+   */
+  on<K extends keyof SpreadsheetEvents>(name: K, handler: (event: SpreadsheetEvents[K]) => void): Promise<() => void>;
+  /** Stops calling `handler` for the event. */
+  off<K extends keyof SpreadsheetEvents>(name: K, handler: (event: SpreadsheetEvents[K]) => void): void;
+  /** Writes a line to GridCraft's Developer console (Developer ▸ Console). What a script prints goes there too. */
+  log(...values: unknown[]): Promise<void>;
 }
 
 declare const spreadsheet: Spreadsheet;
@@ -305,6 +422,12 @@ mod web {
         pub fn take_calls(&self, _most: usize) -> Vec<Call> {
             Vec::new()
         }
+
+        pub fn emit(&self, _event: &Event) {}
+
+        pub fn listeners(&self, _id: &str) -> usize {
+            0
+        }
     }
 }
 
@@ -314,12 +437,13 @@ mod server {
     use std::io::{Read, Write};
     use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
     use std::sync::atomic::AtomicUsize;
-    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
     use std::thread;
 
     use serde_json::json;
 
     use super::*;
+    use crate::console::{self, Console};
     use crate::python::{self, PythonHost, RunError};
     use crate::trust::{Status, TrustStore};
     use crate::{manifest, module, settings};
@@ -329,6 +453,8 @@ mod server {
     const MAX_HEADERS: usize = 100;
     /// The most requests answered at once for one module; more are turned away.
     const MAX_CONNECTIONS: usize = 32;
+    /// The most events handed to a panel in one answer.
+    const EVENTS_A_REPLY: usize = 64;
 
     /// What the browser is told when the module wasn't granted `network`: load and call nothing
     /// that isn't this bridge's.
@@ -348,6 +474,16 @@ mod server {
         limits: Limits,
     }
 
+    /// What happened lately, for a module's panels to collect.
+    #[derive(Default)]
+    struct Events {
+        /// The place of the latest event: 0 before the first.
+        last: u64,
+        /// The place of the latest event dropped because too many had piled up.
+        dropped: u64,
+        kept: VecDeque<(u64, Event)>,
+    }
+
     /// One module being served.
     struct Site {
         id: String,
@@ -356,6 +492,11 @@ mod server {
         places: Places,
         stop: AtomicBool,
         open: AtomicUsize,
+        events: Mutex<Events>,
+        /// Told when there is an event to collect, or the module stops being served.
+        news: Condvar,
+        /// How many panels are being kept waiting for events.
+        listening: AtomicUsize,
         shared: Arc<Shared>,
     }
 
@@ -419,6 +560,9 @@ mod server {
                 places: places.clone(),
                 stop: AtomicBool::new(false),
                 open: AtomicUsize::new(0),
+                events: Mutex::default(),
+                news: Condvar::new(),
+                listening: AtomicUsize::new(0),
                 shared: self.0.shared.clone(),
             });
             let serving = site.clone();
@@ -454,6 +598,35 @@ mod server {
             }
             taken
         }
+
+        /// Tells the panels of every module being served that something happened.
+        ///
+        /// An event of the same name that is still the latest one waiting is replaced: a panel
+        /// wants where the selection is, not every place it has been. Whether a module is told
+        /// is decided when its panel asks, by what the user has granted it by then.
+        pub fn emit(&self, event: &Event) {
+            for site in lock(&self.0.sites).values() {
+                let mut events = lock(&site.events);
+                if events.kept.back().is_some_and(|(_, latest)| latest.name == event.name) {
+                    events.kept.pop_back();
+                }
+                events.last += 1;
+                let place = events.last;
+                events.kept.push_back((place, event.clone()));
+                while events.kept.len() > MAX_EVENTS {
+                    if let Some((gone, _)) = events.kept.pop_front() {
+                        events.dropped = gone;
+                    }
+                }
+                drop(events);
+                site.news.notify_all();
+            }
+        }
+
+        /// How many panels of the module `id` are being kept waiting for events right now.
+        pub fn listeners(&self, id: &str) -> usize {
+            lock(&self.0.sites).get(id).map_or(0, |site| site.listening.load(Ordering::SeqCst))
+        }
     }
 
     fn address(site: &Site) -> String {
@@ -474,6 +647,8 @@ mod server {
 
     fn halt(site: &Site) {
         site.stop.store(true, Ordering::SeqCst);
+        // Panels waiting for events are answered now, with none.
+        site.news.notify_all();
         // The listener is waiting for a connection: give it one, so that it sees it should stop.
         let _ = TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, site.port)), Duration::from_secs(1));
     }
@@ -822,6 +997,13 @@ mod server {
                 "granted": granted.iter().map(|p| p.code()).collect::<Vec<_>>(),
             }})),
             Some("runPython") => run_python(site, body),
+            Some("events") => events(site, found, granted, body),
+            Some("log") => {
+                // A line for the Developer console. The console bounds what it keeps.
+                let text = body.get("text").and_then(Json::as_str).unwrap_or("");
+                Console::global().push(&site.id, "panel", console::Kind::Log, text);
+                Ok(json!({}))
+            }
             Some("selection") => ask(site, found, granted, Request::Selection).map(|result| json!({"result": result})),
             Some("run") => {
                 let (command, params) = step(body)?;
@@ -841,6 +1023,66 @@ mod server {
             }
             _ => Err(fail("That is not a call GridCraft knows.")),
         }
+    }
+
+    /// Hands a panel what happened since the event it last saw, keeping it waiting a while for
+    /// something to happen if nothing has. Asked without `after`, it says where the events have
+    /// got to, so that a panel begins from now.
+    fn events(site: &Site, found: &module::Module, granted: &[Permission], body: &Json) -> Result<Json, Json> {
+        // Every event says something about the open workbooks.
+        if !granted.contains(&Permission::Read) {
+            let why = format!("{} wasn't granted `read`, which events need.", found.name());
+            Console::global().push(&site.id, "panel", console::Kind::Refused, &why);
+            return Err(fail(why));
+        }
+        if let Some(names) = body.get("names").filter(|names| !names.is_null()) {
+            let known = |name: &Json| name.as_str().is_some_and(|name| EVENTS.iter().any(|(event, _)| *event == name));
+            if !names.as_array().is_some_and(|names| names.iter().all(known)) {
+                let all: Vec<&str> = EVENTS.iter().map(|(event, _)| *event).collect();
+                return Err(fail(format!("That is not an event GridCraft has. The events are: {}.", all.join(", "))));
+            }
+        }
+        let after = match body.get("after") {
+            None | Some(Json::Null) => return Ok(json!({"events": [], "next": lock(&site.events).last})),
+            Some(place) => place.as_u64().ok_or_else(|| fail("`after` is the `next` of the answer before."))?,
+        };
+        if site.listening.fetch_add(1, Ordering::SeqCst) >= MAX_LISTENERS {
+            site.listening.fetch_sub(1, Ordering::SeqCst);
+            return Ok(json!({"events": [], "next": after, "again": 2}));
+        }
+        let collected = collect(site, after);
+        site.listening.fetch_sub(1, Ordering::SeqCst);
+        Ok(collected)
+    }
+
+    /// Waits for an event after the place `after`, and answers with those there are.
+    fn collect(site: &Site, after: u64) -> Json {
+        let events = lock(&site.events);
+        // A place this bridge never gave out (the panel outlived a bridge before this one):
+        // the panel begins again from now.
+        if after > events.last {
+            return json!({"events": [], "next": events.last, "missed": true});
+        }
+        let nothing_yet = |events: &mut Events| events.last <= after && !site.stop.load(Ordering::SeqCst);
+        let (events, _) = site.news.wait_timeout_while(events, site.shared.limits.hold, nothing_yet).unwrap_or_else(PoisonError::into_inner);
+        let fresh: Vec<Json> = events
+            .kept
+            .iter()
+            .filter(|(place, _)| *place > after)
+            .take(EVENTS_A_REPLY)
+            .map(|(place, event)| {
+                let mut told = event.detail.as_object().cloned().unwrap_or_default();
+                told.insert("name".into(), json!(event.name));
+                told.insert("seq".into(), json!(place));
+                Json::Object(told)
+            })
+            .collect();
+        let next = fresh.last().and_then(|event| event["seq"].as_u64()).unwrap_or(after);
+        let mut answer = json!({"events": fresh, "next": next});
+        if events.dropped > after {
+            answer["missed"] = json!(true);
+        }
+        answer
     }
 
     /// Runs one of the module's scripts. The Python host checks for itself that the module is
@@ -938,6 +1180,19 @@ mod tests {
             assert!(CLIENT.contains(call), "{call}");
         }
         assert!(!CLIENT.contains("127.0.0.1") && !CLIENT.contains("token"));
+        // Events and the console: the client's calls, and every event typed.
+        for call in ["call: \"events\"", "call: \"log\"", "on,", "off,"] {
+            assert!(CLIENT.contains(call), "{call}");
+        }
+        let declared = typings(&[]);
+        for (event, tells) in EVENTS {
+            assert!(declared.contains(&format!("  {event}: {{ name: \"{event}\"; seq: number;")), "{event} is typed");
+            assert!(tells.starts_with('{'), "{event} says what it tells");
+        }
+        for method in ["on<K extends keyof SpreadsheetEvents>", "off<K extends keyof SpreadsheetEvents>", "log(...values: unknown[]): Promise<void>;"]
+        {
+            assert!(declared.contains(method), "{method}");
+        }
     }
 }
 
@@ -1066,7 +1321,7 @@ mod served {
     }
 
     fn quick() -> Limits {
-        Limits { read: Duration::from_millis(300), answer: Duration::from_millis(300) }
+        Limits { read: Duration::from_millis(300), answer: Duration::from_millis(300), hold: Duration::from_millis(300) }
     }
 
     #[test]
@@ -1419,6 +1674,243 @@ mod served {
         drop(bridge);
         assert!(unanswered(port));
         drop(t);
+    }
+
+    fn selection(range: &str) -> Event {
+        Event { name: "selectionChanged", detail: json!({"workbook": "Book1", "sheet": "Sheet1", "range": range, "active": range}) }
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    fn now() -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    /// Waits until this many of the module's panels are being kept waiting for events.
+    fn waiting_panels(s: &Served, count: usize) {
+        for _ in 0..2_000 {
+            if s.bridge.listeners("clean-data") == count {
+                return;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        panic!("{} panels are waiting, not {count}", s.bridge.listeners("clean-data"));
+    }
+
+    fn changed() -> Event {
+        Event { name: "workbookChanged", detail: json!({"workbook": "Book1"}) }
+    }
+
+    /// The Developer console's entries that this module's panel made with this text in them.
+    fn console_has(kind: crate::console::Kind, text: &str) -> bool {
+        crate::console::Console::global().entries().iter().any(|e| e.module == "clean-data" && e.kind == kind && e.text.contains(text))
+    }
+
+    #[test]
+    fn a_panel_is_told_what_happened_since_it_last_asked() {
+        let s = Served::new("events", "\"read\"", quick());
+        // Asked without a place, the bridge says where the events have got to: the panel begins from now.
+        s.bridge.emit(&selection("A1"));
+        let begin = s.call(json!({"call": "events"}));
+        assert_eq!((&begin["ok"], &begin["events"], &begin["next"]), (&json!(true), &json!([]), &json!(1)), "{begin}");
+        // What happens after that is handed over, with its name and its place.
+        s.bridge.emit(&changed());
+        s.bridge.emit(&selection("B2"));
+        let told = s.call(json!({"call": "events", "after": 1}));
+        assert_eq!(
+            told["events"],
+            json!([
+                {"name": "workbookChanged", "seq": 2, "workbook": "Book1"},
+                {"name": "selectionChanged", "seq": 3, "workbook": "Book1", "sheet": "Sheet1", "range": "B2", "active": "B2"},
+            ]),
+            "{told}"
+        );
+        assert_eq!(told["next"], json!(3));
+        assert!(told.get("missed").is_none() && told.get("again").is_none(), "{told}");
+        // Nothing new: the panel is kept waiting a while, then told so, and asks again from the same place.
+        let asked = now();
+        let quiet = s.call(json!({"call": "events", "after": 3}));
+        assert_eq!((&quiet["events"], &quiet["next"]), (&json!([]), &json!(3)), "{quiet}");
+        assert!(asked.elapsed() >= Duration::from_millis(250), "it waited: {:?}", asked.elapsed());
+        // Events of one kind that pile up are thinned to the latest; another kind between them keeps them apart.
+        for range in ["C1", "C2", "C3"] {
+            s.bridge.emit(&selection(range));
+        }
+        s.bridge.emit(&changed());
+        s.bridge.emit(&selection("D9"));
+        let thinned = s.call(json!({"call": "events", "after": 3}));
+        let seen: Vec<(String, String)> = thinned["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap().to_string(), e["range"].as_str().unwrap_or("").to_string()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("selectionChanged".to_string(), "C3".to_string()),
+                ("workbookChanged".to_string(), String::new()),
+                ("selectionChanged".to_string(), "D9".to_string())
+            ]
+        );
+        assert!(thinned.get("missed").is_none(), "thinning is not missing: {thinned}");
+        // A place this bridge never gave out: the panel begins again from now, and is told it missed some.
+        let lost = s.call(json!({"call": "events", "after": 5_000}));
+        assert_eq!((&lost["events"], &lost["next"], &lost["missed"]), (&json!([]), &thinned["next"], &json!(true)), "{lost}");
+        // What makes no sense is refused, saying what the events are.
+        let unknown = s.call(json!({"call": "events", "names": ["selectionChanged", "somethingElse"]}));
+        assert!(unknown["ok"] == false && unknown["error"].as_str().unwrap().contains("workbookActivated"), "{unknown}");
+        assert_eq!(s.call(json!({"call": "events", "names": ["workbookChanged"]}))["ok"], true);
+        for after in [json!("soon"), json!(-1), json!(1.5), json!([1])] {
+            let answer = s.call(json!({"call": "events", "after": after}));
+            assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("after"), "{after}: {answer}");
+        }
+        assert!(s.bridge.take_calls(10).is_empty(), "events never wait for the app");
+    }
+
+    #[test]
+    fn a_panel_that_waits_is_answered_as_soon_as_something_happens() {
+        let s = Arc::new(Served::new("events-wake", "\"read\"", Limits { hold: Duration::from_secs(20), ..quick() }));
+        let waiting = s.clone();
+        let asked = now();
+        let panel = thread::spawn(move || waiting.call(json!({"call": "events", "after": 0})));
+        waiting_panels(&s, 1);
+        s.bridge.emit(&selection("B2"));
+        let told = panel.join().unwrap();
+        assert!(asked.elapsed() < Duration::from_secs(10), "it did not wait out the whole hold: {:?}", asked.elapsed());
+        assert_eq!(told["events"][0]["range"], json!("B2"), "{told}");
+        // And when its module stops being served, it is answered with nothing rather than left hanging.
+        let waiting = s.clone();
+        let asked = now();
+        let panel = thread::spawn(move || {
+            let (status, _, body) = waiting.send(&waiting.post(&json!({"call": "events", "after": 1}).to_string()));
+            (status, body)
+        });
+        waiting_panels(&s, 1);
+        s.bridge.stop("clean-data");
+        let (status, body) = panel.join().unwrap();
+        assert!(asked.elapsed() < Duration::from_secs(10), "{:?}", asked.elapsed());
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(serde_json::from_str::<Json>(&body).unwrap()["events"], json!([]));
+    }
+
+    #[test]
+    fn a_module_that_was_not_granted_read_is_told_nothing() {
+        let s = Served::new("events-unread", "\"python\"", quick());
+        s.bridge.emit(&selection("B2"));
+        for call in [json!({"call": "events"}), json!({"call": "events", "after": 0}), json!({"call": "events", "names": ["selectionChanged"]})] {
+            let answer = s.call(call.clone());
+            assert!(answer["ok"] == false && answer["error"].as_str().unwrap().contains("`read`"), "{call}: {answer}");
+            assert!(answer.get("events").is_none(), "{answer}");
+        }
+        assert!(console_has(crate::console::Kind::Refused, "which events need"), "the refusal is in the Developer console");
+        // Granted `read` later (the user reviewed it again), the same panel is told from then on.
+        s.t.write("modules/clean-data/module.toml", &manifest("\"read\", \"python\"", "panel/index.html"));
+        assert_eq!(s.send(&s.post(&json!({"call": "events"}).to_string())).0, 403, "changed files are not trusted yet");
+        s.trust(false);
+        assert_eq!(s.call(json!({"call": "events", "after": 0}))["events"][0]["range"], json!("B2"));
+    }
+
+    #[test]
+    fn events_that_pile_up_too_far_are_dropped_oldest_first_and_the_panel_is_told() {
+        let s = Served::new("events-pile", "\"read\"", quick());
+        // Kinds that alternate are never thinned.
+        for n in 0..(MAX_EVENTS + 10) / 2 {
+            s.bridge.emit(&selection(&format!("A{}", n + 1)));
+            s.bridge.emit(&changed());
+        }
+        let first = s.call(json!({"call": "events", "after": 0}));
+        let events = first["events"].as_array().unwrap();
+        assert_eq!(first["missed"], json!(true), "ten were dropped before it asked");
+        assert_eq!(events.len(), 64, "an answer holds only so many");
+        assert_eq!(events[0]["seq"], json!(11), "the oldest ten are gone");
+        // It collects the rest in order, and is not told again that it missed any.
+        let mut next = first["next"].as_u64().unwrap();
+        let mut collected = events.len();
+        loop {
+            let more = s.call(json!({"call": "events", "after": next}));
+            let events = more["events"].as_array().unwrap();
+            if events.is_empty() {
+                break;
+            }
+            assert!(more.get("missed").is_none(), "{more}");
+            assert_eq!(events[0]["seq"].as_u64(), Some(next + 1));
+            collected += events.len();
+            next = more["next"].as_u64().unwrap();
+        }
+        assert_eq!(collected, MAX_EVENTS);
+        assert_eq!(next, (MAX_EVENTS + 10) as u64);
+    }
+
+    #[test]
+    fn only_so_many_panels_are_kept_waiting() {
+        let s = Arc::new(Served::new("events-many", "\"read\"", Limits { hold: Duration::from_secs(20), ..quick() }));
+        let panels: Vec<_> = (0..MAX_LISTENERS)
+            .map(|_| {
+                let waiting = s.clone();
+                thread::spawn(move || waiting.call(json!({"call": "events", "after": 0})))
+            })
+            .collect();
+        waiting_panels(&s, MAX_LISTENERS);
+        // One more is answered at once, and told when to ask again.
+        let asked = now();
+        let answer = s.call(json!({"call": "events", "after": 0}));
+        let took = asked.elapsed();
+        assert_eq!((&answer["ok"], &answer["events"], &answer["next"], &answer["again"]), (&json!(true), &json!([]), &json!(0), &json!(2)));
+        assert!(took < Duration::from_secs(5), "{took:?}");
+        // Calls that aren't waits still get through.
+        assert_eq!(s.call(json!({"call": "info"}))["ok"], true);
+        // Something happens: every waiting panel is told.
+        s.bridge.emit(&selection("B2"));
+        for panel in panels {
+            assert_eq!(panel.join().unwrap()["events"][0]["range"], json!("B2"));
+        }
+    }
+
+    #[test]
+    fn a_panel_can_write_a_line_to_the_developer_console() {
+        let s = Served::new("log", "\"read\"", quick());
+        let answer = s.call(json!({"call": "log", "text": "the panel says h\u{e9}llo 4711"}));
+        assert_eq!(answer, json!({"ok": true}));
+        assert!(console_has(crate::console::Kind::Log, "the panel says h\u{e9}llo 4711"));
+        let entry = crate::console::Console::global().entries().into_iter().find(|e| e.text.contains("4711")).unwrap();
+        assert_eq!((entry.module.as_str(), entry.source.as_str()), ("clean-data", "panel"));
+        // Nothing to say, or something that isn't text, writes nothing and fails nothing.
+        for text in [json!(""), json!(null), json!(12), json!({"a": 1})] {
+            assert_eq!(s.call(json!({"call": "log", "text": text}))["ok"], true);
+        }
+        assert!(!console_has(crate::console::Kind::Log, "\"a\""));
+        // A module that isn't trusted any more can't write there either.
+        s.t.write("modules/clean-data/panel/app.js", "console.log('changed');");
+        let (status, _, body) = s.send(&s.post(&json!({"call": "log", "text": "from a changed module 4712"}).to_string()));
+        assert_eq!(status, 403, "{body}");
+        assert!(!console_has(crate::console::Kind::Log, "4712"));
+        assert!(s.bridge.take_calls(10).is_empty(), "the console never waits for the app");
+    }
+
+    #[test]
+    fn what_a_script_prints_and_why_it_fails_go_to_the_developer_console() {
+        use crate::console::Kind;
+        // A run that is refused is recorded, with no Python needed.
+        let without = Served::new("console-refused", "\"read\"", Limits::default());
+        without.call(json!({"call": "runPython", "script": "clean.py", "data": 1}));
+        assert!(console_has(Kind::Refused, "permission to run Python"));
+        if PythonHost::global().interpreter("").is_err() {
+            eprintln!("skipped the rest: there is no Python on this machine");
+            return;
+        }
+        let s = Served::new("console-python", "\"python\"", Limits::default());
+        s.t.write("modules/clean-data/python/talk.py", "def main(data):\n    print('talking about', data)\n    return 1\n");
+        s.trust(false);
+        assert_eq!(s.call(json!({"call": "runPython", "script": "talk.py", "data": "console-test-8841", "timeout": 30}))["result"], json!(1));
+        let entries = crate::console::Console::global().entries();
+        let printed = entries.iter().find(|e| e.kind == Kind::Printed && e.text.contains("console-test-8841")).expect("what it printed");
+        assert_eq!((printed.module.as_str(), printed.source.as_str()), ("clean-data", "talk.py"));
+        // A script that fails leaves its error and its traceback.
+        s.call(json!({"call": "runPython", "script": "broken.py"}));
+        let entries = crate::console::Console::global().entries();
+        let failed = entries.iter().rev().find(|e| e.kind == Kind::Error && e.source == "broken.py").expect("why it failed");
+        assert!(failed.text.contains("no good") && failed.text.contains("ValueError"), "{}", failed.text);
+        PythonHost::global().stop(&s.places.modules, "clean-data");
     }
 
     #[test]

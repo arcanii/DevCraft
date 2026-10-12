@@ -154,6 +154,7 @@ mod host {
 
     use serde_json::json;
 
+    use crate::console::{self, Console};
     use crate::manifest::{self, Permission};
     use crate::module;
     use crate::trust::{Status, TrustStore};
@@ -215,6 +216,27 @@ _serve()
     #[allow(clippy::disallowed_methods)]
     fn now() -> Instant {
         Instant::now()
+    }
+
+    /// Writes a run to the Developer console: what the script printed, or why it gave no result.
+    fn record(module: &str, script: &str, result: &Result<Output, RunError>) {
+        let console = Console::global();
+        match result {
+            Ok(output) => console.push(module, script, console::Kind::Printed, &output.printed),
+            Err(RunError::Script { error, trace }) => {
+                let text = if trace.trim().is_empty() {
+                    error.clone()
+                } else {
+                    format!(
+                        "{error}
+{trace}"
+                    )
+                };
+                console.push(module, script, console::Kind::Error, &text);
+            }
+            Err(RunError::Refused(why)) => console.push(module, script, console::Kind::Refused, why),
+            Err(other) => console.push(module, script, console::Kind::Error, &other.to_string()),
+        }
     }
 
     fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -501,6 +523,22 @@ _serve()
         /// and granted it `python`, and `script` is one of the files in its scripts folder.
         #[allow(clippy::too_many_arguments)]
         pub fn run(
+            &self,
+            modules: &Path,
+            trust: &Path,
+            python: &str,
+            id: &str,
+            script: &str,
+            data: &Json,
+            timeout: Duration,
+        ) -> Result<Output, RunError> {
+            let result = self.run_checked(modules, trust, python, id, script, data, timeout);
+            record(id, script, &result);
+            result
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn run_checked(
             &self,
             modules: &Path,
             trust: &Path,

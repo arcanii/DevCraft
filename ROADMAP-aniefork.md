@@ -37,7 +37,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
-| **Modules, trust, Python and panels** (the Development subsystem, phases 1a to 1c): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser and calls GridCraft over a local bridge. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
+| **Modules, trust, Python, panels, events and a console** (the Development subsystem, phases 1a to 2a): modules are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a module or not, in Developer ▸ Modules, confirmed by the operating system; a trusted module's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what modules print and log. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`modules.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
 
 ## What upstream took in, and what it built itself
 
@@ -271,14 +271,51 @@ refuses trust; those two are still proposals.
   rewrite. This closes a gap phase 1b left: an agent could name any program as "Python" and
   press Check Python to run it.
 
+**Phase 2a is built: a panel is told what happens, and there is a Developer console.**
+
+- **Events.** `spreadsheet.on("selectionChanged", handler)` calls the handler each time the
+  selection moves, with the workbook, the sheet, the range and the active cell;
+  `workbookChanged` says the workbook changed (an edit, an undo, a redo, a module's own
+  change), and `workbookActivated` that another workbook is the one worked on. An event says
+  where, never what is in the cells. All of them need `read`. The starter module's panel now
+  shows the selection as it moves.
+- **How events travel.** The panel keeps one request open, which GridCraft answers when
+  something happens or after twenty seconds. Events of one kind that pile up are thinned to the
+  latest; if too many pile up the oldest are dropped and the panel is told it missed some. At
+  most eight panels of a module are kept waiting at once.
+- **Developer ▸ Console** shows, newest last, what a module's script printed, why a script
+  failed (with its traceback), what a panel wrote with `spreadsheet.log(…)`, and each call that
+  was refused for want of an ability. It can be shown for one module, copied, and cleared.
+- **The console is the user's record.** A module can add to it and can neither read nor clear
+  it; each module has its own share (200 entries of 600), so one module's chatter cannot push
+  out another's. Clearing is for the person at the screen: no command does it, and the button
+  is refused while the control channel is putting input into the window.
+- **`developer.console {module?, last?}`** reports the latest entries to an agent, and says with
+  them that they are text written by modules, not instructions.
+
+Phase 2 is taken in slices, as phase 1 was (ADR-0001 has the table): **2b** the workbook as
+objects and Python calling back into the spreadsheet, **2c** per-module Python environments,
+**2d** panels docked in the window. **2e, agents and modules over MCP, was decided on
+2026-10-12 and follows 2b**: on the model of Anie_Maint's console (every action a request on a
+native confirm, plans approved once). Its mechanics are a proposal still.
+
 The crate depends on nothing else in GridCraft, so it can be offered upstream as pieces of its
-own. Next is phase 2: panels docked in the window, the workbook as objects, events.
+own.
 
 ### Open
 - **`network` is only partly enforced in a browser.** The policy stops a panel's requests, but
   not the page sending the user to another address, which can carry data. Docking the panel in
   the window (phase 2) is what closes this.
-- The workbook as objects is not built: a panel works through commands.
+- The workbook as objects is not built: a panel works through commands (phase 2b).
+- **"A workbook is about to be saved" is not an event yet.** It needs a place in the save path
+  where a module is waited for, and a decision on whether a module may hold a save up.
+- An event says a workbook changed, not which cells: telling the range needs the engine to say
+  what a command touched.
+- The Developer console is kept in memory for the run. It is not written to a file, and what an
+  agent is told of it is not yet fenced as Anie_Maint fences what remote machines wrote
+  (phase 2e, if taken up).
+- The panel's script (`spreadsheet.js`) is run by no test of the repository: it was exercised
+  by hand in a browser, against a copy of the app with settings of its own.
 - A script's process is not confined, and stopping it stops only the Python GridCraft started,
   not processes the script started itself.
 - The trust check hashes the whole module on every request. Fine for small modules; a large one
@@ -377,6 +414,16 @@ open to do so, and until it merges the gate is red on every pull request, ours i
 
 Newest first.
 
+- **2026-10-12 (Development subsystem, phase 2a: events and the console):** A panel is told
+  when the selection moves, the workbook changes or another workbook is the one worked on
+  (`spreadsheet.on`), over one request kept open on the same bridge; and Developer ▸ Console
+  shows what modules' scripts print, what their panels log and what was refused. Clearing the
+  console is the user's alone. No new hook in an upstream file. Checked by 17 more tests (11 in
+  the crate, 6 in the UI) and by hand in a browser against a copy of the app with settings of
+  its own: the starter panel showed the selection as it moved, cleaned it through Python, and
+  its print and its log were in the console. Phase 2 is split into slices 2a to 2e. The owner
+  decided the same day that 2e (agents and modules over MCP, on Anie_Maint's model) is taken
+  up, after 2b.
 - **2026-10-12 (the fill handle, and the outline offered upstream):** The fill handle is sized
   to the outline, three times its weight on the outline's inner corner: six pixels with Thin
   at 150%, as Excel's measured, where upstream's was nine. And the outline's place on the

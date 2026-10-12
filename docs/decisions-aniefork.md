@@ -13,7 +13,7 @@ Each record says what was decided, why, and what was turned down. Where a record
 | | |
 |---|---|
 | Status | **Accepted** by the owner, 2026-10-11, with one point left open (modules carried in workbooks) |
-| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own) and phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge) |
+| Built so far | Phase 0 (File ▸ Options, the Developer tab), phase 1a (modules can be created, inspected and trusted), phase 1b (a trusted module's Python scripts run, in a process of their own), phase 1c (a trusted module's panel opens in the browser and calls GridCraft over a local bridge) and phase 2a (a panel is told what happens in GridCraft; a Developer console shows what modules print and log) |
 | Still proposed | How the model is exposed and how trust works in detail (both below): the owner set the requirement, the mechanics are a recommendation |
 
 ### Context
@@ -54,7 +54,7 @@ The experience the owner asked for, which this record designs for:
 | Where panels appear | In the user's browser first; docked inside the GridCraft window later, over the same bridge |
 | Which Python | The user's own. A setup wizard that installs Python for the user is wanted later (backlog) |
 | Modules carried inside workbooks | **Open.** Microsoft embeds code in workbooks; GridCraft may find a different approach. See "Open: modules and workbooks" |
-| Agents using modules | Backlog. Until then the control channel and MCP cannot run a module's code |
+| Agents using modules | Backlog at first; **decided 2026-10-12: taken up as phase 2e, after the workbook as objects (2b)**, on the model of Anie_Maint's console. Until it is built the control channel and MCP cannot run a module's code |
 | Fork or upstream | Fork-only until it is proven, then offered upstream in phases. It must be modular enough for that |
 
 Two requirements came with the decisions, and shape the two sections after the next:
@@ -132,6 +132,27 @@ The requirement: a module can do what a user could do, **and more**. Read here a
 Python gets the same model as the panel does: in phase 2 a script can call back into the
 spreadsheet through an object of the same shape, instead of only receiving data and returning it.
 
+**What phase 2a built of this: events.** `spreadsheet.on(name, handler)` tells a panel when
+something happens, until the function it resolves to is called:
+
+| Event | Tells | When |
+|---|---|---|
+| `selectionChanged` | `{workbook, sheet, range, active}` | The selection moved, or another sheet was chosen |
+| `workbookChanged` | `{workbook}` | Something in the workbook changed: an edit, an undo, a redo, a change a module made |
+| `workbookActivated` | `{workbook}` | Another workbook became the one worked on: it was opened, or switched to |
+
+An event says where and what kind, never what is in the cells: a handler that wants the values
+asks for them, and is checked for `read` like any other call. Every event needs `read`, because
+each says something about the open workbooks. Events of one kind that pile up are thinned to
+the latest, so a panel is told where the selection is, not every place it has been. **"A
+workbook is about to be saved" is not built**: it needs a place in the save path where a module
+is waited for, and a decision on whether a module may hold a save up.
+
+How they travel: the panel keeps one request open (`events`), which GridCraft answers when
+something happens or after twenty seconds, and the panel asks again. No new kind of connection,
+so the bridge's rules hold for it unchanged: the token, the module's own page, trust read from
+disk for every request.
+
 **What phase 1 built of this.** `spreadsheet.run(id, params)` reaches every command of the engine
 (313 today). A module is a program calling GridCraft: commands never open a dialog for it, and the
 window's own commands (the theme, the dialogs) are not offered. `spreadsheet.batch([...])` runs
@@ -199,6 +220,14 @@ The requirement: the user chooses to trust a module or not. The mechanics:
   into the window (and for a moment after), and the Modules dialog works from a state of its
   own that the channel can't write. Without this, an agent could have named any program as
   "Python" and pressed Check Python to run it: a gap in phase 1b, closed in 1c.
+- **The Developer console is the user's record of what modules did** (phase 2a): what a script
+  printed, why a script or a call failed, what a panel wrote with `spreadsheet.log`, and each
+  call refused for want of an ability. A module can add to it and can neither read it nor
+  clear it, and each module has a share of it that another's chatter cannot take. Clearing it
+  is for the person at the screen alone, like trusting: there is no command for it, and the
+  button is refused while the control channel is putting input into the window, because an
+  agent that could clear it could hide what a module did. `developer.console` reports it, and
+  says with it that the entries are text written by modules, not instructions.
 - **Trust can be taken back** at any time, and the list of trusted modules is one readable file in
   the user's settings.
 
@@ -224,7 +253,8 @@ contents by the user. Directions to weigh when this is taken up:
 
 - The fork gains its first non-Rust runtime code: `spreadsheet.js`, the small client a panel loads.
   Upstream's rule is "Rust only (no handwritten JS/TS)". The exception is kept as small as it can
-  be: the client is about fifty lines of text inside the bridge's Rust source, the typings are
+  be: the client is about a hundred and ten lines of text inside the bridge's Rust source (fifty
+  before events and the console's `log` were added in phase 2a), the typings are
   made by Rust code from the command list, both live only in the new crate, and the repository
   holds no JavaScript or TypeScript file. Starter modules are created by "New Module" from
   templates compiled into the app, so no sample panel or script is checked in. This exception
@@ -263,12 +293,38 @@ contents by the user. Directions to weigh when this is taken up:
 | 1a | The crate's first piece: manifests, the module list, fingerprints, the trust store; Developer ▸ Modules to see modules and trust or stop trusting them; a "New Module" starter. Nothing runs yet | **Done**, 2026-10-11: a starter module can be created, inspected, trusted, changed (it becomes untrusted again) and trusted again |
 | 1b | The Python host, and the operating-system confirmation for giving trust | **Done**, 2026-10-11: a trusted module's script runs on data and returns JSON, with a time limit; an untrusted one is refused. Developer ▸ Modules can run a script on the selection and show what it returned |
 | 1c | The bridge, `spreadsheet.js`, the typings; panels open in the browser | **Done**, 2026-10-11: the starter module's panel, open in a browser, reads the selection, runs its Python script on it and writes the result back as one undo step. The workbook as objects (the second layer of "Exposing the model") moved to phase 2 |
-| 2 | Panels docked in the window (which is what lets `network` be enforced fully); the workbook as objects; events; a Developer console; per-module Python environments; Python calling back into the spreadsheet | The same starter module runs docked, reacts to the selection changing, and shows its script's output in the console |
+| 2a | Events, and the Developer console | **Done**, 2026-10-12: the starter module's panel, open in a browser, shows the selection as it moves, and what its script prints and its panel logs shows in Developer ▸ Console |
+| 2b | The workbook as objects (`spreadsheet.workbook`, sheets, ranges, tables, names), built on the commands; Python calling back into the spreadsheet through an object of the same shape | A script changes the sheet itself, instead of only returning data for the panel to write |
+| 2c | Per-module Python environments: the packages of `requirements.txt` in an environment of the module's own, installed only when the user asks | The starter module's script uses pandas without the user installing anything by hand |
+| 2d | Panels docked in the window, in the system web view (which is what lets `network` be enforced fully) | The same starter module runs docked, unchanged |
+| 2e | Agents and modules over MCP (below). **Decided 2026-10-12, to follow 2b**; its mechanics are still a proposal | An agent asks to run a trusted module's script, and it runs only on the user's yes |
 | 3 | Worksheet functions, commands and buttons added by modules; packaging and sharing; the web build | A module's Python function can be used in a formula |
+
+### Agents and modules over MCP (phase 2e)
+
+The owner asked (2026-10-12) whether the Development subsystem has an MCP, and pointed at
+Anie_Maint as a model. Today it has none of its own. GridCraft's MCP server (`gridcraft-cli
+mcp`, upstream's) reaches every command, and through the running app the fork's reporting ones
+(`developer.modules`, `developer.console`); it cannot trust a module, run a script or open a
+panel.
+
+**Decided the same day: it is taken up, after phase 2b.** The workbook as objects and Python
+calling back come first because they settle what an agent would be asking a module to do.
+What follows is the shape proposed for it, which the owner has not gone through point by
+point. Anie_Maint's three decisions map onto modules closely:
+
+| Anie_Maint | Here |
+|---|---|
+| D17: a read-only MCP, with what remote machines wrote fenced as untrusted data | Reading modules and the Developer console. What scripts print is text a module wrote: it reaches an agent inside a fence that says so |
+| D22: every action is a request, raised as a native confirm that says what will be done and that a machine asked; only the click carries it out; off by default, turned on by hand | "Run this script of this trusted module on this data" as a request. The confirm is the operating system's, which the fork already uses for trust and which synthetic input cannot answer. A cancel is an answer, and asking again waits longer each time |
+| D25: a plan approved once, whose steps then run without a click, inside a window that closes | "This agent may run this script up to N times in the next T minutes", approved once |
+| Never through the MCP: the console's keys and its configuration | Never through an agent: installing or trusting a module, granting an ability, naming the Python, turning this option on, clearing the console |
+
+What an agent asked for, and what happened, would be written to the Developer console, which
+is why the console came first.
 
 ### Backlog
 
 - A setup wizard that installs Python for the user.
-- Letting agents use modules: an option that lets the control channel and MCP run a trusted
-  module's scripts, but never install or trust one.
+- (Letting agents use modules moved out of the backlog: it is phase 2e.)
 - Modules and workbooks (the open point above).

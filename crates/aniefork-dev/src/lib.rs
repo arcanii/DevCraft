@@ -11,7 +11,9 @@
 //! - [`module`]: modules on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
 //! - [`python`]: running a trusted module's scripts in a process of their own.
-//! - [`bridge`]: serving a trusted module's panel to the browser, and carrying its calls.
+//! - [`bridge`]: serving a trusted module's panel to the browser, carrying its calls, and telling
+//!   it what happens in GridCraft.
+//! - [`console`]: the Developer console: what modules printed and logged, and what failed.
 //! - [`starter`]: "New Module".
 //! - [`paths`], [`settings`]: where modules, decisions and the subsystem's settings are kept.
 //!
@@ -21,6 +23,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bridge;
+pub mod console;
 pub mod manifest;
 pub mod module;
 pub mod paths;
