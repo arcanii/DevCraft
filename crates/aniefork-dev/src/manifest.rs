@@ -8,6 +8,7 @@
 //! description = "Tidies a table"     # optional
 //! permissions = ["read", "write", "python"]
 //! workbook = "Budget.xlsm"           # optional: the workbook this is the code of, by its file's name
+//! kit = "anie"                       # optional: the development kit it is a project of
 //!
 //! [panel]
 //! entry = "panel/index.html"         # optional: the page GridCraft serves as its panel
@@ -51,6 +52,8 @@ pub fn is_manifest(path: &str) -> bool {
 }
 /// The largest manifest read (bytes).
 pub const MAX_BYTES: u64 = 64 * 1024;
+/// The kit of a project whose manifest names none: the one there was before there were two.
+pub const DEFAULT_KIT: &str = "anie";
 
 /// Something a project asks to be allowed to do. The user grants them together, by trusting it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -115,6 +118,10 @@ pub struct Manifest {
     /// The workbook it is the code of, by its file's name. `None`: it is a library, for any
     /// workbook. It only says what the project is for: nothing is allowed or run because of it.
     pub workbook: Option<String>,
+    /// The development kit it is a project of, by the kit's id ([`DEFAULT_KIT`] when it names
+    /// none). Whether this build has such a kit, and what a project of it may hold, is for
+    /// `kit::check` to say.
+    pub kit: String,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +133,7 @@ struct Raw {
     description: Option<String>,
     permissions: Option<Vec<String>>,
     workbook: Option<String>,
+    kit: Option<String>,
     panel: Option<RawPanel>,
     python: Option<RawPython>,
 }
@@ -164,8 +172,27 @@ fn text(value: Option<String>, what: &str, max: usize, required: bool) -> Result
     Ok(value.to_string())
 }
 
+/// Whether a file or folder of this name, anywhere in a project's folder, is what git keeps
+/// there (`.git`, whatever its capitals). It is not part of the project: it changes with almost
+/// everything git does, so it is left out of the project's files and of its fingerprint. That
+/// is safe only because nothing in it is ever served, run, built, read out or written: see
+/// [`inner_path`], which every path into a project goes through.
+pub fn kept_by_git(name: &str) -> bool {
+    name.eq_ignore_ascii_case(".git")
+}
+
+/// Whether a name could reach what git keeps on some file system: `.git` itself, the short
+/// name Windows gives it (`GIT~1`), or either with characters in it that a Mac's older file
+/// system leaves out when it compares names.
+fn reaches_git(part: &str) -> bool {
+    let left_out = |c: &char| matches!(c, '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}');
+    let seen: String = part.chars().filter(|c| !left_out(c)).collect();
+    let short = seen.to_ascii_lowercase().strip_prefix("git~").is_some_and(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()));
+    kept_by_git(&seen) || short
+}
+
 /// A path inside the project: relative, `/` separators, plain names only. Nothing that could name a
-/// file outside the project's folder on any system.
+/// file outside the project's folder on any system, and nothing in what git keeps there.
 pub fn inner_path(path: &str) -> Result<String, String> {
     let bad = |why: &str| Err(format!("the path {path:?} {why}"));
     if path.is_empty() || path.len() > 200 {
@@ -180,6 +207,9 @@ pub fn inner_path(path: &str) -> Result<String, String> {
         }
         if part.chars().any(|c| c.is_control()) || part.starts_with(' ') || part.ends_with(' ') || part.ends_with('.') {
             return bad("has a part that is not a plain name");
+        }
+        if reaches_git(part) {
+            return bad("is in what git keeps, which is not part of a project");
         }
     }
     Ok(path.to_string())
@@ -231,6 +261,11 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
         }
     }
     permissions.sort();
+    let kit = match raw.kit {
+        None => DEFAULT_KIT.to_string(),
+        Some(kit) if valid_id(&kit) => kit,
+        Some(kit) => return Err(format!("its kit, {kit:?}, is not a kit's id (lowercase letters, digits and hyphens)")),
+    };
     Ok(Manifest {
         id,
         name: text(raw.name, "name", 80, true)?,
@@ -241,6 +276,7 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
         panel: raw.panel.and_then(|p| p.entry).map(|p| inner_path(&p)).transpose()?,
         python: raw.python.and_then(|p| p.scripts).map(|p| inner_path(&p)).transpose()?,
         workbook: raw.workbook.map(|name| workbook_name(&name)).transpose()?.flatten(),
+        kit,
     })
 }
 
@@ -273,6 +309,7 @@ scripts = "python"
         let m = parse("id = \"x\"\nname = \"X\"\nversion = \"1\"", "x").unwrap();
         assert!(m.permissions.is_empty() && m.panel.is_none() && m.python.is_none() && m.author.is_empty());
         assert_eq!(m.workbook, None, "a project that names no workbook is a library");
+        assert_eq!(m.kit, DEFAULT_KIT, "and one that names no kit is of the kit there was before there were two");
         // Keys it doesn't know are ignored: a newer project still loads.
         assert!(parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nfuture = true\n[panel]\nwidth = 300", "x").is_ok());
     }
@@ -313,6 +350,50 @@ scripts = "python"
         assert!(named(&format!("\"{}\"", "n".repeat(MAX_WORKBOOK + 1))).is_err(), "a name too long");
         assert!(same_workbook("Budget.xlsm", " budget.XLSM ") && same_workbook("Übersicht.xlsm", "übersicht.xlsm"));
         assert!(!same_workbook("Budget.xlsm", "Budget.xlsx") && !same_workbook("Budget.xlsm", ""));
+    }
+
+    #[test]
+    fn a_project_can_name_its_kit() {
+        let named = |kit: &str| parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\nkit = {kit}"), "x");
+        assert_eq!(named("\"c\"").unwrap().kit, "c");
+        assert_eq!(named("\"anie\"").unwrap().kit, "anie");
+        // Any id is read: whether this build has such a kit is not the manifest's to say.
+        assert_eq!(named("\"some-other-kit\"").unwrap().kit, "some-other-kit");
+        for bad in ["\"\"", "\"C\"", "\"c kit\"", "\"../c\"", "7", "[\"c\"]"] {
+            assert!(named(bad).is_err(), "{bad}");
+        }
+        assert!(named("\"C\"").unwrap_err().contains("is not a kit's id"));
+    }
+
+    #[test]
+    fn what_git_keeps_is_not_a_path_into_a_project() {
+        assert!(kept_by_git(".git") && kept_by_git(".GIT") && kept_by_git(".Git"));
+        assert!(!kept_by_git(".gitignore") && !kept_by_git("git") && !kept_by_git(".git2") && !kept_by_git("") && !kept_by_git(".github"));
+        for path in [
+            ".git",
+            ".git/config",
+            ".git/hooks/pre-commit",
+            ".GIT/config",
+            "src/.git/config",
+            "vendor/doom/.Git/HEAD",
+            // The short name Windows gives the folder, and names an older Mac takes for it.
+            "git~1/config",
+            "GIT~1/hooks/pre-commit",
+            "src/git~12/x",
+            ".g\u{200c}it/config",
+            "\u{feff}.git/config",
+            "gi\u{200d}t~1/config",
+        ] {
+            let refused = inner_path(path).unwrap_err();
+            assert!(refused.contains("what git keeps"), "{path:?}: {refused}");
+        }
+        // What only looks like it is an ordinary file.
+        for path in [".gitignore", ".gitattributes", ".gitmodules", ".github/workflows/ci.yml", "git/x", "src/git~x/y", "digit~1/x", "git~/x"] {
+            assert_eq!(inner_path(path).as_deref(), Ok(path));
+        }
+        // A manifest can't point into it either.
+        let pointing = "id = \"x\"\nname = \"X\"\nversion = \"1\"\n[panel]\nentry = \".git/index.html\"";
+        assert!(parse(pointing, "x").unwrap_err().contains("what git keeps"));
     }
 
     #[test]

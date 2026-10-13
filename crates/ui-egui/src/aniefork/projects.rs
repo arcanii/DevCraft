@@ -25,6 +25,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use gridcraft_aniefork_dev::bridge::Places;
+use gridcraft_aniefork_dev::kit::{self, Kit};
 use gridcraft_aniefork_dev::python::{DEFAULT_TIMEOUT, Output, PythonHost, RunError};
 use gridcraft_aniefork_dev::{Project, TrustStore, describe, manifest, project, settings, starter};
 use serde_json::{Value as Json, json};
@@ -132,15 +133,15 @@ fn stop_trusting(id: &str) -> Result<String, String> {
 }
 
 pub(super) fn create(name: &str) -> Result<String, String> {
-    create_project(name, None)
+    create_project_in(&kit::ANIE, name, None)
 }
 
-/// Creates a starter project: the code of the workbook named `workbook`, or (without one) a
-/// library, for any workbook.
-pub(super) fn create_project(name: &str, workbook: Option<&str>) -> Result<String, String> {
+/// Creates a starter project of `kit`: the code of the workbook named `workbook`, or (without
+/// one) a library, for any workbook.
+pub(super) fn create_project_in(kit: &Kit, name: &str, workbook: Option<&str>) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
-    let created = starter::create_for(&at.projects, name, workbook)?;
+    let created = starter::create_in(&at.projects, kit, name, workbook)?;
     Ok(match created.manifest.as_ref().and_then(|manifest| manifest.workbook.as_deref()) {
         Some(workbook) => format!("{} was created, as the code of {workbook}. It is not trusted yet.", created.name()),
         None => format!("{} was created. It is not trusted yet.", created.name()),
@@ -853,12 +854,12 @@ pub(crate) mod tests {
     fn a_project_that_is_one_workbooks_code_says_so_and_is_otherwise_a_project_like_any() {
         let _s = Sandbox::new("workbook-code");
         assert_eq!(
-            create_project("Budget Macros", Some("Budget.xlsm")).as_deref(),
+            create_project_in(&kit::ANIE, "Budget Macros", Some("Budget.xlsm")).as_deref(),
             Ok("Budget Macros was created, as the code of Budget.xlsm. It is not trusted yet.")
         );
-        assert_eq!(create_project("Tools", None).as_deref(), Ok("Tools was created. It is not trusted yet."));
+        assert_eq!(create_project_in(&kit::ANIE, "Tools", None).as_deref(), Ok("Tools was created. It is not trusted yet."));
         // A name that is a path is not a workbook's name: nothing is created.
-        assert!(create_project("Elsewhere", Some("../Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
+        assert!(create_project_in(&kit::ANIE, "Elsewhere", Some("../Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
         let listed = list();
         let of = |id: &str| listed["projects"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
         assert_eq!((&of("budget-macros")["kind"], &of("budget-macros")["workbook"]), (&json!("workbook"), &json!("Budget.xlsm")));

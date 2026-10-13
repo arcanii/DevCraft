@@ -440,8 +440,9 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
 - **Development** at the top: the whole at a glance.
 - **MCP Server** under it, beside the kits and not in one: the level, the connection, what
   waits for an answer, the plans.
-- **Development Kits**: the kits that are loaded. This build has one, the **Anie
-  Development Kit** (Python and Svelte). There is no way to load another yet, and the
+- **Development Kits**: the kits that are loaded. This build has two, both compiled in: the
+  **Anie Development Kit** (Python and Svelte) and the **C Development Kit**, which is
+  listed and can't build or run a project yet. There is no way to load another, and the
   window says so.
 - **Projects** under the kit, by what they are for: **workbook code** and **libraries**. A
   project has a part of its own; a new one is made in the kit's part.
@@ -524,9 +525,14 @@ own.
 - **What a project says it rebuilt is a claim.** Nothing compares a script with the
   procedure, and GridCraft can't run the macro to compare what the two give. The rebuild
   was tried once, on one small procedure.
-- **Kits: one, and no way to load another.** How one would be loaded is not decided
-  (ADR-0001 has what is known). The kit can't be turned off as a whole. A second kit, for C,
-  is planned as one compiled in: it shows two kits, and still loads none.
+- **Kits: two, and no way to load another.** How one would be loaded is not decided
+  (ADR-0001 has what is known). A kit can't be turned off as a whole. The second, for C,
+  is compiled in like the first: it shows two kits, and still loads none. **It can't build
+  or run a project**: its projects can be made, read and trusted, and that is all. An
+  agent's `create_project` makes the first kit's starter only.
+- **A project's `.git` is left out of it**, and out of everything GridCraft serves, reads
+  and writes of a project. A program the person runs in that folder themselves is not
+  GridCraft's to stop.
 - **What was made while a project was called a module is read where it is**: a
   `module.toml`, a `modules` folder, `trusted-modules.json`. Nothing is renamed for the
   person. An agent set up with the server's older tool names (`create_module` and the like)
@@ -653,6 +659,13 @@ included.
 
 Newest first.
 
+- **2026-10-13 (K1: kits as two):** On the owner's word. The C Development Kit is listed
+  beside the Anie kit; `kit = "…"` in `project.toml` says which a project is of (none: the
+  first, as before); a project that holds or asks for what its kit doesn't have can't be
+  used; the C kit has a starter and a part of the window that says it can't build or run
+  yet. **What git keeps in a project (`.git`) is left out of its files and fingerprint**,
+  and refused as a path everywhere: served, read, written, deleted, pointed at. Gate:
+  eight steps, 1577 tests.
 - **2026-10-13 (tried: zig builds `doomgeneric`; the table of the game's variables):** On
   the owner's word, zig 0.17.0 was fetched from ziglang.org (its checksum matched) and
   `doomgeneric` cloned, both into a scratch folder outside the repository; nothing was

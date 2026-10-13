@@ -7,14 +7,17 @@
 //! Development                    the whole, at a glance
 //!   MCP Server                   agents: how far they may go, and what they ask
 //!   Development Kits
-//!     Anie Development Kit       Python and Svelte: the kit this build has
+//!     Anie Development Kit       Python and Svelte
 //!       Workbook code            projects that are the code of one workbook
 //!       Libraries                projects for any workbook
+//!     C Development Kit          C: listed, and not yet able to build or run
+//!       …                        its projects, by the same two kinds
 //! ```
 //!
 //! A **kit** is a way of building on GridCraft (`gridcraft_aniefork_dev::kit`); a **project**
-//! is a folder of the kit's, with a `project.toml`. The MCP server is not a kit's: it stands
-//! beside them, at the top.
+//! is a folder with a `project.toml`, which says which kit it is of. Each kit has a part of
+//! its own, made the same way from what the kit says of itself. The MCP server is not a
+//! kit's: it stands beside them, at the top.
 //!
 //! Like a request's card (`card.rs`), what is said here is said once, as JSON, and drawn by
 //! both windows: GridCraft's own (`development.rs`) and the page (`devpage.rs`). The page is
@@ -27,7 +30,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gridcraft_aniefork_dev::kit::{self, ProjectKind};
+use gridcraft_aniefork_dev::kit::{self, Kit, ProjectKind};
 use gridcraft_aniefork_dev::{Project, TrustStore, describe, manifest, project, rebuilt, settings, showcase, vba};
 use serde_json::{Value as Json, json};
 
@@ -38,11 +41,14 @@ use crate::SheetApp;
 pub(super) const TOP: &str = "Development";
 pub(super) const SERVER: &str = "MCP Server";
 pub(super) const KITS: &str = "Development Kits";
-/// Said under the kits: there is one, and no way to another yet.
-pub(super) const KITS_NOTE: &str = "Only the kit that is built into GridCraft can be used so far: there is no way to load another yet.";
-/// Said where projects are listed: what a project is, in the words the rest of GridCraft uses.
-pub(super) const PROJECTS_NOTE: &str =
-    "A project is a folder with a project.toml, Python scripts and a web panel. It does nothing until you trust it.";
+/// Said under the kits: they are the ones compiled in, and there is no way to another yet.
+pub(super) const KITS_NOTE: &str = "These kits are built into GridCraft: there is no way to load another yet.";
+
+/// Said where a kit's projects are listed: what a project of it is, and that it does nothing
+/// by being there.
+pub(super) fn projects_note(kit: &Kit) -> String {
+    format!("{} It does nothing until you trust it.", kit.project_is)
+}
 pub(super) const NO_WORKBOOK: &str = "No workbook is open.";
 /// The most projects of one kind listed down the side. The kit's own part lists them all.
 const LISTED: usize = 40;
@@ -58,19 +64,29 @@ pub(super) enum Pane {
     Overview,
     /// The MCP server: agents.
     Server,
-    /// The Anie Development Kit.
-    Kit,
-    /// One of its projects, by id.
+    /// A development kit, by its id: one of those that are loaded.
+    Kit(&'static str),
+    /// A project, by id.
     Project(String),
 }
 
 impl Pane {
+    /// A kit's part.
+    pub(super) fn kit(kit: &Kit) -> Pane {
+        Pane::Kit(kit.id)
+    }
+
+    /// The part a window falls back to when what it showed is gone: the first kit's.
+    pub(super) fn first_kit() -> Pane {
+        Pane::kit(&kit::ANIE)
+    }
+
     /// The word a window uses to ask for this part.
     pub(super) fn code(&self) -> String {
         match self {
             Pane::Overview => "overview".into(),
             Pane::Server => "server".into(),
-            Pane::Kit => "kit".into(),
+            Pane::Kit(id) => format!("kit:{id}"),
             Pane::Project(id) => format!("project:{id}"),
         }
     }
@@ -79,8 +95,11 @@ impl Pane {
         match code {
             "overview" => Some(Pane::Overview),
             "server" => Some(Pane::Server),
-            "kit" => Some(Pane::Kit),
-            _ => code.strip_prefix("project:").filter(|id| manifest::valid_id(id)).map(|id| Pane::Project(id.to_string())),
+            _ => match code.strip_prefix("kit:") {
+                // Only a kit that is loaded has a part.
+                Some(id) => kit::named(id).map(Pane::kit),
+                None => code.strip_prefix("project:").filter(|id| manifest::valid_id(id)).map(|id| Pane::Project(id.to_string())),
+            },
         }
     }
 }
@@ -166,6 +185,16 @@ fn status_says(code: &str) -> &'static str {
 
 fn kind_of(project: &Json) -> ProjectKind {
     if project["kind"] == ProjectKind::WorkbookCode.code() { ProjectKind::WorkbookCode } else { ProjectKind::Library }
+}
+
+/// The kit a described project is listed under.
+fn kit_of(project: &Json) -> &'static Kit {
+    kit::named(text(project, "kit")).unwrap_or(&kit::ANIE)
+}
+
+/// The projects of one kit, as they were described.
+fn of_kit<'a>(found: &'a Found, kit: &'a Kit) -> impl Iterator<Item = &'a Json> {
+    found.projects.iter().filter(move |project| kit_of(project).id == kit.id)
 }
 
 /// The name of the workbook that is open.
@@ -259,10 +288,10 @@ pub(super) fn nav(app: &SheetApp, pane: &Pane, now: &agents::Snapshot) -> Json {
     let found = found();
     let open = open_workbook(app);
     for kit in kit::loaded() {
-        rows.push(item(pane, Pane::Kit, kit.name, kit.made_of.join(" · "), 1));
+        rows.push(item(pane, Pane::kit(kit), kit.name, kit.made_of.join(" · "), 1));
         let Some(found) = &found else { continue };
         for kind in ProjectKind::ALL {
-            let of_kind: Vec<&Json> = found.projects.iter().filter(|project| kind_of(project) == kind).collect();
+            let of_kind: Vec<&Json> = of_kit(found, kit).filter(|project| kind_of(project) == kind).collect();
             if of_kind.is_empty() {
                 continue;
             }
@@ -282,7 +311,7 @@ pub(super) fn nav(app: &SheetApp, pane: &Pane, now: &agents::Snapshot) -> Json {
                 rows.push(row);
             }
             if of_kind.len() > LISTED {
-                rows.push(json!({"t": "more", "label": format!("and {} more", of_kind.len() - LISTED), "go": Pane::Kit.code(), "depth": 3}));
+                rows.push(json!({"t": "more", "label": format!("and {} more", of_kind.len() - LISTED), "go": Pane::kit(kit).code(), "depth": 3}));
             }
         }
     }
@@ -316,23 +345,34 @@ fn server_card(now: &agents::Snapshot) -> Json {
     })
 }
 
-/// How many projects there are, and how many of them are trusted.
-fn projects_says(found: &Found) -> String {
-    let trusted = found.projects.iter().filter(|project| project["status"] == "trusted").count();
-    match found.projects.len() {
+/// How many projects a kit has, and how many of them are trusted.
+fn projects_says(found: &Found, kit: &Kit) -> String {
+    let trusted = of_kit(found, kit).filter(|project| project["status"] == "trusted").count();
+    match of_kit(found, kit).count() {
         0 => "No projects yet".into(),
         count => format!("{count} project{}, {trusted} trusted", plural(count)),
     }
 }
 
-fn kit_card(kit: &kit::Kit, found: Option<&Found>) -> Json {
+/// Where a kit stands: all of them are compiled in so far.
+fn kit_stands(kit: &Kit) -> &'static str {
+    if kit.built_in { "Built in  ·  loaded" } else { "Loaded" }
+}
+
+/// What a kit can't do yet, or nothing for one that is whole.
+fn not_yet(kit: &Kit) -> Json {
+    if kit.not_yet.is_empty() { Json::Null } else { json!(kit.not_yet) }
+}
+
+fn kit_card(kit: &Kit, found: Option<&Found>) -> Json {
     json!({
-        "go": Pane::Kit.code(),
+        "go": Pane::kit(kit).code(),
         "name": kit.name,
         "madeOf": kit.made_of,
         "says": kit.says,
-        "standing": if kit.built_in { "Built in  ·  loaded" } else { "Loaded" },
-        "projects": found.map(projects_says),
+        "standing": kit_stands(kit),
+        "notYet": not_yet(kit),
+        "projects": found.map(|found| projects_says(found, kit)),
     })
 }
 
@@ -404,11 +444,20 @@ fn project_row(project: &Json, open: Option<&str>) -> Json {
     })
 }
 
-/// The Anie Development Kit: what it is, where it stands, and its projects by kind.
-pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context) -> Json {
-    let kit = kit::ANIE;
-    let head =
-        json!({"kind": "kit", "title": kit.name, "above": [TOP, KITS], "madeOf": kit.made_of, "standing": "Built in  ·  loaded", "says": kit.says});
+/// A development kit: what it is, where it stands, what it can't do yet, and its projects by
+/// kind. What only one kit has (the Python that runs scripts, the showcase) is said for that
+/// kit and left out for the others.
+pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
+    let head = json!({
+        "kind": "kit",
+        "id": kit.id,
+        "title": kit.name,
+        "above": [TOP, KITS],
+        "madeOf": kit.made_of,
+        "standing": kit_stands(kit),
+        "says": kit.says,
+        "notYet": not_yet(kit),
+    });
     let (Some(found), Some(at)) = (found(), projects::places()) else {
         let mut told = head;
         told["available"] = json!(false);
@@ -420,40 +469,43 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context) -> Json {
         .iter()
         .map(|kind| {
             let rows: Vec<Json> =
-                found.projects.iter().filter(|project| kind_of(project) == *kind).map(|project| project_row(project, open.as_deref())).collect();
+                of_kit(&found, kit).filter(|project| kind_of(project) == *kind).map(|project| project_row(project, open.as_deref())).collect();
             json!({"label": kind.heading(), "says": kind.says(), "projects": rows, "empty": "None yet."})
         })
         .collect();
-    let python = settings::load(&at.settings).python;
-    let standing = found.projects.iter().find(|project| project["id"] == showcase::ID).map(|project| project["status"] == "trusted");
     let mut told = head;
     for (key, value) in [
         ("available", json!(true)),
         ("projectsTitle", json!("Projects")),
-        ("projectsSays", json!(projects_says(&found))),
-        ("projectsNote", json!(PROJECTS_NOTE)),
+        ("projectsSays", json!(projects_says(&found, kit))),
+        ("projectsNote", json!(projects_note(kit))),
         ("groups", json!(groups)),
         // A new project can be the code of the workbook that is open, or a library.
         ("newFor", json!(open)),
-        ("python", json!(format!("Python: {}.", if python.is_empty() { "found automatically" } else { python.as_str() }))),
         ("folder", json!(found.folder)),
         ("canOpenFolder", json!(app.services.open_url.is_some())),
         ("console", json!(console_says())),
-        (
-            "showcase",
-            json!({
-                "stands": match standing { None => "none", Some(true) => "trusted", Some(false) => "untrusted" },
-                "text": match standing {
-                    None => "A project whose panel is a Svelte app, docked beside the sheet.",
-                    Some(true) => "Svelte Showcase is ready.",
-                    Some(false) => "Svelte Showcase is not trusted yet: review and trust it in Projects, then come back.",
-                },
-                "canDock": super::dock::available(ctx),
-                "canBrowse": app.services.open_url.is_some(),
-            }),
-        ),
     ] {
         told[key] = value;
+    }
+    // The Python that runs a project's scripts: for a kit whose projects have scripts.
+    if kit.scripts {
+        let python = settings::load(&at.settings).python;
+        told["python"] = json!(format!("Python: {}.", if python.is_empty() { "found automatically" } else { python.as_str() }));
+    }
+    // The showcase is a project of the first kit.
+    if kit.id == kit::ANIE.id {
+        let standing = found.projects.iter().find(|project| project["id"] == showcase::ID).map(|project| project["status"] == "trusted");
+        told["showcase"] = json!({
+            "stands": match standing { None => "none", Some(true) => "trusted", Some(false) => "untrusted" },
+            "text": match standing {
+                None => "A project whose panel is a Svelte app, docked beside the sheet.",
+                Some(true) => "Svelte Showcase is ready.",
+                Some(false) => "Svelte Showcase is not trusted yet: review and trust it in Projects, then come back.",
+            },
+            "canDock": super::dock::available(ctx),
+            "canBrowse": app.services.open_url.is_some(),
+        });
     }
     told
 }
@@ -465,6 +517,7 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
     let project = found.projects.iter().find(|project| project["id"] == id)?;
     let open = open_workbook(app);
     let kind = kind_of(project);
+    let kit = kit_of(project);
     let workbook = text(project, "workbook");
     let status = text(project, "status");
     let for_says = match (kind, open.as_deref().is_some_and(|open| manifest::same_workbook(open, workbook))) {
@@ -528,12 +581,15 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
     Some(json!({
         "kind": "project",
         "id": id,
-        "above": [TOP, KITS, kit::ANIE.name],
+        "above": [TOP, KITS, kit.name],
         "title": text(project, "name"),
         "version": text(project, "version"),
         "author": text(project, "author"),
         "description": text(project, "description"),
-        "kit": kit::ANIE.name,
+        "kit": kit.name,
+        "kitGo": Pane::kit(kit).code(),
+        // What its kit can't do yet is said with the project, where it would be looked for.
+        "notYet": not_yet(kit),
         "kindLabel": kind.label(),
         "forSays": for_says,
         "status": status,
@@ -542,7 +598,7 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
         "problem": project["problem"],
         "asksTitle": if status == "trusted" { "You allowed it to:" } else { "It asks to be allowed to:" },
         "asks": asks,
-        "asksNothing": "Show its panel, and nothing more.",
+        "asksNothing": if kit.panels { "Show its panel, and nothing more." } else { "Nothing." },
         "parts": parts,
         "rebuilt": rebuilt,
         "manage": "Reviewing, trusting and running it is done in Projects.",
@@ -557,8 +613,8 @@ pub(super) fn pane(app: &SheetApp, ctx: &egui::Context, pane: &Pane, now: &agent
         Pane::Overview => overview(app, now),
         // The server's part is said by whoever draws it: what waits there is decided on.
         Pane::Server => json!({"kind": "server", "title": SERVER, "above": [TOP]}),
-        Pane::Kit => kit_pane(app, ctx),
-        Pane::Project(id) => project_pane(app, id).unwrap_or_else(|| kit_pane(app, ctx)),
+        Pane::Kit(id) => kit_pane(app, ctx, kit::named(id).unwrap_or(&kit::ANIE)),
+        Pane::Project(id) => project_pane(app, id).unwrap_or_else(|| kit_pane(app, ctx, &kit::ANIE)),
     }
 }
 
@@ -593,10 +649,13 @@ mod tests {
 
     #[test]
     fn the_parts_of_the_window_have_names_a_window_can_ask_by() {
-        for pane in [Pane::Overview, Pane::Server, Pane::Kit, Pane::Project("clean-data".into())] {
+        for pane in [Pane::Overview, Pane::Server, Pane::kit(&kit::ANIE), Pane::kit(&kit::C), Pane::Project("clean-data".into())] {
             assert_eq!(Pane::parse(&pane.code()), Some(pane.clone()), "{pane:?}");
         }
-        for bad in ["", "tools", "project:", "project:../x", "project:Clean Data", "kit:other"] {
+        assert_eq!((Pane::kit(&kit::ANIE).code(), Pane::kit(&kit::C).code()), ("kit:anie".to_string(), "kit:c".to_string()));
+        assert_eq!(Pane::first_kit(), Pane::kit(&kit::ANIE));
+        // Only a kit that is loaded has a part.
+        for bad in ["", "tools", "project:", "project:../x", "project:Clean Data", "kit", "kit:", "kit:other", "kit:C", "kit:anie/x"] {
             assert_eq!(Pane::parse(bad), None, "{bad:?}");
         }
     }
@@ -608,7 +667,12 @@ mod tests {
         let mut a = app_with(None);
         let title = a.session.active().unwrap().title.clone();
         budget(&s, &title);
-        let rows = nav(&a, &Pane::Kit, &agents::snapshot());
+        // Two projects of the C kit: a library, and one that names a workbook.
+        projects::create_project_in(&kit::C, "Blink", None).unwrap();
+        write(&s, "doom/project.toml", "id = \"doom\"\nname = \"Doom\"\nversion = \"1\"\nkit = \"c\"\nworkbook = \"Doom.xlsx\"\n");
+        write(&s, "doom/src/main.c", "int main(void) { return 0; }\n");
+        forget();
+        let rows = nav(&a, &Pane::kit(&kit::ANIE), &agents::snapshot());
         let listed: Vec<(String, u64)> =
             rows.as_array().unwrap().iter().map(|row| (text(row, "label").to_string(), row["depth"].as_u64().unwrap())).collect();
         let expected = [
@@ -620,11 +684,25 @@ mod tests {
             ("Budget Macros", 3),
             ("Libraries", 2),
             ("Clean Data", 3),
+            // Each kit has its own projects under it, by the same two kinds.
+            ("C Development Kit", 1),
+            ("Workbook code", 2),
+            ("Doom", 3),
+            ("Libraries", 2),
+            ("Blink", 3),
         ];
         assert_eq!(listed, expected.map(|(label, depth)| (label.to_string(), depth)));
         let row = |label: &str| rows.as_array().unwrap().iter().find(|row| row["label"] == label).unwrap().clone();
         assert_eq!((&row("Anie Development Kit")["selected"], &row("Development")["selected"]), (&json!(true), &json!(false)));
         assert_eq!(row("Anie Development Kit")["hint"], "Python · Svelte");
+        assert_eq!(
+            (&row("C Development Kit")["go"], &row("C Development Kit")["hint"], &row("C Development Kit")["selected"]),
+            (&json!("kit:c"), &json!("C"), &json!(false))
+        );
+        assert_eq!(
+            (&row("Doom")["go"], &row("Doom")["hint"], &row("Blink")["mark"]),
+            (&json!("project:doom"), &json!("Doom.xlsx"), &json!("untrusted"))
+        );
         assert_eq!(
             (&row("MCP Server")["go"], &row("MCP Server")["hint"], &row("MCP Server")["mark"]),
             (&json!("server"), &json!("Off"), &json!("off"))
@@ -654,6 +732,13 @@ mod tests {
             (&top["server"]["level"], &top["kits"][0]["name"], &top["kits"][0]["projects"]),
             (&json!("Off"), &json!("Anie Development Kit"), &json!("2 projects, 0 trusted"))
         );
+        // Each kit counts its own projects, and the one that is not whole says what it can't do.
+        assert_eq!(
+            (&top["kits"][1]["name"], &top["kits"][1]["projects"], &top["kits"][1]["go"]),
+            (&json!("C Development Kit"), &json!("2 projects, 0 trusted"), &json!("kit:c"))
+        );
+        assert_eq!((&top["kits"][0]["notYet"], &top["kits"][1]["notYet"]), (&Json::Null, &json!(kit::C.not_yet)));
+        assert_eq!(top["kits"].as_array().map(Vec::len), Some(2));
         assert_eq!(top["kitsNote"], KITS_NOTE);
     }
 
@@ -665,11 +750,17 @@ mod tests {
         let ctx = egui::Context::default();
         let title = a.session.active().unwrap().title.clone();
         budget(&s, &title);
-        let told = kit_pane(&a, &ctx);
+        let told = kit_pane(&a, &ctx, &kit::ANIE);
         assert_eq!(
             (&told["title"], &told["madeOf"], &told["projectsSays"]),
             (&json!("Anie Development Kit"), &json!(["Python", "Svelte"]), &json!("2 projects, 0 trusted"))
         );
+        assert_eq!((&told["id"], &told["notYet"]), (&json!("anie"), &Json::Null));
+        assert_eq!(
+            told["projectsNote"],
+            "A project is a folder with a project.toml, Python scripts and a web panel. It does nothing until you trust it."
+        );
+        assert!(told["python"].is_string() && told["showcase"].is_object(), "what the first kit has of its own");
         assert_eq!(told["newFor"], json!(title));
         let groups = told["groups"].as_array().unwrap();
         assert_eq!((&groups[0]["label"], &groups[1]["label"]), (&json!("Workbook code"), &json!("Libraries")));
@@ -704,10 +795,64 @@ mod tests {
             (&library["kindLabel"], &library["forSays"], &library["rebuilt"]),
             (&json!("Library"), &json!("It is for any workbook."), &Json::Null)
         );
-        // A project that is gone gives its kit's part.
+        assert_eq!((&library["kit"], &library["kitGo"], &library["notYet"]), (&json!("Anie Development Kit"), &json!("kit:anie"), &Json::Null));
+        assert_eq!(library["asksNothing"], "Show its panel, and nothing more.");
+        // A project that is gone gives the first kit's part.
         assert!(project_pane(&a, "nowhere").is_none());
         assert_eq!(pane(&a, &ctx, &Pane::Project("nowhere".into()), &agents::snapshot())["kind"], "kit");
         assert_eq!(pane(&a, &ctx, &Pane::Project("budget".into()), &agents::snapshot())["kind"], "project");
+    }
+
+    #[test]
+    fn the_c_kit_has_a_part_of_its_own_with_its_own_projects() {
+        let s = Sandbox::new("kits-c");
+        projects::create("Clean Data").unwrap();
+        let a = app_with(None);
+        let ctx = egui::Context::default();
+        // With no project of its own yet, it says what it is and what it can't do.
+        let empty = kit_pane(&a, &ctx, &kit::C);
+        assert_eq!(
+            (&empty["kind"], &empty["id"], &empty["title"], &empty["madeOf"], &empty["standing"]),
+            (&json!("kit"), &json!("c"), &json!("C Development Kit"), &json!(["C"]), &json!("Built in  ·  loaded"))
+        );
+        assert_eq!((&empty["notYet"], &empty["projectsSays"]), (&json!(kit::C.not_yet), &json!("No projects yet")));
+        assert_eq!(empty["projectsNote"], "A project is a folder with a project.toml and C sources. It does nothing until you trust it.");
+        assert_eq!(
+            (&empty["groups"][0]["projects"], &empty["groups"][1]["projects"]),
+            (&json!([]), &json!([])),
+            "the first kit's are not listed here"
+        );
+        // What only the first kit has is not said of this one.
+        assert_eq!((&empty["python"], &empty["showcase"]), (&Json::Null, &Json::Null));
+        // A project made in it is its own, and not the first kit's.
+        assert_eq!(projects::create_project_in(&kit::C, "Blink", None).unwrap(), "Blink was created. It is not trusted yet.");
+        forget();
+        let told = kit_pane(&a, &ctx, &kit::C);
+        assert_eq!((&told["projectsSays"], &told["groups"][1]["projects"][0]["name"]), (&json!("1 project, 0 trusted"), &json!("Blink")));
+        assert_eq!(told["groups"][1]["projects"][0]["go"], "project:blink");
+        let first = kit_pane(&a, &ctx, &kit::ANIE);
+        assert_eq!((&first["projectsSays"], &first["groups"][1]["projects"].as_array().map(Vec::len)), (&json!("1 project, 0 trusted"), &Some(1)));
+        assert_eq!(pane(&a, &ctx, &Pane::kit(&kit::C), &agents::snapshot())["title"], "C Development Kit");
+        // The project says which kit it is of, and what that kit can't do yet.
+        let one = project_pane(&a, "blink").unwrap();
+        assert_eq!(
+            (&one["title"], &one["kit"], &one["kitGo"], &one["kindLabel"], &one["statusLabel"]),
+            (&json!("Blink"), &json!("C Development Kit"), &json!("kit:c"), &json!("Library"), &json!("Not trusted"))
+        );
+        assert_eq!(one["above"], json!(["Development", "Development Kits", "C Development Kit"]));
+        assert_eq!((&one["notYet"], &one["asks"], &one["asksNothing"]), (&json!(kit::C.not_yet), &json!([]), &json!("Nothing.")));
+        assert_eq!(one["parts"], json!([{"label": "2 files", "value": "project.toml, src/main.c"}]), "no panel and no scripts");
+        // One that asks for what the first kit runs can't be used, and says why.
+        write(&s, "sly/project.toml", "id = \"sly\"\nname = \"Sly\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"python\"]\n");
+        // One of a kit this GridCraft doesn't have is listed under the first kit, as a problem.
+        write(&s, "rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
+        forget();
+        let sly = project_pane(&a, "sly").unwrap();
+        assert_eq!((&sly["kit"], &sly["statusLabel"]), (&json!("C Development Kit"), &json!("Can't be used")));
+        assert_eq!(sly["problem"], "it asks for \"python\", which a project of the C Development Kit can't be given");
+        let rusty = project_pane(&a, "rusty").unwrap();
+        assert_eq!((&rusty["kit"], &rusty["statusLabel"]), (&json!("Anie Development Kit"), &json!("Can't be used")));
+        assert_eq!(rusty["problem"], "it is a project of the kit \"rust\", which this GridCraft doesn't have");
     }
 
     #[test]
@@ -716,13 +861,12 @@ mod tests {
         let a = app_with(None);
         let ctx = egui::Context::default();
         assert!(found().is_none());
-        let told = kit_pane(&a, &ctx);
-        assert_eq!(
-            (&told["title"], &told["available"], &told["unavailable"]),
-            (&json!("Anie Development Kit"), &json!(false), &json!(card::NO_PROJECTS))
-        );
+        for kit in kit::loaded() {
+            let told = kit_pane(&a, &ctx, kit);
+            assert_eq!((&told["title"], &told["available"], &told["unavailable"]), (&json!(kit.name), &json!(false), &json!(card::NO_PROJECTS)));
+        }
         let rows = nav(&a, &Pane::Overview, &agents::snapshot());
-        assert_eq!(rows.as_array().unwrap().len(), 4, "the top, the server, the heading and the kit");
+        assert_eq!(rows.as_array().unwrap().len(), 5, "the top, the server, the heading and the two kits");
         assert_eq!(overview(&a, &agents::snapshot())["kits"][0]["projects"], Json::Null);
     }
 }

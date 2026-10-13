@@ -54,7 +54,7 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::{manifest, settings, showcase, starter};
+use gridcraft_aniefork_dev::{kit, manifest, settings, showcase, starter};
 use serde_json::{Value as Json, json};
 
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
@@ -99,10 +99,12 @@ pub(super) enum Act {
     OpenFolder,
     /// Open the folder of one project.
     OpenProjectFolder(String),
-    /// Create a starter project: the code of the workbook that is open, or a library.
+    /// Create a starter project of a kit: the code of the workbook that is open, or a library.
     CreateProject {
         name: String,
         for_workbook: bool,
+        /// The kit it is a project of, by the kit's id.
+        kit: &'static str,
     },
     /// Create the Svelte showcase project (untrusted, like any new project).
     CreateShowcase,
@@ -741,8 +743,8 @@ fn overview_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
     });
 }
 
-/// The Anie Development Kit: what it needs to run, its projects by kind, a new project, and
-/// the showcase.
+/// A development kit: what it can't do yet, what it needs to run, its projects by kind, a
+/// new project, and (for the kit that has one) the showcase.
 fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Option<Act>) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(said(told, "title")).strong().size(15.0));
@@ -751,6 +753,9 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(small(said(told, "standing"))));
     });
     ui.label(said(told, "says"));
+    if let Some(not_yet) = told["notYet"].as_str() {
+        ui.label(egui::RichText::new(not_yet).color(ui.visuals().warn_fg_color));
+    }
     if told["available"] != true {
         ui.label(said(told, "unavailable"));
         return;
@@ -768,7 +773,10 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         ui.label(said(told, "console"));
     });
     ui.horizontal(|ui| {
-        ui.label(small(said(told, "python")));
+        // The Python that runs scripts: said for a kit whose projects have them.
+        if told["python"].is_string() {
+            ui.label(small(said(told, "python")));
+        }
         let folder = said(told, "folder");
         ui.label(small("Projects folder:"));
         ui.allocate_ui(egui::vec2((ui.available_width() - 110.0).clamp(80.0, 260.0), ui.spacing().interact_size.y), |ui| {
@@ -826,7 +834,10 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         let size = egui::vec2(220.0, ui.spacing().interact_size.y);
         ui.add_sized(size, egui::TextEdit::singleline(&mut state.new_name).hint_text("Its name")).labelled_by(label.id);
         if ui.button("Create Project").on_hover_text("Creates a starter project. It does nothing until you trust it.").clicked() {
-            *action = Some(Act::CreateProject { name: state.new_name.clone(), for_workbook: state.new_for });
+            // The kit is the one whose part this is: one that is loaded, or none is made.
+            if let Some(kit) = kit::named(said(told, "id")) {
+                *action = Some(Act::CreateProject { name: state.new_name.clone(), for_workbook: state.new_for, kit: kit.id });
+            }
         }
     });
     match told["newFor"].as_str() {
@@ -835,8 +846,12 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         }
         None => state.new_for = false,
     }
-    // The showcase: a panel written with a web toolkit, shown inside the window.
+    // The showcase: a panel written with a web toolkit, shown inside the window. It is the
+    // first kit's.
     let showcase = &told["showcase"];
+    if !showcase.is_object() {
+        return;
+    }
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("Showcase").strong());
@@ -882,6 +897,10 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
     }
     ui.label(said(told, "forSays"));
     ui.label(small(said(told, "statusSays")));
+    // What its kit can't do yet is said here too, where it would be looked for.
+    if let Some(not_yet) = told["notYet"].as_str() {
+        ui.label(egui::RichText::new(not_yet).color(warn));
+    }
     if let Some(problem) = told["problem"].as_str() {
         ui.label(egui::RichText::new(format!("This project can't be used: {problem}.")).color(ui.visuals().error_fg_color).strong());
     }
@@ -965,7 +984,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             if let Pane::Project(id) = &state.pane
                 && kits::project_pane(app, id).is_none()
             {
-                state.pane = Pane::Kit;
+                state.pane = Pane::first_kit();
             }
             let rows = kits::nav(app, &state.pane, &now);
             // The server's part is drawn from how things stand; the others from what `kits` says.
@@ -1057,10 +1076,11 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             state.pane = pane;
             Ok(String::new())
         }
-        Act::CreateProject { name, for_workbook } => {
+        Act::CreateProject { name, for_workbook, kit } => {
+            let kit = kit::named(kit).ok_or("There is no such development kit.")?;
             // The workbook it is the code of is the one that is open: nobody names another.
             let workbook = if for_workbook { app.session.active().map(|doc| doc.title.clone()) } else { None };
-            let created = projects::create_project(&name, workbook.as_deref())?;
+            let created = projects::create_project_in(kit, &name, workbook.as_deref())?;
             state.new_name.clear();
             state.new_for = false;
             // The window turns to what was made.
@@ -2556,7 +2576,8 @@ mod tests {
             (&json!("Anie Development Kit"), &json!("1 project, 0 trusted"))
         );
         let listed: Vec<&str> = first["nav"].as_array().unwrap().iter().map(|row| row["label"].as_str().unwrap()).collect();
-        assert_eq!(listed, ["Development", "MCP Server", "Development Kits", "Anie Development Kit", "Libraries", "Clean Data"]);
+        assert_eq!(listed, ["Development", "MCP Server", "Development Kits", "Anie Development Kit", "Libraries", "Clean Data", "C Development Kit"]);
+        assert_eq!(first["pane"]["kits"][1]["name"], "C Development Kit");
         assert_eq!((&first["nav"][0]["selected"], &first["nav"][1]["go"]), (&json!(true), &json!("server")));
         assert!(first["theme"]["window"].as_str().unwrap().starts_with('#'));
         assert!(devpage::state(h.state_mut(), &ctx).is_none(), "it is not told again at once");
@@ -2649,12 +2670,19 @@ mod tests {
             "{\"act\":\"go\",\"to\":\"project:../clean-data\"}",
             "{\"act\":\"openProjectFolder\"}",
             "{\"act\":\"createProject\"}",
+            // A kit there isn't: no project is made, of that kit or of another.
+            "{\"act\":\"go\",\"to\":\"kit\"}",
+            "{\"act\":\"go\",\"to\":\"kit:rust\"}",
+            "{\"act\":\"createProject\",\"name\":\"Rusty\",\"kit\":\"rust\"}",
+            "{\"act\":\"createProject\",\"name\":\"Rusty\",\"kit\":7}",
+            "{\"act\":\"createProject\",\"name\":\"Rusty\",\"kit\":\"../c\"}",
             wordy.as_str(),
         ] {
             assert!(!devpage::handle(h.state_mut(), &ctx, bad), "{bad:.40}");
         }
         assert_eq!(agents::snapshot().level, before);
         assert!(h.state().dialog.is_none());
+        assert!(!s.0.join("projects/rusty").exists());
         // Its other windows open in GridCraft's own.
         page(&mut h, json!({"act": "open", "name": "projects"}));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
@@ -2663,11 +2691,41 @@ mod tests {
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::macros::NAME));
         h.state_mut().dialog = None;
         // The kit's part, with its projects by what they are for.
-        page(&mut h, json!({"act": "go", "to": "kit"}));
-        let kit = told(&mut h)["pane"].clone();
-        assert_eq!((&kit["kind"], &kit["title"], &kit["standing"]), (&json!("kit"), &json!("Anie Development Kit"), &json!("Built in  ·  loaded")));
-        assert_eq!((&kit["groups"][0]["label"], &kit["groups"][0]["projects"]), (&json!("Workbook code"), &json!([])));
-        assert_eq!(kit["groups"][1]["projects"][0]["name"], "Clean Data");
+        page(&mut h, json!({"act": "go", "to": "kit:anie"}));
+        let first_kit = told(&mut h)["pane"].clone();
+        assert_eq!(
+            (&first_kit["kind"], &first_kit["title"], &first_kit["standing"]),
+            (&json!("kit"), &json!("Anie Development Kit"), &json!("Built in  ·  loaded"))
+        );
+        assert_eq!((&first_kit["groups"][0]["label"], &first_kit["groups"][0]["projects"]), (&json!("Workbook code"), &json!([])));
+        assert_eq!(first_kit["groups"][1]["projects"][0]["name"], "Clean Data");
+        // The second kit has a part of its own, which says what it can't do yet.
+        page(&mut h, json!({"act": "go", "to": "kit:c"}));
+        let second = told(&mut h);
+        assert_eq!(
+            (&second["pane"]["kind"], &second["pane"]["id"], &second["pane"]["title"], &second["pane"]["notYet"]),
+            (&json!("kit"), &json!("c"), &json!("C Development Kit"), &json!(kit::C.not_yet))
+        );
+        assert_eq!(
+            (&second["pane"]["python"], &second["pane"]["showcase"], &second["pane"]["projectsSays"]),
+            (&Json::Null, &Json::Null, &json!("No projects yet"))
+        );
+        assert!(second["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:c" && row["selected"] == true));
+        // A project made there is that kit's: a manifest and a program, untrusted.
+        page(&mut h, json!({"act": "createProject", "name": "Blink", "kit": "c"}));
+        let blink = told(&mut h);
+        assert_eq!(blink["said"], "Blink was created. It is not trusted yet.");
+        assert_eq!(
+            (&blink["pane"]["kind"], &blink["pane"]["id"], &blink["pane"]["kit"], &blink["pane"]["notYet"]),
+            (&json!("project"), &json!("blink"), &json!("C Development Kit"), &json!(kit::C.not_yet))
+        );
+        let on_disk = gridcraft_aniefork_dev::project::load(&s.0.join("projects/blink"));
+        assert_eq!(
+            (on_disk.manifest.as_ref().map(|m| m.kit.as_str()), on_disk.files.as_slice()),
+            (Some("c"), ["project.toml".to_string(), "src/main.c".to_string()].as_slice())
+        );
+        assert_eq!(list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "blink").unwrap()["status"], "untrusted");
+        page(&mut h, json!({"act": "go", "to": "kit:anie"}));
         // A new project made there is the code of the workbook that is open: GridCraft says
         // which workbook that is, whatever the page sends with it.
         let title = h.state().session.active().unwrap().title.clone();
@@ -2753,7 +2811,7 @@ mod tests {
         h.get_by_label("Python · Svelte");
         h.get_by_label("1 project, 0 trusted");
         h.get_by_label_contains("Python: found automatically.");
-        h.get_by_label(kits::PROJECTS_NOTE);
+        h.get_by_label(&kits::projects_note(&kit::ANIE));
         h.get_by_label("None yet.");
         click(&mut h, "Projects…");
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
@@ -2785,6 +2843,37 @@ mod tests {
         h.get_by_label(&format!("It says it is the code of the workbook {title:?}, which is open now."));
         h.get_by_label(&format!("Budget Macros was created, as the code of {title}. It is not trusted yet."));
         assert_eq!(h.state().dialog.as_ref().and_then(|d| d.values.get("part")), Some(&json!("project:budget-macros")));
+        // The second kit: its own part, which says what it can't do yet and has nothing of
+        // what only the first kit has.
+        go(&mut h, "C Development Kit");
+        assert_eq!(h.state().dialog.as_ref().and_then(|d| d.values.get("part")), Some(&json!("kit:c")));
+        h.get_by_label(kit::C.says);
+        h.get_by_label(kit::C.not_yet);
+        h.get_by_label("No projects yet");
+        h.get_by_label(&kits::projects_note(&kit::C));
+        assert!(
+            h.query_by_label_contains("Python:").is_none() && h.query_by_label("Create Showcase").is_none() && h.query_by_label("Showcase").is_none()
+        );
+        // A project made there is that kit's, and is not the first kit's.
+        h.get_by_role_and_label(Role::TextInput, "New project:").focus();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::TextInput, "New project:").type_text("Blink");
+        h.run_steps(2);
+        click(&mut h, "Create Project");
+        let blink = gridcraft_aniefork_dev::project::load(&s.0.join("projects/blink"));
+        assert!(blink.is_sound(), "{:?}", blink.problem);
+        assert_eq!(
+            (blink.manifest.as_ref().map(|m| m.kit.as_str()), blink.files.as_slice()),
+            (Some("c"), ["project.toml".to_string(), "src/main.c".to_string()].as_slice())
+        );
+        h.get_by_label("C Development Kit  ·  Library");
+        h.get_by_label(kit::C.not_yet);
+        h.get_by_label("Blink was created. It is not trusted yet.");
+        h.get_by_label("•  Nothing.");
+        go(&mut h, "C Development Kit");
+        h.get_by_label("1 project, 0 trusted");
+        go(&mut h, "Anie Development Kit");
+        h.get_by_label("2 projects, 0 trusted");
         // The Developer tab's button, and the bar under the ribbon, open it by this name. (The
         // ribbon's buttons carry no names a test can click them by.)
         assert!(crate::aniefork::draws_dialog(NAME));

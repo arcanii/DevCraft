@@ -1524,6 +1524,16 @@ mod served {
         for path in ["project.toml", "python/clean.py", "python/broken.py"] {
             assert_eq!(top.get(path).0, 404, "{path}");
         }
+        // The project becomes a repository after it was trusted. What git keeps there is not
+        // the project's: it takes no trust away, and none of it is served, by any spelling.
+        top.t.write("projects/clean-data/.git/config", "[remote \"origin\"]\n\turl = https://user:secret-token@example.invalid/x.git\n");
+        top.t.write("projects/clean-data/.git/page.html", "<script>alert(1)</script>");
+        assert_eq!(top.get("").2, PAGE, "it is still the project that was trusted");
+        for path in [".git/config", ".git/page.html", "%2egit/config", ".GIT/config", "git~1/config", "panel/../.git/config", ".git%2fconfig"] {
+            let (status, _, body) = top.get(path);
+            assert_eq!(status, 404, "{path}");
+            assert!(!body.contains("secret-token") && !body.contains("alert"), "{path} leaked {body}");
+        }
         // A project with no panel is not served at all.
         let t = TempDir::new("no-panel");
         t.write("projects/plain/project.toml", "id = \"plain\"\nname = \"Plain\"\nversion = \"1\"\npermissions = []\n");

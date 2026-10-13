@@ -948,7 +948,8 @@ Development                    the whole, at a glance
 
 **Not built, and open.**
 
-- **There is no way to load another kit.** The list has one entry and the window says so.
+- **There is no way to load another kit.** The list has two entries now, both compiled in
+  (phase K1), and the window says so.
   How a kit that isn't compiled into GridCraft would be loaded is not decided. What is
   known: it can't be a library loaded into the process (the workspace forbids `unsafe`, and
   a kit's code would then be GridCraft's own); the two things of this kind GridCraft
@@ -1224,7 +1225,7 @@ is built, with what must hold whatever the design:
 
 | Phase | What | Waits for |
 |---|---|---|
-| K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | |
+| K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | **Built 2026-10-13** (below) |
 | K2 | The C kit builds: the compiler found or named, the recipe, a build as a request, what is built kept outside the project | K1. (zig builds `doomgeneric` as it stands: tried, 2026-10-13) |
 | K3 | The C kit runs a program: started and stopped by the person, the spreadsheet called from C, held to nothing but its grants' checks | K2 |
 | D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built, run in its own window; the table of its variables written four times a second, with formulas and a chart over it; then the "GridCraft Doom" repository | K3. (Built and run by hand, 2026-10-13) |
@@ -1239,6 +1240,57 @@ is built, with what must hold whatever the design:
 - Whether "a project changes project files" is read rightly above.
 - Live variables by plain writes first (taken so, as the easiest), or the function first.
 - The go-ahead, later, to make the "GridCraft Doom" repository on GitHub.
+
+### Kits as two (phase K1)
+
+**Built 2026-10-13, on the owner's word ("Start K1").**
+
+**1. Two kits.** `kit::loaded()` lists the **Anie Development Kit** and the **C Development
+Kit**, both compiled in. A kit now says more of itself than its name: what one of its
+projects is, what it can't do yet, what its projects may ask to be allowed, and whether they
+may have a panel or scripts.
+
+- **`kit = "…"` in `project.toml`** says which kit a project is of. Without the line it is
+  the Anie kit's, so every project there was stays as it is. The manifest only checks that
+  the word is a kit's id; whether this build has that kit is the kit's to say
+  (`kit::check`, run when a project is read).
+- **A project is one its kit can have, or it can't be used.** A C project that asks for
+  `python` or `network`, or has a `[panel]` or `[python]` section, is listed with what is
+  wrong and can't be trusted: nothing of the first kit can be made to run for a project
+  that says it is of another. So is a project of a kit this build doesn't have (it is
+  listed under the first kit, as a problem).
+- **The C kit is listed, and no more.** It has a starter of its own (a `project.toml` that
+  asks for nothing, and `src/main.c`, into which only the project's id is written), its
+  projects can be made, read and trusted, and its part of the window says in so many words
+  that GridCraft can't build or run one yet. Both windows draw a kit's part from what the
+  kit says: the Python line and the showcase are the first kit's and are left out of the
+  second's.
+- **Agents** are told of both kits (`development_status`), each project's kit
+  (`list_projects`), and what a kit is (`reference`, topic `project`). `create_project`
+  still makes the first kit's starter only: an agent can't make a C project in one call.
+
+**2. What git keeps in a project is not part of it.** A file or folder named `.git`, at any
+depth and whatever its capitals, is left out of a project's files and of its fingerprint: it
+is not looked into at all (so however much git keeps, the project's limits are about the
+project). Without this a project kept in git would stop being the one that was trusted with
+almost every git command.
+
+- **It holds only with its other half**: nothing in `.git` is ever served to a panel, run,
+  read out or written through GridCraft. `manifest::inner_path`, which every path into a
+  project goes through, refuses it: by its name, by the short name Windows gives it
+  (`GIT~1`), and by spellings an older Mac's file system takes for it. A manifest can't
+  point into it, an agent can't read it (git's settings can hold a token), write it (a hook
+  written there would run the next time the person used git, and nothing would show it had
+  changed) or delete it, and a plan can't hold such a step.
+- **Git's ordinary files** (`.gitignore` and the like) are the project's, counted and
+  fingerprinted like any other.
+- **What it does not cover**: a program the person runs themselves in the folder. GridCraft
+  has no git of its own yet; when it has, it must never run what a repository names.
+
+**Checked.** The gate's eight steps, 1577 tests, none failing. New tests for the kits, the
+manifest's line, a project against its kit, what git keeps (in a project, from an agent,
+from a panel), the C starter, and both windows. In the app (an isolated copy): the
+Development window lists the two kits, the second with what it can't do yet.
 
 ### Backlog
 

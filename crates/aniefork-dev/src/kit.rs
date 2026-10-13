@@ -1,48 +1,122 @@
 //! Development kits: the ways of building on GridCraft that are loaded into it.
 //!
-//! A kit says what a project is made of and how it is run. The one this build has is the
-//! **Anie Development Kit**: a project is a folder with a `project.toml`, Python scripts and a
-//! web panel (written with Svelte or any other web toolkit). Everything else in this crate is
-//! that kit at work: its projects on disk ([`crate::project`]), the trust in them
-//! ([`crate::trust`]), their scripts ([`crate::python`]) and panels ([`crate::bridge`]).
+//! A kit says what a project is made of and how it is run. This build has two:
 //!
-//! Kits are listed, not assumed to be one, so that another can stand beside this one. There
-//! is no way to load one yet: how a kit that isn't compiled into GridCraft would be loaded is
-//! not decided (ADR-0001).
+//! - the **Anie Development Kit**: a project is a folder with a `project.toml`, Python scripts
+//!   and a web panel (written with Svelte or any other web toolkit). Most of this crate is that
+//!   kit at work: its scripts ([`crate::python`]) and panels ([`crate::bridge`]).
+//! - the **C Development Kit**: a project is a folder with a `project.toml` and C sources. It
+//!   is listed, and its projects can be made, read and trusted; it can't build or run one yet
+//!   (ADR-0001 has the phases).
+//!
+//! What every kit's projects share is not a kit's: a project on disk and its fingerprint
+//! ([`crate::project`]), the person's trust in it ([`crate::trust`]), what it asks to be
+//! allowed ([`crate::manifest`]), and the Development server ([`crate::agents`]).
+//!
+//! A project says which kit it is of with `kit = "…"` in its `project.toml`. One that says
+//! nothing is the Anie kit's, as every project was before there were two. A kit's projects may
+//! hold only what the kit knows how to serve and run ([`check`]): a C project has no panel and
+//! no scripts, so nothing of the Anie kit can be made to run for it.
+//!
+//! Both kits are compiled into GridCraft. There is no way to load one yet: how a kit that isn't
+//! compiled in would be loaded is not decided (ADR-0001).
 //!
 //! **A project** is one of two kinds, by what its `project.toml` says: the code of one
 //! workbook, which it names, or a library, which is for any workbook. The kind only says what
 //! the project is for: nothing is allowed or run because of it. (Until 2026-10-13 a project
 //! was called a module, and its manifest `module.toml`: what was made then is still read.)
 
-use crate::manifest::Manifest;
+use crate::manifest::{self, Manifest, Permission};
 
 /// A development kit, as it is listed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kit {
-    /// Its name among the kits: lowercase letters, digits and hyphens.
+    /// Its name among the kits, and the word a `project.toml` names it by: lowercase letters,
+    /// digits and hyphens.
     pub id: &'static str,
     pub name: &'static str,
     /// What its projects are written in.
     pub made_of: &'static [&'static str],
     /// What it is, in a sentence or two.
     pub says: &'static str,
+    /// What one of its projects is, in a sentence.
+    pub project_is: &'static str,
+    /// What it can't do yet. Empty for a kit that is whole.
+    pub not_yet: &'static str,
     /// It is compiled into GridCraft.
     pub built_in: bool,
+    /// What its projects may ask to be allowed.
+    pub permissions: &'static [Permission],
+    /// Its projects may have a panel (`[panel]` in the manifest).
+    pub panels: bool,
+    /// Its projects may have Python scripts (`[python]` in the manifest).
+    pub scripts: bool,
 }
 
-/// The kit this build has.
+/// The kit there was before there were two: Python scripts and a web panel.
 pub const ANIE: Kit = Kit {
-    id: "anie",
+    id: manifest::DEFAULT_KIT,
     name: "Anie Development Kit",
     made_of: &["Python", "Svelte"],
     says: "Projects made of Python scripts and a web panel, which can be a Svelte app or any other page. A project does nothing until you trust it.",
+    project_is: "A project is a folder with a project.toml, Python scripts and a web panel.",
+    not_yet: "",
     built_in: true,
+    permissions: &Permission::ALL,
+    panels: true,
+    scripts: true,
+};
+
+/// Programs written in C. Listed, and not yet able to build or run one.
+pub const C: Kit = Kit {
+    id: "c",
+    name: "C Development Kit",
+    made_of: &["C"],
+    says: "Projects written in C, to be built by a compiler you name and run as programs of their own. A project does nothing until you trust it.",
+    project_is: "A project is a folder with a project.toml and C sources.",
+    not_yet: "GridCraft can't build or run a C project yet. Its projects can be made, read and trusted, and that is all so far.",
+    built_in: true,
+    // What a program will be able to ask of the spreadsheet. Running it at all comes with the
+    // kit's next phases, and will be a thing to ask for like `python`.
+    permissions: &[Permission::Read, Permission::Write, Permission::Files],
+    panels: false,
+    scripts: false,
 };
 
 /// The kits that are loaded, in the order they are listed.
 pub fn loaded() -> &'static [Kit] {
-    &[ANIE]
+    &[ANIE, C]
+}
+
+/// The loaded kit with this id.
+pub fn named(id: &str) -> Option<&'static Kit> {
+    loaded().iter().find(|kit| kit.id == id)
+}
+
+/// The kit a project is listed under: the one its manifest names. A project that can't be
+/// placed (its manifest can't be read, or names a kit this build doesn't have) is listed under
+/// the first kit, with what is wrong with it.
+pub fn of(manifest: Option<&Manifest>) -> &'static Kit {
+    manifest.and_then(|manifest| named(&manifest.kit)).unwrap_or(&ANIE)
+}
+
+/// Whether a manifest is one a project of its kit can have: the kit is one this build has, and
+/// the project holds and asks for nothing the kit doesn't know. A project that names a kit and
+/// then asks for what another kit runs is refused, not guessed at.
+pub fn check(manifest: &Manifest) -> Result<&'static Kit, String> {
+    let Some(kit) = named(&manifest.kit) else {
+        return Err(format!("it is a project of the kit {:?}, which this GridCraft doesn't have", manifest.kit));
+    };
+    if let Some(asked) = manifest.permissions.iter().find(|asked| !kit.permissions.contains(asked)) {
+        return Err(format!("it asks for {:?}, which a project of the {} can't be given", asked.code(), kit.name));
+    }
+    if manifest.panel.is_some() && !kit.panels {
+        return Err(format!("it has a panel, which a project of the {} can't have", kit.name));
+    }
+    if manifest.python.is_some() && !kit.scripts {
+        return Err(format!("it has Python scripts, which a project of the {} can't have", kit.name));
+    }
+    Ok(kit)
 }
 
 /// What a project is for.
@@ -101,24 +175,69 @@ impl ProjectKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest;
+
+    fn read(more: &str) -> Manifest {
+        manifest::parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\n{more}"), "x").unwrap()
+    }
 
     #[test]
-    fn the_kit_this_build_has_is_listed_and_names_what_it_is_made_of() {
+    fn the_kits_this_build_has_are_listed_and_say_what_they_are_made_of() {
         let kits = loaded();
-        assert_eq!(kits.len(), 1, "one kit, until there is a way to load another");
-        assert_eq!((kits[0].id, kits[0].name, kits[0].built_in), ("anie", "Anie Development Kit", true));
-        assert_eq!(kits[0].made_of, ["Python", "Svelte"]);
-        assert!(manifest::valid_id(kits[0].id) && !kits[0].says.is_empty());
+        assert_eq!(kits.iter().map(|kit| kit.id).collect::<Vec<_>>(), ["anie", "c"], "two kits, and no way to load another yet");
+        assert_eq!((kits[0].name, kits[0].made_of, kits[0].built_in), ("Anie Development Kit", ["Python", "Svelte"].as_slice(), true));
+        assert_eq!((kits[1].name, kits[1].made_of, kits[1].built_in), ("C Development Kit", ["C"].as_slice(), true));
+        for kit in kits {
+            assert!(manifest::valid_id(kit.id) && !kit.says.is_empty() && !kit.project_is.is_empty(), "{}", kit.id);
+            assert_eq!(named(kit.id), Some(kit));
+        }
+        assert_eq!(ANIE.id, manifest::DEFAULT_KIT, "a project that names no kit is the first kit's");
+        // The first kit is whole; the second says what it can't do yet.
+        assert!(ANIE.not_yet.is_empty() && C.not_yet.contains("can't build or run"));
+        assert_eq!((named("rust"), named(""), named("C")), (None, None, None));
+    }
+
+    #[test]
+    fn a_project_is_of_the_kit_it_names_and_of_the_first_when_it_names_none() {
+        assert_eq!(of(Some(&read(""))), &ANIE);
+        assert_eq!(of(Some(&read("kit = \"anie\""))), &ANIE);
+        assert_eq!(of(Some(&read("kit = \"c\""))), &C);
+        // One that can't be placed is listed under the first kit: `check` says what is wrong.
+        assert_eq!((of(Some(&read("kit = \"rust\""))), of(None)), (&ANIE, &ANIE));
+        assert_eq!(check(&read("")), Ok(&ANIE));
+        assert_eq!(check(&read("kit = \"c\"")), Ok(&C));
+        assert_eq!(check(&read("kit = \"rust\"")).unwrap_err(), "it is a project of the kit \"rust\", which this GridCraft doesn't have");
+    }
+
+    #[test]
+    fn a_kits_project_holds_only_what_the_kit_can_serve_and_run() {
+        // Everything there was before is still an Anie project's to have.
+        let all = "permissions = [\"read\", \"write\", \"files\", \"network\", \"python\"]\n[panel]\nentry = \"panel/index.html\"\n[python]\nscripts = \"python\"";
+        assert_eq!(check(&read(all)), Ok(&ANIE));
+        // A C project may ask to see and change the workbook, and to open and save files.
+        assert_eq!(check(&read("kit = \"c\"\npermissions = [\"read\", \"write\", \"files\"]")), Ok(&C));
+        // It has no scripts and no panel: nothing of the first kit can be made to run for it.
+        let python = check(&read("kit = \"c\"\npermissions = [\"python\"]")).unwrap_err();
+        assert_eq!(python, "it asks for \"python\", which a project of the C Development Kit can't be given");
+        assert!(check(&read("kit = \"c\"\npermissions = [\"read\", \"network\"]")).unwrap_err().contains("\"network\""));
+        let scripts = check(&read("kit = \"c\"\n[python]\nscripts = \"python\"")).unwrap_err();
+        assert_eq!(scripts, "it has Python scripts, which a project of the C Development Kit can't have");
+        let panel = check(&read("kit = \"c\"\n[panel]\nentry = \"panel/index.html\"")).unwrap_err();
+        assert_eq!(panel, "it has a panel, which a project of the C Development Kit can't have");
+        // No kit's projects may be given something that is not a permission at all.
+        for kit in loaded() {
+            assert!(kit.permissions.iter().all(|allowed| Permission::ALL.contains(allowed)));
+        }
+        assert!(!C.permissions.iter().any(|allowed| allowed.is_unlimited()), "nothing a C project can be given yet runs anything");
     }
 
     #[test]
     fn a_project_is_workbook_code_when_it_names_a_workbook_and_a_library_otherwise() {
-        let read = |more: &str| manifest::parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\n{more}"), "x").unwrap();
         assert_eq!(ProjectKind::of(Some(&read("workbook = \"Budget.xlsm\""))), ProjectKind::WorkbookCode);
         assert_eq!(ProjectKind::of(Some(&read(""))), ProjectKind::Library);
         assert_eq!(ProjectKind::of(Some(&read("workbook = \"\""))), ProjectKind::Library, "an empty name names none");
         assert_eq!(ProjectKind::of(None), ProjectKind::Library, "one that can't be read is listed with the libraries");
+        // A project of any kit is one or the other.
+        assert_eq!(ProjectKind::of(Some(&read("kit = \"c\"\nworkbook = \"Doom.xlsx\""))), ProjectKind::WorkbookCode);
         for kind in ProjectKind::ALL {
             assert!(!kind.code().is_empty() && !kind.label().is_empty() && !kind.heading().is_empty() && !kind.says().is_empty());
         }

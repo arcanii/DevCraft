@@ -3,10 +3,14 @@
 //! kept in the repository.
 //!
 //! The starter is an ordinary project: it is created untrusted, like any other.
+//!
+//! Each kit has its own: the Anie kit's is a panel and a Python script it can run; the C kit's
+//! is a program of a few lines.
 
 use std::fs;
 use std::path::Path;
 
+use crate::kit::{self, Kit};
 use crate::manifest;
 use crate::project::{self, Project};
 
@@ -141,6 +145,55 @@ fn panel_text(name: &str) -> String {
     )
 }
 
+/// The manifest of a C project. It asks for nothing: there is nothing of it GridCraft can run yet.
+fn c_manifest_text(id: &str, name: &str, workbook: Option<&str>) -> String {
+    let workbook = workbook_line(workbook);
+    let kit = kit::C.id;
+    format!(
+        r#"# A GridCraft project of the C Development Kit. See docs/decisions-aniefork.md (ADR-0001).
+id = "{id}"
+name = "{name}"
+version = "0.1.0"
+author = ""
+description = "A starter project: a program written in C."
+
+# The development kit this is a project of. Without this line a project is of the Anie
+# Development Kit (Python scripts and a web panel).
+kit = "{kit}"
+{workbook}
+# What this project asks to be allowed. The user sees this list before trusting it.
+#   read     see what is in the open workbooks
+#   write    change the open workbooks
+#   files    open, save and export files
+# It asks for nothing so far: GridCraft can't build or run a C project yet.
+permissions = []
+"#
+    )
+}
+
+/// The program a C project starts from. Only the project's id is written into it: an id is
+/// lowercase letters, digits and hyphens, which can end neither a comment nor a string.
+fn c_source_text(id: &str) -> String {
+    format!(
+        r#"/*
+ * {id}: a project of GridCraft's C Development Kit.
+ *
+ * GridCraft lists this project and keeps your trust in it. It can't build or run it yet.
+ * Until it can, build it with a C compiler of your own, from the project's folder:
+ *
+ *     zig cc src/main.c -o {id}
+ */
+#include <stdio.h>
+
+int main(void)
+{{
+    puts("Hello from {id}.");
+    return 0;
+}}
+"#
+    )
+}
+
 const SCRIPT: &str = r#""""A script this project's panel can run:
 
     const result = await spreadsheet.runPython("clean.py", data);
@@ -172,21 +225,25 @@ pub fn id_for(name: &str) -> String {
 /// What a starter project named `name` holds: its id, and its files (path and text). `None` when
 /// the name makes no id.
 pub fn files(name: &str) -> Option<(String, Vec<(&'static str, String)>)> {
-    files_for(name, None)
+    files_for(&kit::ANIE, name, None)
 }
 
-/// The same, for a project that is the code of the workbook named `workbook`.
-fn files_for(name: &str, workbook: Option<&str>) -> Option<(String, Vec<(&'static str, String)>)> {
+/// The same, for a project of `kit` that is the code of the workbook named `workbook`.
+fn files_for(kit: &Kit, name: &str, workbook: Option<&str>) -> Option<(String, Vec<(&'static str, String)>)> {
     let shown = plain(name);
     let id = slug(&shown);
     if shown.is_empty() || !manifest::valid_id(&id) {
         return None;
     }
-    let files = vec![
-        (manifest::FILE, manifest_text(&id, &shown, workbook)),
-        ("panel/index.html", panel_text(&shown)),
-        ("python/clean.py", SCRIPT.to_string()),
-    ];
+    let files = if kit.id == kit::C.id {
+        vec![(manifest::FILE, c_manifest_text(&id, &shown, workbook)), ("src/main.c", c_source_text(&id))]
+    } else {
+        vec![
+            (manifest::FILE, manifest_text(&id, &shown, workbook)),
+            ("panel/index.html", panel_text(&shown)),
+            ("python/clean.py", SCRIPT.to_string()),
+        ]
+    };
     Some((id, files))
 }
 
@@ -199,11 +256,16 @@ pub fn create(projects_dir: &Path, name: &str) -> Result<Project, String> {
 /// The same, for a project that is the code of the workbook named `workbook` (a library when
 /// there is none). A name that can't be a workbook's is refused before anything is written.
 pub fn create_for(projects_dir: &Path, name: &str, workbook: Option<&str>) -> Result<Project, String> {
+    create_in(projects_dir, &kit::ANIE, name, workbook)
+}
+
+/// The same, for a project of `kit`: each kit has a starter of its own.
+pub fn create_in(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&str>) -> Result<Project, String> {
     let workbook = match workbook {
         Some(named) => manifest::workbook_name(named).map_err(|why| format!("The project can't be that workbook's code: {why}."))?,
         None => None,
     };
-    let Some((id, files)) = files_for(name, workbook.as_deref()) else {
+    let Some((id, files)) = files_for(kit, name, workbook.as_deref()) else {
         return Err("Give the project a name with at least one letter or digit.".into());
     };
     let dir = projects_dir.join(&id);
@@ -211,10 +273,12 @@ pub fn create_for(projects_dir: &Path, name: &str, workbook: Option<&str>) -> Re
         return Err(format!("There is already a project folder named {id}."));
     }
     let failed = |e: std::io::Error| format!("The project could not be created: {e}");
-    for folder in ["panel", "python"] {
-        fs::create_dir_all(dir.join(folder)).map_err(failed)?;
-    }
+    fs::create_dir_all(&dir).map_err(failed)?;
     for (path, text) in files {
+        // Each of a starter's files is at the top or one folder down.
+        if let Some((folder, _)) = path.split_once('/') {
+            fs::create_dir_all(dir.join(folder)).map_err(failed)?;
+        }
         fs::write(dir.join(path), text).map_err(failed)?;
     }
     let created = project::load(&dir);
@@ -297,6 +361,40 @@ mod tests {
         // What can't be a workbook's name is refused before anything is written.
         assert!(create_for(&t.0, "Elsewhere", Some("C:/books/Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
         assert!(!t.0.join("elsewhere").exists());
+    }
+
+    #[test]
+    fn the_c_kit_has_a_starter_of_its_own() {
+        let t = TempDir::new("starter-c");
+        let m = create_in(&t.0, &kit::C, "Blink", None).unwrap();
+        assert!(m.is_sound(), "{:?}", m.problem);
+        assert_eq!(m.files, ["project.toml", "src/main.c"], "a manifest and a program: no panel, no scripts");
+        let manifest = m.manifest.clone().unwrap();
+        assert_eq!((manifest.kit.as_str(), manifest.name.as_str()), ("c", "Blink"));
+        assert_eq!(kit::of(Some(&manifest)), &kit::C);
+        assert!(manifest.permissions.is_empty(), "it asks for nothing: nothing of it can run yet");
+        assert_eq!((manifest.panel, manifest.python, manifest.workbook), (None, None, None));
+        let source = std::fs::read_to_string(m.dir.join("src/main.c")).unwrap();
+        assert!(source.contains("puts(\"Hello from blink.\");") && source.contains("int main(void)"));
+        // It can be the code of a workbook, like any project.
+        let doom = create_in(&t.0, &kit::C, "Doom", Some("Doom.xlsx")).unwrap();
+        assert_eq!(doom.manifest.unwrap().workbook.as_deref(), Some("Doom.xlsx"));
+        // The first kit's starter is what it was.
+        let first = create_in(&t.0, &kit::ANIE, "Clean Data", None).unwrap();
+        assert_eq!(first.files, ["panel/index.html", "project.toml", "python/clean.py"]);
+        assert_eq!(first.manifest.unwrap().kit, "anie");
+        // A name can't write itself into the program: only the id, which is plain, is put there.
+        let odd = create_in(&t.0, &kit::C, "Evil */ int system(const char *); /* \" \\ %s", None).unwrap();
+        assert!(odd.is_sound(), "{:?}", odd.problem);
+        assert_eq!(odd.id, "evil-int-system-const-char-s");
+        let source = std::fs::read_to_string(odd.dir.join("src/main.c")).unwrap();
+        assert_eq!(source.matches("*/").count(), 1, "the one comment ends once");
+        assert!(!source.contains("system") || source.contains("evil-int-system-const-char-s"));
+        assert_eq!(source.matches('"').count(), 2, "and the one string is the starter's own");
+        assert!(odd.manifest.unwrap().permissions.is_empty());
+        // The same names are refused, and nothing is written over.
+        assert!(create_in(&t.0, &kit::C, "blink", None).unwrap_err().contains("already a project folder named blink"));
+        assert!(create_in(&t.0, &kit::C, "!!!", None).is_err());
     }
 
     #[test]

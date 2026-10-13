@@ -29,6 +29,7 @@
 
 use gridcraft_aniefork_dev::agents::{Action, Asked, Kind, Level};
 use gridcraft_aniefork_dev::bridge::Places;
+use gridcraft_aniefork_dev::kit;
 use serde_json::{Value as Json, json};
 
 use super::development::{self, Act, State};
@@ -324,7 +325,7 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     if let Pane::Project(id) = &state.pane
         && kits::project_pane(app, id).is_none()
     {
-        state.pane = Pane::Kit;
+        state.pane = Pane::first_kit();
     }
     // The list down the side, and the one part that is shown beside it.
     let part = match &state.pane {
@@ -414,10 +415,21 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         "openFolder" => Some(Act::OpenFolder),
         "openProjectFolder" => message.get("id").and_then(Json::as_str).filter(|id| id.len() <= 64).map(|id| Act::OpenProjectFolder(id.to_string())),
         // A new project: its name is what the person typed, and the workbook it is the code
-        // of is the one that is open (GridCraft says which, not the page).
-        "createProject" => message.get("name").and_then(Json::as_str).filter(|name| name.chars().count() <= MAX_NAME).map(|name| {
-            Act::CreateProject { name: name.to_string(), for_workbook: message.get("forWorkbook").and_then(Json::as_bool).unwrap_or(false) }
-        }),
+        // of is the one that is open (GridCraft says which, not the page). Its kit is one of
+        // those that are loaded: the first when the page names none, and no project at all
+        // when it names one there isn't.
+        "createProject" => {
+            let kit = match message.get("kit") {
+                None | Some(Json::Null) => Some(&kit::ANIE),
+                Some(named) => named.as_str().filter(|id| id.len() <= 64).and_then(kit::named),
+            };
+            let name = message.get("name").and_then(Json::as_str).filter(|name| name.chars().count() <= MAX_NAME);
+            kit.zip(name).map(|(kit, name)| Act::CreateProject {
+                name: name.to_string(),
+                for_workbook: message.get("forWorkbook").and_then(Json::as_bool).unwrap_or(false),
+                kit: kit.id,
+            })
+        }
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
         _ => None,
