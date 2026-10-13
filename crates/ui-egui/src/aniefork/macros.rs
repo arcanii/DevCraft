@@ -34,10 +34,10 @@ const NOTE: &str =
 /// The most procedures named above a module's source. What is left out says so.
 const NAMED: usize = 14;
 /// Said beside the way to have an agent rebuild them.
-const REBUILD: &str = "An agent can rebuild what these do as a project of the Anie Development Kit, for you to read before any of it runs.";
+const REBUILD: &str = "An agent can rebuild what these do as a PythonCraft project, for you to read before any of it runs.";
 /// What the person hands their agent to begin with. It names no workbook and holds nothing of
 /// the macros: the agent reads those through the Development server, as data.
-pub(super) const REQUEST: &str = "Rebuild the macros of the workbook that is open in GridCraft as a project of the Anie Development Kit. \
+pub(super) const REQUEST: &str = "Rebuild the macros of the workbook that is open in GridCraft as a PythonCraft project. \
 Use GridCraft's Development server: begin with development_status, then read `reference` with the topic \"macros\" and follow it. \
 Tell me what each procedure will become before you propose the plan.";
 pub(super) const COPIED: &str = "The request was copied. Paste it to your agent.";

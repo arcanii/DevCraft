@@ -2540,6 +2540,33 @@ written into a cell, run in worker processes of its own. It is not the same thin
 formula that calls a project's function, and if upstream takes it the two will have to sit
 side by side. Only its titles and one description were read.
 
+### The first kit is named PythonCraft (2026-10-14)
+
+**What the owner decided.** "Let's name our first DevKit : PythonCraft - which is the
+Python / Svelte UI, and showcase this in the PR."
+
+**So the kit that was the Anie Development Kit is PythonCraft**, in every window, in what
+agents are told, and in what a person is asked. The sections above this one were written
+before and call it by the name it had.
+
+- **Its id is `pythoncraft`**: what a `project.toml` says with `kit = "..."`, what a kit's
+  package says it stands on, and the first word of a call that names its kit
+  (`pythoncraft.clean_data.clean(A1:C9)`).
+- **`anie`, the id it had, is still read** as the same kit, in a manifest and in a package
+  (`manifest::kit_id`, `kit::named`). Nothing that was made has to be changed: a project's
+  files are as they were, so its fingerprint is, and so is the person's trust in it. No kit
+  from a package can take the id `anie` for itself.
+- **A name stands in a sentence as it reads** (`Kit::called`): "a project of the C
+  Development Kit", but "a project of PythonCraft", which is a name of its own.
+- **In a call, a kit and a project are named whatever the capitals**
+  (`PythonCraft.Clean_Data.clean`), as a function of a sheet is. An id has no capitals, so
+  nothing is made ambiguous. A function's name is still exactly its script's.
+- The C Development Kit keeps its name: the owner named the first kit only.
+
+**Checked.** The gate, whole (1,886 tests): the kit's name and id wherever they are said;
+the earlier id read in a manifest and in a package, and refused as a new kit's id; a call
+that names the kit as it is shown.
+
 ### Offering it upstream, in stages (a strategy)
 
 **What the owner asked (2026-10-13).** "We need a strategy to PR into the main for this - in
@@ -2596,8 +2623,40 @@ the few issues that only suggest something mostly go unanswered. So:
   thousand lines, and upstream's rule on JavaScript is met in the pull request itself, not
   before it: that risk is taken knowingly.
 
-**Still the owner's to say, when the time comes**: what the kit is called there.
+**What stands (the owner, 2026-10-14, last): it stays in the fork.** "Ok - let's keep it in
+our fork for now. This would be a feature of our fork, and we pull down upstream updates."
+So **nothing is offered upstream**, the fork keeps the whole of it, and upstream's work is
+merged into the fork as before. And why: "This allows us to develop it our own way, and make
+it more mature."
 
+Earlier the same day the owner had named the kit PythonCraft "and showcase this in the PR",
+said "We want to be upfront that this is a large feature, meant to provide a modular
+development framework to match VBA capabilities and more", and "go ahead when ready and
+publish / push the PR when ready". A first offer was begun on that word and stopped on the
+later one, before anything was pushed or said on GitHub. What it left, and what was learned:
+
+- **A scratch copy**, on the local branch `pythoncraft-wip` (never pushed), in a working copy
+  of its own outside the repository's folder. It has upstream's names (the crate as
+  `crates/devkit`, the UI module `devkit`), none of the fork's records and no web view in
+  the shell; a pass that takes out the page, docking and the selection settings was stopped
+  half way, so it does not build. It is a place to begin from at most, and can be removed.
+- **Upstream's own words on this** (its `docs/gaps.md`, item 21, and
+  `docs/target-app-parity.md`): "no plugin or custom function API", estimated at 25 to 40
+  hours "plus an owner decision"; VBA is "out of scope (owner decision)"; "A plugin or
+  custom-function API (for example LAMBDA libraries and WASM custom functions) is the
+  open-equivalent path". So an offer would be asking for that decision.
+- **Their sizes**: what is merged there is mostly under 500 lines; the largest pull request
+  open was 13,400. The first kit alone, cut as this section says, is ten to twelve thousand.
+- **What an offer has to say for itself**: the script that gives a panel the spreadsheet,
+  the starter's page and the showcase's built Svelte app are JavaScript, kept as text in
+  Rust files, and upstream's rule is "Rust only (no handwritten JS/TS)".
+- **What the cut takes**, should it be wanted again: in order, the page with docking and
+  the settings that are not this feature's; the agents' server; the C kit, kits from
+  packages and the macros; then every word that names the fork, the owner or this record,
+  and the names kept for what was made before (`anie`, `module.toml`, `modules`). Each is
+  woven through `development.rs`, `kits.rs` and their tests, which is most of the work.
+
+**The stages above are kept as the way to do it, if the owner says to.**
 
 ### Backlog
 

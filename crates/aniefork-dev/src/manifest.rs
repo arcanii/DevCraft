@@ -8,7 +8,7 @@
 //! description = "Tidies a table"     # optional
 //! permissions = ["read", "write", "python"]
 //! workbook = "Budget.xlsm"           # optional: the workbook this is the code of, by its file's name
-//! kit = "anie"                       # optional: the development kit it is a project of
+//! kit = "pythoncraft"                # optional: the development kit it is a project of
 //!
 //! [panel]
 //! entry = "panel/index.html"         # optional: the page GridCraft serves as its panel
@@ -56,7 +56,15 @@ pub fn is_manifest(path: &str) -> bool {
 /// The largest manifest read (bytes).
 pub const MAX_BYTES: u64 = 64 * 1024;
 /// The kit of a project whose manifest names none: the one there was before there were two.
-pub const DEFAULT_KIT: &str = "anie";
+pub const DEFAULT_KIT: &str = "pythoncraft";
+/// That kit's id until it was named PythonCraft (2026-10-14). A manifest, or a kit's package,
+/// that names it so is still read: nothing that was made has to be changed, or trusted again.
+pub const EARLIER_KIT: &str = "anie";
+
+/// A kit's id as it is now, for one as a file names it.
+pub fn kit_id(named: &str) -> &str {
+    if named == EARLIER_KIT { DEFAULT_KIT } else { named }
+}
 
 /// Something a project asks to be allowed to do. The user grants them together, by trusting it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -269,7 +277,7 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
     permissions.sort();
     let kit = match raw.kit {
         None => DEFAULT_KIT.to_string(),
-        Some(kit) if valid_id(&kit) => kit,
+        Some(kit) if valid_id(&kit) => kit_id(&kit).to_string(),
         Some(kit) => return Err(format!("its kit, {kit:?}, is not a kit's id (lowercase letters, digits and hyphens)")),
     };
     Ok(Manifest {
@@ -371,7 +379,10 @@ scripts = "python"
     fn a_project_can_name_its_kit() {
         let named = |kit: &str| parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\nkit = {kit}"), "x");
         assert_eq!(named("\"c\"").unwrap().kit, "c");
-        assert_eq!(named("\"anie\"").unwrap().kit, "anie");
+        assert_eq!(named("\"pythoncraft\"").unwrap().kit, "pythoncraft");
+        // The first kit by the id it had before it was named: read as its id now.
+        assert_eq!(named("\"anie\"").unwrap().kit, "pythoncraft");
+        assert_eq!((kit_id("anie"), kit_id("pythoncraft"), kit_id("c"), kit_id("")), ("pythoncraft", "pythoncraft", "c", ""));
         // Any id is read: whether this build has such a kit is not the manifest's to say.
         assert_eq!(named("\"some-other-kit\"").unwrap().kit, "some-other-kit");
         for bad in ["\"\"", "\"C\"", "\"c kit\"", "\"../c\"", "7", "[\"c\"]"] {

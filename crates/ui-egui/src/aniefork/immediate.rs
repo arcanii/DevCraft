@@ -13,7 +13,9 @@
 //! ```
 //!
 //! A project is named by its id; an underscore there stands for a hyphen too, since a formula
-//! could not hold a hyphen in a name. A function is one of the project's scripts, by its
+//! could not hold a hyphen in a name. A kit and a project are named whatever the capitals, as
+//! a function of a sheet is: `PythonCraft.Clean_Data.clean` is `pythoncraft.clean-data.clean`.
+//! A function is one of the project's scripts, by its
 //! file's name without the ending: today that is all a kit's project has to call (the script's
 //! `main`). A kit that offers other things to call names them the same way.
 //!
@@ -106,8 +108,10 @@ pub(super) fn parse(line: &str) -> Result<Call, String> {
     Ok(Call { kit, project: project.to_string(), function: function.to_string(), with })
 }
 
-/// Whether a name in a call means this id: the same, or the same with underscores for hyphens.
+/// Whether a name in a call means this id: the same, or the same with underscores for
+/// hyphens, whatever the capitals (an id has none).
 pub(super) fn names(typed: &str, id: &str) -> bool {
+    let typed = typed.to_ascii_lowercase();
     typed == id || typed.replace('_', "-") == id
 }
 
@@ -153,7 +157,7 @@ mod tests {
         assert_eq!(parse("clean-data.clean"), Ok(call(None, "clean-data", "clean", With::Selection)));
         assert_eq!(parse("  clean-data.clean()  "), Ok(call(None, "clean-data", "clean", With::Selection)));
         assert_eq!(parse("clean_data.clean(A1:C9)"), Ok(call(None, "clean_data", "clean", With::Range("A1:C9".into()))));
-        assert_eq!(parse("anie.clean-data.clean($B$2)"), Ok(call(Some("anie"), "clean-data", "clean", With::Range("$B$2".into()))));
+        assert_eq!(parse("PythonCraft.clean-data.clean($B$2)"), Ok(call(Some("PythonCraft"), "clean-data", "clean", With::Range("$B$2".into()))));
         assert_eq!(parse("tools.add_up(12)"), Ok(call(None, "tools", "add_up", With::Value(json!(12)))));
         assert_eq!(parse("tools.greet(\"Ana (and Bo)\")"), Ok(call(None, "tools", "greet", With::Value(json!("Ana (and Bo)")))));
         assert_eq!(parse("tools.sum([1, 2, 3])"), Ok(call(None, "tools", "sum", With::Value(json!([1, 2, 3])))));
@@ -188,6 +192,7 @@ mod tests {
     #[test]
     fn a_name_stands_for_an_id_and_earlier_lines_are_kept_once() {
         assert!(names("clean-data", "clean-data") && names("clean_data", "clean-data") && !names("clean", "clean-data"));
+        assert!(names("PythonCraft", "pythoncraft") && names("Clean_Data", "clean-data") && !names("python-craft", "pythoncraft"));
         assert_eq!((function_of("clean.py"), function_of("add_up.py"), function_of("tool")), ("clean", "add_up", "tool"));
         let mut earlier = Vec::new();
         for line in ["a.b", "c.d", " a.b "] {

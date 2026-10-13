@@ -783,6 +783,21 @@ included.
 
 Newest first.
 
+- **2026-10-14 (the first kit is named PythonCraft; it is to be offered upstream now):**
+  The owner: "Let's name our first DevKit : PythonCraft - which is the Python / Svelte UI,
+  and showcase this in the PR." The kit is PythonCraft wherever it is named, and its id is
+  `pythoncraft`; `anie`, the id it had, is still read in a manifest and in a kit's package,
+  so nothing that was made has to be changed or trusted again (`manifest::kit_id`). A name
+  stands in a sentence as it reads (`Kit::called`), and a call names a kit and a project
+  whatever the capitals. No hook in an upstream file changed. Then the owner: "We want to
+  be upfront that this is a large feature, meant to provide a modular development framework
+  to match VBA capabilities and more", and "go ahead when ready and publish / push the PR
+  when ready": a first offer upstream was begun. **Then, last: "Ok - let's keep it in our
+  fork for now. This would be a feature of our fork, and we pull down upstream updates."**
+  ("This allows us to develop it our own way, and make it more mature.")
+  The offer was stopped before anything was pushed or said on GitHub. The fork keeps the
+  whole feature and goes on merging upstream. What the attempt left and taught is in
+  ADR-0001 (the strategy's last part): a scratch branch `pythoncraft-wip`, never pushed.
 - **2026-10-14 (the immediate line; how a kit is called by name; no proposal upstream):**
   The owner's answers: commit (done: the review and the kit packages are one commit);
   no proposal upstream, and nothing offered until it has been used more ("We should merge it

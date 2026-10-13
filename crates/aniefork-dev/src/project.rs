@@ -456,7 +456,7 @@ pub(crate) mod tests {
         let rusty = load(&t.0.join("rusty"));
         assert!(!rusty.is_sound() && rusty.manifest.is_some() && rusty.fingerprint.is_some());
         assert_eq!(rusty.problem.as_deref(), Some("it is a project of the kit \"rust\", which this GridCraft doesn't have: it is not loaded"));
-        // Naming the first kit is the same as naming none.
+        // Naming the first kit is the same as naming none: here by the id it had before it was named.
         t.write("clean-data/project.toml", &format!("kit = \"anie\"\n{MANIFEST}"));
         t.write("clean-data/panel/index.html", "<h1>Clean Data</h1>");
         t.write("clean-data/python/clean.py", "def main(data):\n    return data\n");

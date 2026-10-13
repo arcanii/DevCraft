@@ -32,7 +32,7 @@
 //! **The window has a list down its side and one part beside it** ([`super::kits`] says what
 //! each holds). At the top, the whole at a glance. Under it the **MCP server**, which is the
 //! Agents part described above: it stands at the top because it is not any kit's. Then the
-//! **development kits**, each set apart with its shield: the Anie Development Kit (Python and
+//! **development kits**, each set apart with its shield: PythonCraft (Python and
 //! Svelte) and the C Development Kit. A kit's **projects** are listed in the kit's own part,
 //! not down the side, and each has a part of its own, reached from there.
 //! The kit's part has the way to Projects and the Developer console, the Python that runs
@@ -3080,11 +3080,11 @@ mod tests {
         assert_eq!(first["pane"]["server"]["status"], json!({"kind": "off", "text": "Not serving: agent access is off."}));
         assert_eq!(
             (&first["pane"]["kits"][0]["name"], &first["pane"]["kits"][0]["projects"]),
-            (&json!("Anie Development Kit"), &json!("1 project, 0 trusted"))
+            (&json!("PythonCraft"), &json!("1 project, 0 trusted"))
         );
         let listed: Vec<&str> = first["nav"].as_array().unwrap().iter().map(|row| row["label"].as_str().unwrap()).collect();
         // The list stops at the kits: a kit's projects are in its own part.
-        assert_eq!(listed, ["Development", "MCP Server", "Console", "Macros", "Development Kits", "Anie Development Kit", "C Development Kit"]);
+        assert_eq!(listed, ["Development", "MCP Server", "Console", "Macros", "Development Kits", "PythonCraft", "C Development Kit"]);
         assert_eq!((&first["nav"][0]["icon"], &first["nav"][5]["t"], &first["nav"][5]["icon"]), (&json!("tools"), &json!("kit"), &json!("shield")));
         assert_eq!(first["pane"]["kits"][1]["name"], "C Development Kit");
         assert_eq!((&first["nav"][0]["selected"], &first["nav"][1]["go"]), (&json!(true), &json!("server")));
@@ -3209,11 +3209,11 @@ mod tests {
         assert!(h.state().dialog.is_none());
         assert_eq!(told(&mut h)["pane"]["kind"], "overview");
         // The kit's part, with its projects.
-        page(&mut h, json!({"act": "go", "to": "kit:anie"}));
+        page(&mut h, json!({"act": "go", "to": "kit:pythoncraft"}));
         let first_kit = told(&mut h)["pane"].clone();
         assert_eq!(
             (&first_kit["kind"], &first_kit["title"], &first_kit["standing"]),
-            (&json!("kit"), &json!("Anie Development Kit"), &json!("Built in  ·  loaded"))
+            (&json!("kit"), &json!("PythonCraft"), &json!("Built in  ·  loaded"))
         );
         assert_eq!((&first_kit["projectsTitle"], &first_kit["groups"]), (&json!("Projects"), &Json::Null));
         assert_eq!((&first_kit["projects"][0]["name"], &first_kit["projects"][0]["for"]), (&json!("Clean Data"), &Json::Null));
@@ -3289,7 +3289,7 @@ mod tests {
         assert_eq!(named["pane"]["compiler"]["named"], "gridcraft-no-such-compiler");
         page(&mut h, json!({"act": "checkCompiler", "compiler": ""}));
         assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "");
-        page(&mut h, json!({"act": "go", "to": "kit:anie"}));
+        page(&mut h, json!({"act": "go", "to": "kit:pythoncraft"}));
         // A new project made there is the code of the workbook that is open: GridCraft says
         // which workbook that is, whatever the page sends with it.
         let title = h.state().session.active().unwrap().title.clone();
@@ -3303,9 +3303,9 @@ mod tests {
         );
         assert_eq!(made["forSays"], json!(format!("It says it is the code of the workbook {title:?}, which is open now.")));
         // The project is no row of the list: its kit's row says the person is within it.
-        assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:anie" && row["within"] == true && row["selected"] == false));
+        assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:pythoncraft" && row["within"] == true && row["selected"] == false));
         assert!(!now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "project:budget-macros"));
-        assert_eq!(made["aboveGo"], json!(["overview", "overview", "kit:anie"]));
+        assert_eq!(made["aboveGo"], json!(["overview", "overview", "kit:pythoncraft"]));
         assert_eq!(list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "budget-macros").unwrap()["status"], "untrusted");
         assert_eq!(asked.questions().len(), 1, "creating it asked nothing and trusted nothing");
         // A project that is gone gives way to its kit.
@@ -3406,7 +3406,7 @@ mod tests {
         page(&mut h, json!({"act": "stopTrusting", "id": "clean-data"}));
         assert_eq!((status("clean-data").as_str(), asked.questions().len()), ("untrusted", 2));
         // The kit's part names the Python that runs scripts; what is typed there is kept.
-        page(&mut h, json!({"act": "go", "to": "kit:anie"}));
+        page(&mut h, json!({"act": "go", "to": "kit:pythoncraft"}));
         assert_eq!(told(&mut h)["pane"]["pythonField"]["named"], "");
         page(&mut h, json!({"act": "checkPython", "python": "gridcraft-no-such-python"}));
         let kit_part = told(&mut h)["pane"].clone();
@@ -3521,7 +3521,7 @@ mod tests {
         let loaded = told(&mut h);
         assert_eq!(loaded["said"], "Dashboards Kit was loaded.");
         assert!(s.0.join("kits/dashboards/kit.toml").is_file());
-        assert_eq!(kits_of(&loaded), ["Anie Development Kit", "C Development Kit", "Dashboards Kit"]);
+        assert_eq!(kits_of(&loaded), ["PythonCraft", "C Development Kit", "Dashboards Kit"]);
         assert!(heading(&loaded)["says"].as_str().unwrap().starts_with("3 kits  ·  "));
         let part = &loaded["pane"];
         assert_eq!(
@@ -3531,7 +3531,7 @@ mod tests {
         assert_eq!(part["badges"], json!([{"label": "Svelte", "code": "svelte"}, {"label": "Charts", "code": "plain"}]));
         assert_eq!(
             (&part["package"]["version"], &part["package"]["author"], &part["package"]["base"], &part["package"]["baseGo"]),
-            (&json!("0.2.0"), &json!("Ana"), &json!("Anie Development Kit"), &json!("kit:anie"))
+            (&json!("0.2.0"), &json!("Ana"), &json!("PythonCraft"), &json!("kit:pythoncraft"))
         );
         assert_eq!(part["says"], "Panels that chart what is selected.");
         // It stands on the first kit: its projects have scripts, so the Python is named here
@@ -3570,7 +3570,7 @@ mod tests {
         assert!(orphan["problem"].as_str().unwrap().contains("it is not loaded"), "{}", orphan["problem"]);
         // The kits GridCraft is built with can't be removed, and nothing is asked for them.
         let asked_so_far = asked.questions().len();
-        page(&mut h, json!({"act": "removeKit", "id": "anie"}));
+        page(&mut h, json!({"act": "removeKit", "id": "pythoncraft"}));
         assert_eq!(told(&mut h)["error"], "That is not a development kit that was loaded from a package.");
         assert_eq!(asked.questions().len(), asked_so_far);
     }
@@ -3619,17 +3619,18 @@ mod tests {
             Err(presence::BY_HAND.to_string())
         );
         // A call starts the script, handed what the line says: the project named with an
-        // underscore for its hyphen, and under its kit. The line is kept, to be run again.
-        page(&mut h, json!({"act": "immediate", "line": " anie.clean_data.clean([[1, 2], [3, 4]]) "}));
+        // underscore for its hyphen, and under its kit as the kit is shown, capitals and all.
+        // The line is kept, to be run again.
+        page(&mut h, json!({"act": "immediate", "line": " PythonCraft.clean_data.clean([[1, 2], [3, 4]]) "}));
         let ran = told(&mut h);
         assert_eq!(ran["error"], "");
         let run = &ran["pane"]["immediate"]["run"];
         assert_eq!(
             (&run["project"], &run["script"], &run["line"], &run["immediate"]),
-            (&json!("clean-data"), &json!("clean.py"), &json!("anie.clean_data.clean([[1, 2], [3, 4]])"), &json!(true))
+            (&json!("clean-data"), &json!("clean.py"), &json!("PythonCraft.clean_data.clean([[1, 2], [3, 4]])"), &json!(true))
         );
         assert!(matches!(run["state"].as_str(), Some("running" | "done")), "{run}");
-        assert_eq!(ran["pane"]["immediate"]["earlier"], json!(["anie.clean_data.clean([[1, 2], [3, 4]])"]));
+        assert_eq!(ran["pane"]["immediate"]["earlier"], json!(["PythonCraft.clean_data.clean([[1, 2], [3, 4]])"]));
         // It ends, one way or the other (this machine may have no Python), and says how.
         page(&mut h, json!({"act": "stopRun", "id": "clean-data"}));
         let mut ended = Json::Null;
@@ -3641,7 +3642,7 @@ mod tests {
         }
         assert_eq!(
             (&ended["state"], &ended["line"], &ended["immediate"]),
-            (&json!("done"), &json!("anie.clean_data.clean([[1, 2], [3, 4]])"), &json!(true)),
+            (&json!("done"), &json!("PythonCraft.clean_data.clean([[1, 2], [3, 4]])"), &json!(true)),
             "{ended}"
         );
         assert!(ended["ok"].is_boolean() && ended["text"].is_string());
@@ -3716,7 +3717,7 @@ mod tests {
             h.ctx.data_mut(|d| d.insert_temp(state_id(), kept));
             h.run_steps(2);
             (
-                h.query_by_role_and_label(Role::Button, "Anie Development Kit").is_some(),
+                h.query_by_role_and_label(Role::Button, "PythonCraft").is_some(),
                 h.query_by_role_and_label(Role::Button, "C Development Kit").is_some(),
                 h.query_by_label(kits::FILTER_NONE).is_some(),
             )
@@ -3727,31 +3728,31 @@ mod tests {
         assert_eq!(filter(&mut h, "nothing says this"), (false, false, true));
         assert_eq!(filter(&mut h, ""), (true, true, false));
         // The kit's part: what it needs to run, the way to its other windows, its projects.
-        go(&mut h, "Anie Development Kit");
+        go(&mut h, "PythonCraft");
         // What it is made of, as badges: each is read as its name.
         h.get_by_label("Python");
         h.get_by_label("Svelte");
         h.get_by_label("Python · Svelte  ·  1 project");
         h.get_by_label("1 project, 0 trusted");
         h.get_by_label_contains("Python: found automatically.");
-        h.get_by_label(&kits::projects_note(&kit::ANIE));
+        h.get_by_label(&kits::projects_note(&kit::PYTHONCRAFT));
         h.get_by_role_and_label(Role::Button, "Clean Data");
         assert!(h.query_by_label_contains("Librar").is_none() && h.query_by_label_contains("librar").is_none(), "a project is called a project");
         click(&mut h, "Projects…");
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
         open_top(&mut h);
-        go(&mut h, "Anie Development Kit");
+        go(&mut h, "PythonCraft");
         click(&mut h, "Console…");
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::console::NAME));
         // A project has a part of its own: what it is for, where it stands, what it asks.
         open_top(&mut h);
-        go_project(&mut h, "Anie Development Kit", "Clean Data");
-        h.get_by_label("Anie Development Kit  ·  For any workbook");
+        go_project(&mut h, "PythonCraft", "Clean Data");
+        h.get_by_label("PythonCraft  ·  For any workbook");
         h.get_by_label("It is for any workbook.");
         h.get_by_label("It asks to be allowed to:");
         h.get_by_label("Not trusted");
         // A new project, made in the kit's part as the code of the workbook that is open.
-        go(&mut h, "Anie Development Kit");
+        go(&mut h, "PythonCraft");
         h.get_by_role_and_label(Role::TextInput, "New project:").focus();
         h.run_steps(2);
         h.get_by_role_and_label(Role::TextInput, "New project:").type_text("Budget Macros");
@@ -3763,7 +3764,7 @@ mod tests {
         let made = gridcraft_aniefork_dev::project::load(&s.0.join("projects/budget-macros"));
         assert_eq!(made.manifest.unwrap().workbook, Some(title.clone()));
         // The window turns to what was made, which is not trusted.
-        h.get_by_label("Anie Development Kit  ·  Workbook code");
+        h.get_by_label("PythonCraft  ·  Workbook code");
         h.get_by_label(&format!("It says it is the code of the workbook {title:?}, which is open now."));
         h.get_by_label(&format!("Budget Macros was created, as the code of {title}. It is not trusted yet."));
         assert_eq!(h.state().dialog.as_ref().and_then(|d| d.values.get("part")), Some(&json!("project:budget-macros")));
@@ -3799,7 +3800,7 @@ mod tests {
         assert!(h.query_by_label("Dock Panel").is_none() && h.query_by_label("Open in Browser").is_none());
         go(&mut h, "C Development Kit");
         h.get_by_label("1 project, 0 trusted");
-        go(&mut h, "Anie Development Kit");
+        go(&mut h, "PythonCraft");
         h.get_by_label("2 projects, 0 trusted");
         // The Developer tab's button, and the bar under the ribbon, open it by this name. (The
         // ribbon's buttons carry no names a test can click them by.)
@@ -4071,7 +4072,7 @@ mod tests {
         app.services.open_url = Some(Box::new(move |address: &str| seen.borrow_mut().push(address.to_string())));
         let mut h = harness(app);
         open_top(&mut h);
-        go(&mut h, "Anie Development Kit");
+        go(&mut h, "PythonCraft");
         // Created like any project: on disk, and not trusted.
         click(&mut h, "Create Showcase");
         assert!(s.0.join("projects/svelte-showcase/panel/app.js").is_file() && s.0.join("projects/svelte-showcase/source/src/App.svelte").is_file());

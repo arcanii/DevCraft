@@ -7,7 +7,7 @@
 //! serves anything of a project asks first, here, whether the project is trusted and what it was
 //! granted.
 //!
-//! - [`kit`]: the development kits that are loaded (the Anie Development Kit, which is most
+//! - [`kit`]: the development kits that are loaded (PythonCraft, which is most
 //!   of this crate, and the C Development Kit, which builds a project's C and runs it in the
 //!   project's panel), and what a project is for: the code of one workbook, or any workbook.
 //! - [`manifest`]: `project.toml`, and the permissions a project can ask for.
@@ -125,7 +125,7 @@ mod tests {
         assert!(before["asks"].as_array().unwrap().iter().all(|a| a["means"].as_str().is_some_and(|text| !text.is_empty())));
         assert_eq!(before["files"], json!(["panel/index.html", "project.toml", "python/clean.py"]));
         assert_eq!((&before["kind"], &before["workbook"], &before["rebuilt"]), (&json!("general"), &Json::Null, &Json::Null));
-        assert_eq!(before["kit"], json!("anie"), "a project that names no kit is the first kit's");
+        assert_eq!(before["kit"], json!("pythoncraft"), "a project that names no kit is the first kit's");
         // A project of the C kit says so; one of a kit this build lacks is listed under the first, as a problem.
         t.write("blink/project.toml", "id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\n");
         let blink = describe(&project::load(&t.0.join("blink")), &store);
@@ -136,7 +136,7 @@ mod tests {
         assert_eq!((&blink["builds"], &before["builds"]), (&json!(false), &json!(false)), "neither has a recipe");
         t.write("rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
         let rusty = describe(&project::load(&t.0.join("rusty")), &store);
-        assert_eq!((&rusty["kit"], &rusty["status"]), (&json!("anie"), &json!("problem")));
+        assert_eq!((&rusty["kit"], &rusty["status"]), (&json!("pythoncraft"), &json!("problem")));
         assert!(rusty["problem"].as_str().is_some_and(|why| why.contains("the kit \"rust\"")));
         store.trust(&m, false).unwrap();
         let after = describe(&m, &store);

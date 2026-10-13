@@ -539,11 +539,11 @@ mod tests {
                     at = span.end;
                 }
                 // What is shown is the text again, piece by piece, whatever it was read as.
-                let mut anie = kit::ANIE;
+                let mut first = kit::PYTHONCRAFT;
                 let only: &'static [&'static Language] = Box::leak(Box::new([language]));
-                anie.languages = only;
+                first.languages = only;
                 let name = format!("x.{}", language.endings[0]);
-                let shown = show(&anie, &name, text);
+                let shown = show(&first, &name, text);
                 let again: Vec<String> = shown.lines.iter().map(|line| line.iter().map(|(piece, _)| piece.as_str()).collect()).collect();
                 let lines: Vec<&str> = text.lines().collect();
                 assert_eq!(again, lines, "{} on {text:?}", language.name);
@@ -581,14 +581,14 @@ mod tests {
         // A file the kit says nothing of is shown plain: a C project's Python is not read as Python.
         let plain = show(&kit::C, "notes.py", "import os  # x\n");
         assert_eq!((plain.language, &plain.lines), (None, &vec![vec![("import os  # x".to_string(), None)]]));
-        assert_eq!(show(&kit::ANIE, "notes.py", "import os\n").language, Some("Python"));
+        assert_eq!(show(&kit::PYTHONCRAFT, "notes.py", "import os\n").language, Some("Python"));
         assert_eq!(show(&kit::C, "Makefile", "all:\n").language, None, "no ending, no language");
         // Only so many lines, and only so much of a line.
         let long = "x = 1\n".repeat(MAX_LINES + 50);
-        let cut = show(&kit::ANIE, "long.py", &long);
+        let cut = show(&kit::PYTHONCRAFT, "long.py", &long);
         assert_eq!((cut.lines.len(), cut.of_lines, cut.cut()), (MAX_LINES, MAX_LINES + 50, true));
         let wide = format!("# {}\nx = 1\n", "é".repeat(MAX_LINE_CHARS * 3));
-        let narrow = show(&kit::ANIE, "wide.py", &wide);
+        let narrow = show(&kit::PYTHONCRAFT, "wide.py", &wide);
         let first: usize = narrow.lines[0].iter().map(|(piece, _)| piece.chars().count()).sum();
         assert!(first <= MAX_LINE_CHARS + 2 && narrow.lines[0].last().unwrap().0 == " …", "{first}");
         assert_eq!(narrow.lines[1][0].0, "x = ", "the line after a long one is whole");
@@ -606,13 +606,13 @@ mod tests {
             (&kit::C, "project.toml", Some("TOML")),
             (&kit::C, "README.md", Some("Markdown")),
             (&kit::C, "python/clean.py", None),
-            (&kit::ANIE, "python/clean.py", Some("Python")),
-            (&kit::ANIE, "source/src/App.svelte", Some("HTML")),
-            (&kit::ANIE, "panel/app.css", Some("CSS")),
-            (&kit::ANIE, "rebuilt.toml", Some("TOML")),
-            (&kit::ANIE, "src/main.c", None),
-            (&kit::ANIE, "panel/doom1.wad", None),
-            (&kit::ANIE, ".gitignore", None),
+            (&kit::PYTHONCRAFT, "python/clean.py", Some("Python")),
+            (&kit::PYTHONCRAFT, "source/src/App.svelte", Some("HTML")),
+            (&kit::PYTHONCRAFT, "panel/app.css", Some("CSS")),
+            (&kit::PYTHONCRAFT, "rebuilt.toml", Some("TOML")),
+            (&kit::PYTHONCRAFT, "src/main.c", None),
+            (&kit::PYTHONCRAFT, "panel/doom1.wad", None),
+            (&kit::PYTHONCRAFT, ".gitignore", None),
         ] {
             assert_eq!(language_for(kit, path).map(|language| language.name), name, "{} {path}", kit.id);
         }

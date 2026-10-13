@@ -47,7 +47,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "developer.projects",
         "Projects",
-        "→ {available, folder, projects: [{id, name, version, kind: \"workbook\"|\"general\", workbook, rebuilt, status: \"trusted\"|\"untrusted\"|\"changed\"|\"problem\", asks, granted, files, fingerprint…}]}: the projects of the Anie Development Kit, each with what it is for. It only reports: trust is given by the user alone, in Developer ▸ Projects",
+        "→ {available, folder, projects: [{id, name, version, kind: \"workbook\"|\"general\", workbook, rebuilt, status: \"trusted\"|\"untrusted\"|\"changed\"|\"problem\", asks, granted, files, fingerprint…}]}: the projects of PythonCraft, each with what it is for. It only reports: trust is given by the user alone, in Developer ▸ Projects",
     ),
     (
         "developer.console",

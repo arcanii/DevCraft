@@ -631,7 +631,7 @@ mod host {
         };
         // A project of the C kit, or of a kit that stands on it.
         if kit::of_in(found.dir.parent().unwrap_or(&found.dir), Some(manifest)).base != kit::C.id {
-            return Err(format!("{name} is not a project of the {}.", kit::C.name));
+            return Err(format!("{name} is not a project of {}.", kit::C.called()));
         }
         let Some(recipe) = manifest.c.as_ref() else {
             return Err(format!("{name} has no C recipe: its project.toml names no sources to build."));
@@ -905,7 +905,7 @@ mod host {
             trust(&at, "blink");
             assert!(build(&at, "blink", "gridcraft-no-such-compiler").unwrap_err().contains("did not answer as zig does"));
             // A project of the first kit is not built, trusted or not; nor one without a recipe.
-            starter::create_in(&at.projects, &kit::ANIE, "Clean Data", None).unwrap();
+            starter::create_in(&at.projects, &kit::PYTHONCRAFT, "Clean Data", None).unwrap();
             trust(&at, "clean-data");
             assert_eq!(build(&at, "clean-data", "").unwrap_err(), "Clean Data is not a project of the C Development Kit.");
             t.write("projects/bare/project.toml", "id = \"bare\"\nname = \"Bare\"\nversion = \"1\"\nkit = \"c\"\n");

@@ -4,7 +4,7 @@
 //!
 //! The starter is an ordinary project: it is created untrusted, like any other.
 //!
-//! Each kit has its own: the Anie kit's is a panel and a Python script it can run; the C kit's
+//! Each kit has its own: PythonCraft's is a panel and a Python script it can run; the C kit's
 //! is a program of a few lines and a panel that runs it.
 
 use std::fs;
@@ -156,8 +156,8 @@ version = "0.1.0"
 author = ""
 description = "A starter project: a program written in C, and a panel that runs it."
 
-# The development kit this is a project of. Without this line a project is of the Anie
-# Development Kit (Python scripts and a web panel).
+# The development kit this is a project of. Without this line a project is a PythonCraft
+# project (Python scripts and a web panel).
 kit = "{kit}"
 {workbook}
 # What this project asks to be allowed. The user sees this list before trusting it.
@@ -309,7 +309,7 @@ pub fn id_for(name: &str) -> String {
 /// What a starter project named `name` holds: its id, and its files (path and text). `None` when
 /// the name makes no id.
 pub fn files(name: &str) -> Option<(String, Vec<(&'static str, String)>)> {
-    files_for(&kit::ANIE, name, None)
+    files_for(&kit::PYTHONCRAFT, name, None)
 }
 
 /// The same, for a project of `kit` that is the code of the workbook named `workbook`.
@@ -344,7 +344,7 @@ pub fn create(projects_dir: &Path, name: &str) -> Result<Project, String> {
 /// The same, for a project that is the code of the workbook named `workbook` (for any workbook
 /// when there is none). A name that can't be a workbook's is refused before anything is written.
 pub fn create_for(projects_dir: &Path, name: &str, workbook: Option<&str>) -> Result<Project, String> {
-    create_in(projects_dir, &kit::ANIE, name, workbook)
+    create_in(projects_dir, &kit::PYTHONCRAFT, name, workbook)
 }
 
 /// Puts lines into a manifest right after the line that gives its id, where a manifest's own
@@ -382,7 +382,7 @@ fn packaged_files(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&
     let named = vec![format!("kit = \"{}\"", kit.id)];
     let own = crate::kitpack::starter_files(projects_dir, kit);
     let mut files: Vec<(String, Vec<u8>)> = if own.is_empty() {
-        let base = kit::named(kit.base).unwrap_or(&kit::ANIE);
+        let base = kit::named(kit.base).unwrap_or(&kit::PYTHONCRAFT);
         files_for(base, name, None)?.1.into_iter().map(|(path, text)| (path.to_string(), text.into_bytes())).collect()
     } else {
         // Text is written with the project's own id and name; anything else is copied as it is.
@@ -566,9 +566,9 @@ mod tests {
         let doom = create_in(&t.0, &kit::C, "Doom", Some("Doom.xlsx")).unwrap();
         assert_eq!(doom.manifest.unwrap().workbook.as_deref(), Some("Doom.xlsx"));
         // The first kit's starter is what it was.
-        let first = create_in(&t.0, &kit::ANIE, "Clean Data", None).unwrap();
+        let first = create_in(&t.0, &kit::PYTHONCRAFT, "Clean Data", None).unwrap();
         assert_eq!(first.files, ["panel/index.html", "project.toml", "python/clean.py"]);
-        assert_eq!(first.manifest.unwrap().kit, "anie");
+        assert_eq!(first.manifest.unwrap().kit, "pythoncraft");
         // A name can't write itself into the program: only the id, which is plain, is put there.
         let odd = create_in(&t.0, &kit::C, "Evil */ int system(const char *); /* \" \\ %s", None).unwrap();
         assert!(odd.is_sound(), "{:?}", odd.problem);

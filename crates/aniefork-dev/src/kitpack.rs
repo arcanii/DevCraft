@@ -196,7 +196,7 @@ pub fn pack(kit_dir: &Path, to: &Path) -> Result<Package, String> {
 /// What the operating system asks before a package is loaded: what it is, in full.
 pub fn question(package: &Package) -> String {
     let said = &package.said;
-    let base = kit::named(&said.base).map_or(said.base.as_str(), |base| base.name);
+    let base = kit::named(&said.base).map_or_else(|| format!("the kit {:?}", said.base), Kit::called);
     let mut text = format!("Load the development kit \"{}\"", said.name);
     if !said.version.is_empty() {
         text.push_str(&format!(" {}", said.version));
@@ -204,7 +204,7 @@ pub fn question(package: &Package) -> String {
     if !said.author.is_empty() {
         text.push_str(&format!(", by {}", said.author));
     }
-    text.push_str(&format!("?\n\nIt describes projects that run by the {base}, with that kit's limits on what a project may ask.\n"));
+    text.push_str(&format!("?\n\nIt describes projects that run by {base}, with that kit's limits on what a project may ask.\n"));
     text.push_str(
         match package.starter() {
             0 => "It brings no starter of its own: a new project of it begins as one of that kit does.\n".to_string(),
@@ -323,7 +323,7 @@ pub(crate) mod tests {
         path
     }
 
-    pub(crate) const KIT: &str = "id = \"dashboards\"\nname = \"Dashboards Kit\"\nversion = \"0.2.0\"\nauthor = \"Ana\"\ndescription = \"Panels that chart what is selected.\"\nmade_of = [\"Svelte\", \"Python\"]\nbase = \"anie\"\n";
+    pub(crate) const KIT: &str = "id = \"dashboards\"\nname = \"Dashboards Kit\"\nversion = \"0.2.0\"\nauthor = \"Ana\"\ndescription = \"Panels that chart what is selected.\"\nmade_of = [\"Svelte\", \"Python\"]\nbase = \"pythoncraft\"\n";
     pub(crate) const STARTER_MANIFEST: &str = "id = \"{{id}}\"\nname = \"{{name}}\"\nversion = \"0.1.0\"\nkit = \"dashboards\"\npermissions = [\"read\"]\n\n[panel]\nentry = \"panel/index.html\"\n";
 
     #[test]
@@ -340,15 +340,21 @@ pub(crate) mod tests {
             ],
         );
         let package = read(&file).unwrap();
-        assert_eq!((package.said.id.as_str(), package.said.name.as_str(), package.said.base.as_str()), ("dashboards", "Dashboards Kit", "anie"));
+        assert_eq!(
+            (package.said.id.as_str(), package.said.name.as_str(), package.said.base.as_str()),
+            ("dashboards", "Dashboards Kit", "pythoncraft")
+        );
         assert_eq!((package.files.len(), package.starter()), (4, 2));
         assert_eq!(package.fingerprint.len(), 64);
         assert_eq!(package.bytes, package.files.iter().map(|(_, held)| held.len() as u64).sum::<u64>());
         let asked = question(&package);
         assert!(asked.starts_with("Load the development kit \"Dashboards Kit\" 0.2.0, by Ana?"), "{asked}");
-        assert!(
-            asked.contains("run by the Anie Development Kit") && asked.contains("a starter of 2 files") && asked.contains("Nothing in it is run.")
-        );
+        assert!(asked.contains("run by PythonCraft, with") && asked.contains("a starter of 2 files") && asked.contains("Nothing in it is run."));
+        // A package made before the first kit was named stands on it by the id it had.
+        let earlier = zipped(&t.0, "earlier.gridkit", &[("kit.toml", KIT.replace("pythoncraft", "anie").as_bytes())]);
+        let earlier = read(&earlier).unwrap();
+        assert_eq!(earlier.said.base, "anie");
+        assert!(question(&earlier).contains("run by PythonCraft, with"));
         // The same files give the same fingerprint; another file gives another.
         let again = zipped(&t.0, "again.gridkit", &[("kit.toml", KIT.as_bytes()), ("README.md", b"# Dashboards!")]);
         assert_ne!(read(&again).unwrap().fingerprint, package.fingerprint);
@@ -399,19 +405,20 @@ pub(crate) mod tests {
         let package = read(&file).unwrap();
         assert_eq!(kit::all(&projects).len(), 2, "only the kits GridCraft is built with");
         let loaded = install(&projects, &package).unwrap();
-        assert_eq!((loaded.id, loaded.name, loaded.base, loaded.built_in), ("dashboards", "Dashboards Kit", "anie", false));
+        assert_eq!((loaded.id, loaded.name, loaded.base, loaded.built_in), ("dashboards", "Dashboards Kit", "pythoncraft", false));
         assert_eq!((loaded.version, loaded.author, loaded.made_of), ("0.2.0", "Ana", ["Svelte", "Python"].as_slice()));
         // It stands on the first kit: what its projects may hold and ask is that kit's.
-        assert_eq!((loaded.permissions, loaded.scripts, loaded.builds, loaded.panels), (kit::ANIE.permissions, true, false, true));
+        assert_eq!((loaded.permissions, loaded.scripts, loaded.builds, loaded.panels), (kit::PYTHONCRAFT.permissions, true, false, true));
         assert!(t.0.join("kits/dashboards/kit.toml").is_file() && t.0.join("kits/dashboards/starter/project.toml").is_file());
         let listed: Vec<&str> = kit::all(&projects).iter().map(|kit| kit.id).collect();
-        assert_eq!(listed, ["anie", "c", "dashboards"]);
+        assert_eq!(listed, ["pythoncraft", "c", "dashboards"]);
         assert_eq!(starter_files(&projects, loaded).len(), 1);
         // Loaded twice, it is not written over.
         assert!(install(&projects, &package).unwrap_err().contains("already loaded"));
         // Removing takes its folder away and nothing else; the built-in kits can't be removed.
         std::fs::write(t.0.join("kits/keep.txt"), "x").unwrap();
-        assert!(remove(&projects, "anie").is_err() && remove(&projects, "../projects").is_err() && remove(&projects, "nowhere").is_err());
+        assert!(remove(&projects, "pythoncraft").is_err() && remove(&projects, "anie").is_err());
+        assert!(remove(&projects, "../projects").is_err() && remove(&projects, "nowhere").is_err());
         assert_eq!(remove(&projects, "dashboards").unwrap(), "Dashboards Kit");
         assert!(!t.0.join("kits/dashboards").exists() && t.0.join("kits/keep.txt").is_file() && projects.is_dir());
         assert_eq!(kit::all(&projects).len(), 2);

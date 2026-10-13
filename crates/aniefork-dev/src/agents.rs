@@ -3002,8 +3002,8 @@ then. A project may hold only plain files and folders (no links), at most 2000 f
 
 Kits. A project is of one development kit, which project.toml names with kit = "..."
 (development_status lists the kits this GridCraft has, and list_projects says each project's).
-Without the line it is of the Anie Development Kit, which is what is described here: a panel
-and Python scripts. A project of the C Development Kit (kit = "c") holds C sources and a
+Without the line it is a PythonCraft project (kit = "pythoncraft"), which is what is described
+here: a panel and Python scripts. A project of the C Development Kit (kit = "c") holds C sources and a
 panel; it has no scripts, and may ask for read, write and files only. Its project.toml has a
 recipe, [c], that says what is built: sources = ["src"] (C files, or folders of them), and
 optionally include (folders), define (NAME or NAME=value), optimize (size, speed, none) and
@@ -3085,7 +3085,7 @@ A call the project wasn't granted raises spreadsheet.Error, which the script can
     const REFERENCE_MACROS: &str = r#"Rebuilding a workbook's macros (VBA) as a project. GridCraft never runs VBA. What the
 macros did is rebuilt as a project: Python scripts for the procedures, and a panel where the
 workbook had a form or buttons. The person reads every file before anything of it runs. It
-is listed for them under the Anie Development Kit, as "workbook code".
+is listed for them under PythonCraft, as "workbook code".
 
 1. Read. list_macros gives the VBA project of the workbook that is open: its modules, the
    procedures in each, which of them Excel ran by itself (events, Auto_Open), which live in a
@@ -4921,8 +4921,8 @@ mod served {
         assert_eq!(
             told["kits"][0],
             json!({
-                "id": "anie",
-                "name": "Anie Development Kit",
+                "id": "pythoncraft",
+                "name": "PythonCraft",
                 "madeOf": ["Python", "Svelte"],
                 "builtIn": true,
                 "aProject": "A project is a folder with a project.toml, Python scripts and a web panel.",

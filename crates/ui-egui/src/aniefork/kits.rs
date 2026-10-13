@@ -7,7 +7,7 @@
 //! Development                    the whole, at a glance
 //!   MCP Server                   agents: how far they may go, and what they ask
 //!   Development Kits
-//!     Anie Development Kit       Python and Svelte
+//!     PythonCraft                Python and Svelte
 //!     C Development Kit          C: built as WebAssembly, and run in the project's panel
 //! ```
 //!
@@ -103,7 +103,7 @@ impl Pane {
 
     /// The part a window falls back to when what it showed is gone: the first kit's.
     pub(super) fn first_kit() -> Pane {
-        Pane::kit(&kit::ANIE)
+        Pane::kit(&kit::PYTHONCRAFT)
     }
 
     /// The word a window uses to ask for this part.
@@ -373,7 +373,7 @@ fn kind_of(project: &Json) -> ProjectKind {
 
 /// The kit a described project is listed under.
 fn kit_of(project: &Json) -> &'static Kit {
-    kit_named(text(project, "kit")).unwrap_or(&kit::ANIE)
+    kit_named(text(project, "kit")).unwrap_or(&kit::PYTHONCRAFT)
 }
 
 /// The kits there are: the ones GridCraft is built with, and those loaded from packages.
@@ -858,13 +858,13 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
     }
     // A kit from a package: whose it is, what it stands on, and the way to remove it.
     if !kit.built_in {
-        let base = kit::named(kit.base).unwrap_or(&kit::ANIE);
+        let base = kit::named(kit.base).unwrap_or(&kit::PYTHONCRAFT);
         let projects = of_kit(&found, kit).count();
         told["package"] = json!({
             "title": "Package",
             "version": kit.version,
             "author": kit.author,
-            "says": format!("Loaded from a package. It runs nothing of its own: its projects run by the {}, with that kit's limits.", base.name),
+            "says": format!("Loaded from a package. It runs nothing of its own: its projects run by {}, with that kit's limits.", base.called()),
             "base": base.name,
             "baseGo": Pane::kit(base).code(),
             "removeSays": match projects {
@@ -896,7 +896,7 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
         });
     }
     // The showcase is a project of the first kit.
-    if kit.id == kit::ANIE.id {
+    if kit.id == kit::PYTHONCRAFT.id {
         let standing = found.projects.iter().find(|project| project["id"] == showcase::ID).map(|project| project["status"] == "trusted");
         told["showcase"] = json!({
             "stands": match standing { None => "none", Some(true) => "trusted", Some(false) => "untrusted" },
@@ -1047,8 +1047,11 @@ pub(super) fn file_view(id: &str, path: &str) -> Option<Json> {
     let told = match on_disk.read_text(path, highlight::MAX_BYTES) {
         Err(why) => json!({"path": path, "says": path, "problem": why, "lines": [], "more": null}),
         Ok(text) => {
-            let shown =
-                highlight::show(kit_named(on_disk.manifest.as_ref().map_or("", |manifest| manifest.kit.as_str())).unwrap_or(&kit::ANIE), path, &text);
+            let shown = highlight::show(
+                kit_named(on_disk.manifest.as_ref().map_or("", |manifest| manifest.kit.as_str())).unwrap_or(&kit::PYTHONCRAFT),
+                path,
+                &text,
+            );
             let lines: Vec<Vec<Json>> =
                 shown.lines.iter().map(|line| line.iter().map(|(piece, kind)| json!([piece, kind.map(highlight::Kind::code)])).collect()).collect();
             let says = match shown.language {
@@ -1110,7 +1113,7 @@ pub(super) fn resolve(call: &super::immediate::Call) -> Result<(String, String),
     if let Some(kit) = &call.kit
         && !super::immediate::names(kit, text(project, "kit"))
     {
-        return Err(format!("{name} is not a project of a kit named {kit}: it is of the {}.", kit_of(project).name));
+        return Err(format!("{name} is not a project of a kit named {kit}: it is of {}.", kit_of(project).called()));
     }
     if project["status"] != "trusted" {
         return Err(format!("{name} is not trusted as it is now, so nothing of it can be called."));
@@ -1158,8 +1161,8 @@ pub(super) fn pane(app: &SheetApp, ctx: &egui::Context, pane: &Pane, now: &agent
         Pane::Console => super::console::pane(),
         // Which module is read is the window's own to say: whoever draws it names it.
         Pane::Macros => macros::pane(app, &mut String::new()),
-        Pane::Kit(id) => kit_pane(app, ctx, kit_named(id).unwrap_or(&kit::ANIE)),
-        Pane::Project(id) => project_pane(app, ctx, id).unwrap_or_else(|| kit_pane(app, ctx, &kit::ANIE)),
+        Pane::Kit(id) => kit_pane(app, ctx, kit_named(id).unwrap_or(&kit::PYTHONCRAFT)),
+        Pane::Project(id) => project_pane(app, ctx, id).unwrap_or_else(|| kit_pane(app, ctx, &kit::PYTHONCRAFT)),
     }
 }
 
@@ -1194,13 +1197,19 @@ mod tests {
 
     #[test]
     fn the_parts_of_the_window_have_names_a_window_can_ask_by() {
-        for pane in
-            [Pane::Overview, Pane::Server, Pane::Console, Pane::Macros, Pane::kit(&kit::ANIE), Pane::kit(&kit::C), Pane::Project("clean-data".into())]
-        {
+        for pane in [
+            Pane::Overview,
+            Pane::Server,
+            Pane::Console,
+            Pane::Macros,
+            Pane::kit(&kit::PYTHONCRAFT),
+            Pane::kit(&kit::C),
+            Pane::Project("clean-data".into()),
+        ] {
             assert_eq!(Pane::parse(&pane.code()), Some(pane.clone()), "{pane:?}");
         }
-        assert_eq!((Pane::kit(&kit::ANIE).code(), Pane::kit(&kit::C).code()), ("kit:anie".to_string(), "kit:c".to_string()));
-        assert_eq!(Pane::first_kit(), Pane::kit(&kit::ANIE));
+        assert_eq!((Pane::kit(&kit::PYTHONCRAFT).code(), Pane::kit(&kit::C).code()), ("kit:pythoncraft".to_string(), "kit:c".to_string()));
+        assert_eq!(Pane::first_kit(), Pane::kit(&kit::PYTHONCRAFT));
         // Only a kit that is loaded has a part.
         for bad in ["", "tools", "project:", "project:../x", "project:Clean Data", "kit", "kit:", "kit:other", "kit:C", "kit:anie/x"] {
             assert_eq!(Pane::parse(bad), None, "{bad:?}");
@@ -1219,7 +1228,7 @@ mod tests {
         write(&s, "doom/project.toml", "id = \"doom\"\nname = \"Doom\"\nversion = \"1\"\nkit = \"c\"\nworkbook = \"Doom.xlsx\"\n");
         write(&s, "doom/src/main.c", "int main(void) { return 0; }\n");
         forget();
-        let rows = nav(&a, &Pane::kit(&kit::ANIE), &agents::snapshot());
+        let rows = nav(&a, &Pane::kit(&kit::PYTHONCRAFT), &agents::snapshot());
         let listed: Vec<(String, String, u64)> = rows
             .as_array()
             .unwrap()
@@ -1234,14 +1243,14 @@ mod tests {
             ("item", "Console", 1),
             ("item", "Macros", 1),
             ("heading", "Development Kits", 1),
-            ("kit", "Anie Development Kit", 1),
+            ("kit", "PythonCraft", 1),
             ("kit", "C Development Kit", 1),
         ];
         assert_eq!(listed, expected.map(|(kind, label, depth)| (kind.to_string(), label.to_string(), depth)));
         let row = |rows: &Json, label: &str| rows.as_array().unwrap().iter().find(|row| row["label"] == label).unwrap().clone();
-        assert_eq!((&row(&rows, "Anie Development Kit")["selected"], &row(&rows, "Development")["selected"]), (&json!(true), &json!(false)));
+        assert_eq!((&row(&rows, "PythonCraft")["selected"], &row(&rows, "Development")["selected"]), (&json!(true), &json!(false)));
         // A kit is set apart with its shield, and says what it is made of and how many projects it has.
-        let first = row(&rows, "Anie Development Kit");
+        let first = row(&rows, "PythonCraft");
         assert_eq!(
             (&first["hint"], &first["icon"], &first["projects"], &first["within"]),
             (&json!("Python · Svelte"), &json!("shield"), &json!("2 projects"), &json!(false))
@@ -1259,7 +1268,7 @@ mod tests {
         // While a project is shown its kit's row says so: it is the way back to the kit.
         let rows = nav(&a, &Pane::Project("doom".into()), &agents::snapshot());
         assert_eq!(
-            (&row(&rows, "C Development Kit")["within"], &row(&rows, "C Development Kit")["selected"], &row(&rows, "Anie Development Kit")["within"]),
+            (&row(&rows, "C Development Kit")["within"], &row(&rows, "C Development Kit")["selected"], &row(&rows, "PythonCraft")["within"]),
             (&json!(true), &json!(false), &json!(false))
         );
         assert_eq!(rows.as_array().map(Vec::len), Some(7), "the project itself is not a row");
@@ -1270,10 +1279,10 @@ mod tests {
         let of = |told: &Json, name: &str| told["projects"].as_array().unwrap().iter().find(|project| project["name"] == name).unwrap().clone();
         let c_kit = kit_pane(&a, &ctx, &kit::C);
         assert_eq!((&of(&c_kit, "Doom")["for"], &of(&c_kit, "Blink")["for"]), (&json!("Code of Doom.xlsx"), &Json::Null));
-        assert_eq!(of(&kit_pane(&a, &ctx, &kit::ANIE), "Budget Macros")["for"], json!(format!("Code of {title}  ·  open")));
+        assert_eq!(of(&kit_pane(&a, &ctx, &kit::PYTHONCRAFT), "Budget Macros")["for"], json!(format!("Code of {title}  ·  open")));
         budget(&s, "Elsewhere.xlsm");
         forget();
-        assert_eq!(of(&kit_pane(&a, &ctx, &kit::ANIE), "Budget Macros")["for"], "Code of Elsewhere.xlsm");
+        assert_eq!(of(&kit_pane(&a, &ctx, &kit::PYTHONCRAFT), "Budget Macros")["for"], "Code of Elsewhere.xlsm");
         // The workbook that is open carries macros: the top says so, and what was rebuilt of them.
         carry(&mut a, sample());
         let top = overview(&a, &agents::snapshot());
@@ -1288,7 +1297,7 @@ mod tests {
         assert_eq!(covered_says(0, 0), "It holds no procedures.");
         assert_eq!(
             (&top["server"]["level"], &top["kits"][0]["name"], &top["kits"][0]["projects"]),
-            (&json!("Off"), &json!("Anie Development Kit"), &json!("2 projects, 0 trusted"))
+            (&json!("Off"), &json!("PythonCraft"), &json!("2 projects, 0 trusted"))
         );
         // Each kit counts its own projects, and neither says there is something it can't do yet.
         assert_eq!(
@@ -1318,7 +1327,7 @@ mod tests {
         // What a search looks through: what the kit says of itself, and its projects.
         let kit_row =
             |label: &str| rows.as_array().unwrap().iter().find(|row| row["label"] == label).unwrap()["search"].as_str().unwrap().to_string();
-        let (first, second) = (kit_row("Anie Development Kit"), kit_row("C Development Kit"));
+        let (first, second) = (kit_row("PythonCraft"), kit_row("C Development Kit"));
         assert!(matches(&first, "python") && matches(&first, "Clean DATA") && matches(&first, "svelte panel"));
         assert!(!matches(&first, "blink") && !matches(&first, "python webassembly"), "every word typed must be said");
         assert!(matches(&second, "blink") && matches(&second, "webassembly") && !matches(&second, "python"));
@@ -1327,14 +1336,14 @@ mod tests {
         let on_disk = |id: &str| folder_bytes(&s.0.join("projects").join(id), &mut usize::MAX.clone());
         let measured = space().unwrap();
         assert!(on_disk("clean-data") > 0 && on_disk("blink") > 0);
-        assert_eq!((measured.of(&kit::ANIE), measured.of(&kit::C)), (on_disk("clean-data"), on_disk("blink")));
+        assert_eq!((measured.of(&kit::PYTHONCRAFT), measured.of(&kit::C)), (on_disk("clean-data"), on_disk("blink")));
         std::fs::create_dir_all(s.0.join("built/blink/print")).unwrap();
         std::fs::write(s.0.join("built/blink/print/program.wasm"), vec![0u8; 5000]).unwrap();
         forget();
         let measured = space().unwrap();
         assert_eq!(measured.of(&kit::C), on_disk("blink") + 5000);
-        assert_eq!(measured.of(&kit::ANIE), on_disk("clean-data"), "what was built is not the first kit's");
-        assert_eq!(measured.all(), measured.of(&kit::ANIE) + measured.of(&kit::C));
+        assert_eq!(measured.of(&kit::PYTHONCRAFT), on_disk("clean-data"), "what was built is not the first kit's");
+        assert_eq!(measured.all(), measured.of(&kit::PYTHONCRAFT) + measured.of(&kit::C));
         assert!(!measured.cut);
         // In words, and where it is said.
         assert_eq!(
@@ -1344,7 +1353,7 @@ mod tests {
         let told = kit_pane(&a, &ctx, &kit::C);
         assert_eq!((&told["space"]["title"], &told["space"]["counts"]), (&json!("Space used"), &json!(SPACE_COUNTS_BUILT)));
         assert_eq!(told["space"]["says"], json!(bytes_say(on_disk("blink") + 5000)));
-        assert_eq!(kit_pane(&a, &ctx, &kit::ANIE)["space"]["counts"], SPACE_COUNTS);
+        assert_eq!(kit_pane(&a, &ctx, &kit::PYTHONCRAFT)["space"]["counts"], SPACE_COUNTS);
         let top = overview(&a, &agents::snapshot());
         assert!(top["kitsSummary"].as_str().unwrap().starts_with("2 kits  ·  "), "{}", top["kitsSummary"]);
         assert_eq!((&top["kits"][1]["space"], &top["kitsNone"]), (&told["space"]["says"], &json!(FILTER_NONE)));
@@ -1363,12 +1372,12 @@ mod tests {
         let ctx = egui::Context::default();
         let title = a.session.active().unwrap().title.clone();
         budget(&s, &title);
-        let told = kit_pane(&a, &ctx, &kit::ANIE);
+        let told = kit_pane(&a, &ctx, &kit::PYTHONCRAFT);
         assert_eq!(
             (&told["title"], &told["madeOf"], &told["projectsSays"]),
-            (&json!("Anie Development Kit"), &json!(["Python", "Svelte"]), &json!("2 projects, 0 trusted"))
+            (&json!("PythonCraft"), &json!(["Python", "Svelte"]), &json!("2 projects, 0 trusted"))
         );
-        assert_eq!((&told["id"], &told["notYet"]), (&json!("anie"), &Json::Null));
+        assert_eq!((&told["id"], &told["notYet"]), (&json!("pythoncraft"), &Json::Null));
         // What it is made of, each with its badge.
         assert_eq!(told["badges"], json!([{"label": "Python", "code": "python"}, {"label": "Svelte", "code": "svelte"}]));
         assert_eq!(kit_pane(&a, &ctx, &kit::C)["badges"], json!([{"label": "C", "code": "c"}]));
@@ -1416,7 +1425,7 @@ mod tests {
             (&general["kindLabel"], &general["forSays"], &general["rebuilt"]),
             (&json!("For any workbook"), &json!("It is for any workbook."), &Json::Null)
         );
-        assert_eq!((&general["kit"], &general["kitGo"], &general["notYet"]), (&json!("Anie Development Kit"), &json!("kit:anie"), &Json::Null));
+        assert_eq!((&general["kit"], &general["kitGo"], &general["notYet"]), (&json!("PythonCraft"), &json!("kit:pythoncraft"), &Json::Null));
         assert_eq!(general["asksNothing"], "Show its panel, and nothing more.");
         assert!(!general.to_string().to_lowercase().contains("librar"), "{general}");
         // A project that is gone gives the first kit's part.
@@ -1448,7 +1457,7 @@ mod tests {
         assert_eq!((&empty["python"], &empty["showcase"]), (&Json::Null, &Json::Null));
         // It builds: the compiler is named here, or looked for. The first kit has none to name.
         assert_eq!(empty["compiler"], json!({"title": "C compiler", "says": COMPILER_FOUND, "named": "", "hint": COMPILER_HINT}));
-        assert_eq!(kit_pane(&a, &ctx, &kit::ANIE)["compiler"], Json::Null);
+        assert_eq!(kit_pane(&a, &ctx, &kit::PYTHONCRAFT)["compiler"], Json::Null);
         std::fs::write(s.0.join("developer.json"), r#"{"compiler": "C:\\tools\\zig\\zig.exe"}"#).unwrap();
         let named = kit_pane(&a, &ctx, &kit::C);
         assert_eq!((&named["compiler"]["says"], &named["compiler"]["named"]), (&json!("C:\\tools\\zig\\zig.exe"), &json!("C:\\tools\\zig\\zig.exe")));
@@ -1459,7 +1468,7 @@ mod tests {
         let told = kit_pane(&a, &ctx, &kit::C);
         assert_eq!((&told["projectsSays"], &told["projects"][0]["name"]), (&json!("1 project, 0 trusted"), &json!("Blink")));
         assert_eq!(told["projects"][0]["go"], "project:blink");
-        let first = kit_pane(&a, &ctx, &kit::ANIE);
+        let first = kit_pane(&a, &ctx, &kit::PYTHONCRAFT);
         assert_eq!((&first["projectsSays"], &first["projects"].as_array().map(Vec::len)), (&json!("1 project, 0 trusted"), &Some(1)));
         assert_eq!(pane(&a, &ctx, &Pane::kit(&kit::C), &agents::snapshot())["title"], "C Development Kit");
         // The project says which kit it is of.
@@ -1539,7 +1548,7 @@ mod tests {
         assert_eq!((&sly["kit"], &sly["statusLabel"]), (&json!("C Development Kit"), &json!("Can't be used")));
         assert_eq!(sly["problem"], "it asks for \"python\", which a project of the C Development Kit can't be given");
         let rusty = project_pane(&a, &ctx, "rusty").unwrap();
-        assert_eq!((&rusty["kit"], &rusty["statusLabel"]), (&json!("Anie Development Kit"), &json!("Can't be used")));
+        assert_eq!((&rusty["kit"], &rusty["statusLabel"]), (&json!("PythonCraft"), &json!("Can't be used")));
         assert_eq!(rusty["problem"], "it is a project of the kit \"rust\", which this GridCraft doesn't have: it is not loaded");
     }
 

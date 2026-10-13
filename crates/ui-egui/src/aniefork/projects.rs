@@ -137,7 +137,7 @@ pub(super) fn stop_trusting(id: &str) -> Result<String, String> {
 }
 
 pub(super) fn create(name: &str) -> Result<String, String> {
-    create_project_in(&kit::ANIE, name, None)
+    create_project_in(&kit::PYTHONCRAFT, name, None)
 }
 
 /// Creates a starter project of `kit`: the code of the workbook named `workbook`, or (without
@@ -1004,12 +1004,12 @@ pub(crate) mod tests {
     fn a_project_that_is_one_workbooks_code_says_so_and_is_otherwise_a_project_like_any() {
         let _s = Sandbox::new("workbook-code");
         assert_eq!(
-            create_project_in(&kit::ANIE, "Budget Macros", Some("Budget.xlsm")).as_deref(),
+            create_project_in(&kit::PYTHONCRAFT, "Budget Macros", Some("Budget.xlsm")).as_deref(),
             Ok("Budget Macros was created, as the code of Budget.xlsm. It is not trusted yet.")
         );
-        assert_eq!(create_project_in(&kit::ANIE, "Tools", None).as_deref(), Ok("Tools was created. It is not trusted yet."));
+        assert_eq!(create_project_in(&kit::PYTHONCRAFT, "Tools", None).as_deref(), Ok("Tools was created. It is not trusted yet."));
         // A name that is a path is not a workbook's name: nothing is created.
-        assert!(create_project_in(&kit::ANIE, "Elsewhere", Some("../Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
+        assert!(create_project_in(&kit::PYTHONCRAFT, "Elsewhere", Some("../Budget.xlsm")).unwrap_err().contains("can't be that workbook's code"));
         let listed = list();
         let of = |id: &str| listed["projects"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
         assert_eq!((&of("budget-macros")["kind"], &of("budget-macros")["workbook"]), (&json!("workbook"), &json!("Budget.xlsm")));

@@ -503,7 +503,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         // when it names one there isn't.
         "createProject" => {
             let kit = match message.get("kit") {
-                None | Some(Json::Null) => Some(&kit::ANIE),
+                None | Some(Json::Null) => Some(&kit::PYTHONCRAFT),
                 Some(named) => named.as_str().filter(|id| id.len() <= 64).and_then(kits::kit_named),
             };
             let name = message.get("name").and_then(Json::as_str).filter(|name| name.chars().count() <= MAX_NAME);

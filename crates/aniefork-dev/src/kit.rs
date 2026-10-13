@@ -2,7 +2,7 @@
 //!
 //! A kit says what a project is made of and how it is run. This build has two:
 //!
-//! - the **Anie Development Kit**: a project is a folder with a `project.toml`, Python scripts
+//! - **PythonCraft**: a project is a folder with a `project.toml`, Python scripts
 //!   and a web panel (written with Svelte or any other web toolkit). Most of this crate is that
 //!   kit at work: its scripts ([`crate::python`]) and panels ([`crate::bridge`]).
 //! - the **C Development Kit**: a project is a folder with a `project.toml`, C sources and a
@@ -17,10 +17,15 @@
 //! allowed ([`crate::manifest`]), and the Development server ([`crate::agents`]).
 //!
 //! A project says which kit it is of with `kit = "…"` in its `project.toml`. One that says
-//! nothing is the Anie kit's, as every project was before there were two. A kit's projects may
+//! nothing is PythonCraft's, as every project was before there were two. A kit's projects may
 //! hold only what the kit knows how to serve and run ([`check`]): a C project has no scripts
-//! and can't ask for `python` or `network`, so nothing of the Anie kit that can't be limited
+//! and can't ask for `python` or `network`, so nothing of PythonCraft that can't be limited
 //! can be made to run for it.
+//!
+//! **The first kit is named PythonCraft** (the owner, 2026-10-14: "Let's name our first DevKit :
+//! PythonCraft - which is the Python / Svelte UI"). Until then it was the Anie Development Kit,
+//! with the id `anie`: a `project.toml` or a kit's package that names it so is still read
+//! ([`manifest::kit_id`]), so nothing that was made has to be changed, or trusted again.
 //!
 //! Both kits are compiled into GridCraft. **A further kit is loaded from a package file**
 //! ([`crate::kitpack`]; the owner's decision, 2026-10-13): it describes, and runs nothing of
@@ -81,10 +86,10 @@ pub struct Kit {
     pub languages: &'static [&'static Language],
 }
 
-/// The kit there was before there were two: Python scripts and a web panel.
-pub const ANIE: Kit = Kit {
+/// PythonCraft, the kit there was before there were two: Python scripts and a web panel.
+pub const PYTHONCRAFT: Kit = Kit {
     id: manifest::DEFAULT_KIT,
-    name: "Anie Development Kit",
+    name: "PythonCraft",
     made_of: &["Python", "Svelte"],
     says: "Projects made of Python scripts and a web panel, which can be a Svelte app or any other page. A project does nothing until you trust it.",
     project_is: "A project is a folder with a project.toml, Python scripts and a web panel.",
@@ -140,9 +145,17 @@ pub const C: Kit = Kit {
     ],
 };
 
+impl Kit {
+    /// Its name as it stands in a sentence: "the C Development Kit", but "PythonCraft", which
+    /// is a name of its own.
+    pub fn called(&self) -> String {
+        if self.name.ends_with(" Kit") { format!("the {}", self.name) } else { self.name.to_string() }
+    }
+}
+
 /// The kits GridCraft is built with, in the order they are listed.
 pub fn loaded() -> &'static [Kit] {
-    &[ANIE, C]
+    &[PYTHONCRAFT, C]
 }
 
 /// The file in which a kit from a package says what it is, the most kits there can be, and
@@ -232,7 +245,7 @@ fn from_described(said: &Described) -> Option<Kit> {
         name: keep(&said.name),
         made_of: Box::leak(made_of.into_boxed_slice()),
         says: if said.description.trim().is_empty() {
-            keep(&format!("A development kit loaded from a package. Its projects run by the {}.", base.name))
+            keep(&format!("A development kit loaded from a package. Its projects run by {}.", base.called()))
         } else {
             keep(&said.description)
         },
@@ -316,7 +329,7 @@ pub fn named_in(projects_dir: &Path, id: &str) -> Option<&'static Kit> {
 /// The kit a project kept in `projects_dir` is listed under: the one its manifest names, or
 /// the first when it can't be placed.
 pub fn of_in(projects_dir: &Path, manifest: Option<&Manifest>) -> &'static Kit {
-    manifest.and_then(|manifest| named_in(projects_dir, &manifest.kit)).unwrap_or(&ANIE)
+    manifest.and_then(|manifest| named_in(projects_dir, &manifest.kit)).unwrap_or(&PYTHONCRAFT)
 }
 
 /// [`check`], for a project kept in `projects_dir`: its kit can be one loaded from a package.
@@ -324,8 +337,9 @@ pub fn check_in(projects_dir: &Path, manifest: &Manifest) -> Result<&'static Kit
     check_as(named_in(projects_dir, &manifest.kit), manifest)
 }
 
-/// The loaded kit with this id.
+/// The loaded kit with this id. The first is found by the id it had before it was named, too.
 pub fn named(id: &str) -> Option<&'static Kit> {
+    let id = manifest::kit_id(id);
     loaded().iter().find(|kit| kit.id == id)
 }
 
@@ -333,7 +347,7 @@ pub fn named(id: &str) -> Option<&'static Kit> {
 /// placed (its manifest can't be read, or names a kit this build doesn't have) is listed under
 /// the first kit, with what is wrong with it.
 pub fn of(manifest: Option<&Manifest>) -> &'static Kit {
-    manifest.and_then(|manifest| named(&manifest.kit)).unwrap_or(&ANIE)
+    manifest.and_then(|manifest| named(&manifest.kit)).unwrap_or(&PYTHONCRAFT)
 }
 
 /// Whether a manifest is one a project of its kit can have: the kit is one this build has, and
@@ -348,16 +362,16 @@ fn check_as(kit: Option<&'static Kit>, manifest: &Manifest) -> Result<&'static K
         return Err(format!("it is a project of the kit {:?}, which this GridCraft doesn't have: it is not loaded", manifest.kit));
     };
     if let Some(asked) = manifest.permissions.iter().find(|asked| !kit.permissions.contains(asked)) {
-        return Err(format!("it asks for {:?}, which a project of the {} can't be given", asked.code(), kit.name));
+        return Err(format!("it asks for {:?}, which a project of {} can't be given", asked.code(), kit.called()));
     }
     if manifest.panel.is_some() && !kit.panels {
-        return Err(format!("it has a panel, which a project of the {} can't have", kit.name));
+        return Err(format!("it has a panel, which a project of {} can't have", kit.called()));
     }
     if manifest.python.is_some() && !kit.scripts {
-        return Err(format!("it has Python scripts, which a project of the {} can't have", kit.name));
+        return Err(format!("it has Python scripts, which a project of {} can't have", kit.called()));
     }
     if manifest.c.is_some() && !kit.builds {
-        return Err(format!("it has a C recipe, which a project of the {} can't have", kit.name));
+        return Err(format!("it has a C recipe, which a project of {} can't have", kit.called()));
     }
     Ok(kit)
 }
@@ -411,30 +425,34 @@ mod tests {
     #[test]
     fn the_kits_this_build_has_are_listed_and_say_what_they_are_made_of() {
         let kits = loaded();
-        assert_eq!(kits.iter().map(|kit| kit.id).collect::<Vec<_>>(), ["anie", "c"], "two kits, and no way to load another yet");
-        assert_eq!((kits[0].name, kits[0].made_of, kits[0].built_in), ("Anie Development Kit", ["Python", "Svelte"].as_slice(), true));
+        assert_eq!(kits.iter().map(|kit| kit.id).collect::<Vec<_>>(), ["pythoncraft", "c"], "two kits, and no way to load another yet");
+        assert_eq!((kits[0].name, kits[0].made_of, kits[0].built_in), ("PythonCraft", ["Python", "Svelte"].as_slice(), true));
         assert_eq!((kits[1].name, kits[1].made_of, kits[1].built_in), ("C Development Kit", ["C"].as_slice(), true));
         for kit in kits {
             assert!(manifest::valid_id(kit.id) && !kit.says.is_empty() && !kit.project_is.is_empty(), "{}", kit.id);
             assert_eq!(named(kit.id), Some(kit));
         }
-        assert_eq!(ANIE.id, manifest::DEFAULT_KIT, "a project that names no kit is the first kit's");
+        assert_eq!(PYTHONCRAFT.id, manifest::DEFAULT_KIT, "a project that names no kit is the first kit's");
+        // It is found by the id it had before it was named; and a name stands in a sentence as it reads.
+        assert_eq!(named("anie"), Some(&PYTHONCRAFT));
+        assert_eq!((PYTHONCRAFT.called(), C.called()), ("PythonCraft".to_string(), "the C Development Kit".to_string()));
         // Both are whole: neither has something to say it can't do yet.
-        assert!(ANIE.not_yet.is_empty() && C.not_yet.is_empty());
+        assert!(PYTHONCRAFT.not_yet.is_empty() && C.not_yet.is_empty());
         assert!(C.says.contains("WebAssembly") && C.says.contains("panel") && C.project_is.contains("panel"));
-        assert_eq!((C.builds, ANIE.builds), (true, false), "the second kit builds its projects; the first has nothing to build");
+        assert_eq!((C.builds, PYTHONCRAFT.builds), (true, false), "the second kit builds its projects; the first has nothing to build");
         assert_eq!((C.panels, C.scripts), (true, false), "what it builds runs in the project's panel; it has no scripts");
         assert_eq!((named("rust"), named(""), named("C")), (None, None, None));
     }
 
     #[test]
     fn a_project_is_of_the_kit_it_names_and_of_the_first_when_it_names_none() {
-        assert_eq!(of(Some(&read(""))), &ANIE);
-        assert_eq!(of(Some(&read("kit = \"anie\""))), &ANIE);
+        assert_eq!(of(Some(&read(""))), &PYTHONCRAFT);
+        assert_eq!(of(Some(&read("kit = \"pythoncraft\""))), &PYTHONCRAFT);
+        assert_eq!(of(Some(&read("kit = \"anie\""))), &PYTHONCRAFT, "the id it had before it was named");
         assert_eq!(of(Some(&read("kit = \"c\""))), &C);
         // One that can't be placed is listed under the first kit: `check` says what is wrong.
-        assert_eq!((of(Some(&read("kit = \"rust\""))), of(None)), (&ANIE, &ANIE));
-        assert_eq!(check(&read("")), Ok(&ANIE));
+        assert_eq!((of(Some(&read("kit = \"rust\""))), of(None)), (&PYTHONCRAFT, &PYTHONCRAFT));
+        assert_eq!(check(&read("")), Ok(&PYTHONCRAFT));
         assert_eq!(check(&read("kit = \"c\"")), Ok(&C));
         assert_eq!(
             check(&read("kit = \"rust\"")).unwrap_err(),
@@ -444,9 +462,9 @@ mod tests {
 
     #[test]
     fn a_kits_project_holds_only_what_the_kit_can_serve_and_run() {
-        // Everything there was before is still an Anie project's to have.
+        // Everything there was before is still a PythonCraft project's to have.
         let all = "permissions = [\"read\", \"write\", \"files\", \"network\", \"python\"]\n[panel]\nentry = \"panel/index.html\"\n[python]\nscripts = \"python\"";
-        assert_eq!(check(&read(all)), Ok(&ANIE));
+        assert_eq!(check(&read(all)), Ok(&PYTHONCRAFT));
         // A C project may ask to see and change the workbook, and to open and save files.
         assert_eq!(check(&read("kit = \"c\"\npermissions = [\"read\", \"write\", \"files\"]")), Ok(&C));
         // It has no scripts: nothing of the first kit that can't be limited can be made to run for it.
@@ -461,7 +479,7 @@ mod tests {
         // A recipe is the C kit's: it is nothing the first kit builds.
         assert_eq!(check(&read("kit = \"c\"\n[c]\nsources = [\"src\"]")), Ok(&C));
         let recipe = check(&read("[c]\nsources = [\"src\"]")).unwrap_err();
-        assert_eq!(recipe, "it has a C recipe, which a project of the Anie Development Kit can't have");
+        assert_eq!(recipe, "it has a C recipe, which a project of PythonCraft can't have");
         // No kit's projects may be given something that is not a permission at all.
         for kit in loaded() {
             assert!(kit.permissions.iter().all(|allowed| Permission::ALL.contains(allowed)));
