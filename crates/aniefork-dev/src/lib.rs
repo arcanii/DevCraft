@@ -14,6 +14,8 @@
 //! - [`project`]: projects on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
 //! - [`python`]: running a trusted project's scripts in a process of their own.
+//! - [`c`]: the C kit's recipe, and building a trusted project's C as WebAssembly with the
+//!   person's own compiler.
 //! - [`bridge`]: serving a trusted project's panel to the browser, carrying its calls, and telling
 //!   it what happens in GridCraft.
 //! - [`console`]: the Developer console: what projects printed and logged, and what failed.
@@ -32,6 +34,7 @@
 
 pub mod agents;
 pub mod bridge;
+pub mod c;
 pub mod console;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;
@@ -86,6 +89,8 @@ pub fn describe(project: &Project, store: &TrustStore) -> Json {
         "followsChanges": store.follows_changes(&project.id),
         "panel": manifest.and_then(|m| m.panel.as_deref()),
         "python": manifest.and_then(|m| m.python.as_deref()),
+        // Whether it has a recipe: something of it is built.
+        "builds": manifest.is_some_and(|m| m.c.is_some()),
         "files": project.files,
         "fingerprint": project.fingerprint,
     })
@@ -121,6 +126,7 @@ mod tests {
             (&blink["kit"], &blink["status"], &blink["panel"], &blink["python"]),
             (&json!("c"), &json!("untrusted"), &Json::Null, &Json::Null)
         );
+        assert_eq!((&blink["builds"], &before["builds"]), (&json!(false), &json!(false)), "neither has a recipe");
         t.write("rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
         let rusty = describe(&project::load(&t.0.join("rusty")), &store);
         assert_eq!((&rusty["kit"], &rusty["status"]), (&json!("anie"), &json!("problem")));

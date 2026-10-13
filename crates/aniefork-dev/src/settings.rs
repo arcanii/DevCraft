@@ -16,6 +16,9 @@ const MAX_BYTES: u64 = 64 * 1024;
 pub struct Settings {
     /// The Python that runs projects' scripts: a path or a command. Empty: GridCraft finds one.
     pub python: String,
+    /// The compiler that builds C projects (zig): a path or a command. Empty: GridCraft looks
+    /// for `zig`. It is a program GridCraft runs: only the person names it, by hand.
+    pub compiler: String,
     /// The Development server: how far agents may go, and where it listens.
     pub agents: Agents,
 }

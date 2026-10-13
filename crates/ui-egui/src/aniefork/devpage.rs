@@ -44,6 +44,8 @@ const MAX_MESSAGE: usize = 4096;
 const MAX_REASON: usize = 400;
 /// The longest name typed for a new project (characters).
 const MAX_NAME: usize = 80;
+/// The longest name typed for the C compiler: a path or a command (characters).
+const MAX_COMPILER: usize = 400;
 /// How often what the window shows is worked out again while nothing was clicked (milliseconds).
 const EVERY_MS: f64 = 300.0;
 
@@ -303,6 +305,10 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     if !page.wanted {
         return None;
     }
+    // While a project is being built the page is told again, to show how long it has taken.
+    if gridcraft_aniefork_dev::c::Builder::global().building() > 0 {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
     let at_ms = crate::now_ms();
     if !page.stale && (0.0..EVERY_MS).contains(&(at_ms - page.told_at)) {
         return None;
@@ -429,6 +435,15 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
                 for_workbook: message.get("forWorkbook").and_then(Json::as_bool).unwrap_or(false),
                 kit: kit.id,
             })
+        }
+        // The compiler's name is what the person typed; the project to build is one by its id.
+        "checkCompiler" => message
+            .get("compiler")
+            .and_then(Json::as_str)
+            .filter(|named| named.chars().count() <= MAX_COMPILER)
+            .map(|named| Act::CheckCompiler(named.to_string())),
+        "build" => {
+            message.get("id").and_then(Json::as_str).filter(|id| gridcraft_aniefork_dev::manifest::valid_id(id)).map(|id| Act::Build(id.to_string()))
         }
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),

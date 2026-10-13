@@ -54,7 +54,7 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::{kit, manifest, settings, showcase, starter};
+use gridcraft_aniefork_dev::{c, kit, manifest, settings, showcase, starter};
 use serde_json::{Value as Json, json};
 
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
@@ -106,6 +106,11 @@ pub(super) enum Act {
         /// The kit it is a project of, by the kit's id.
         kit: &'static str,
     },
+    /// Name the compiler that builds C projects (empty: the one that is found), and ask it
+    /// what it is. It is a program GridCraft will run: the person's alone to name.
+    CheckCompiler(String),
+    /// Build a project: run the person's compiler over its files. The person's alone to ask.
+    Build(String),
     /// Create the Svelte showcase project (untrusted, like any new project).
     CreateShowcase,
     /// Show the showcase's panel: docked in the window, or in the browser.
@@ -137,6 +142,8 @@ pub(super) struct State {
     /// The name being typed for a new project, and whether it is to be the open workbook's code.
     new_name: String,
     new_for: bool,
+    /// The C compiler being named.
+    pub(super) compiler: String,
 }
 
 fn state_id() -> egui::Id {
@@ -157,8 +164,8 @@ impl State {
     /// it opens on the list, for the person to choose: opening the window (which anything on
     /// the control channel can do) never decides which request is under their eyes.
     pub(super) fn fresh() -> State {
-        let kept = projects::places().map(|at| settings::load(&at.settings).agents.port).unwrap_or_default();
-        let mut state = State { port: kept.to_string(), ..State::default() };
+        let kept = projects::places().map(|at| settings::load(&at.settings)).unwrap_or_default();
+        let mut state = State { port: kept.agents.port.to_string(), compiler: kept.compiler, ..State::default() };
         let waiting = agents::snapshot().waiting;
         let only = match waiting.as_slice() {
             [only] => Some(only.id),
@@ -772,6 +779,20 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         }
         ui.label(said(told, "console"));
     });
+    // The compiler that builds: named here, for a kit whose projects are built.
+    let compiler = &told["compiler"];
+    if compiler.is_object() {
+        ui.horizontal(|ui| {
+            let label = ui.label(format!("{}:", said(compiler, "title")));
+            let size = egui::vec2(260.0, ui.spacing().interact_size.y);
+            ui.add_sized(size, egui::TextEdit::singleline(&mut state.compiler).hint_text(kits::COMPILER_FOUND))
+                .labelled_by(label.id)
+                .on_hover_text(said(compiler, "hint"));
+            if ui.button("Check Compiler").on_hover_text("Keeps the name, and asks the compiler what it is").clicked() {
+                *action = Some(Act::CheckCompiler(state.compiler.clone()));
+            }
+        });
+    }
     ui.horizontal(|ui| {
         // The Python that runs scripts: said for a kit whose projects have them.
         if told["python"].is_string() {
@@ -925,6 +946,35 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
         }
     });
     // What it says it rebuilds of the workbook's macros.
+    // What of it is built, how that stands, and the way to build it.
+    let build = &told["build"];
+    if build.is_object() {
+        heading(ui, said(build, "title"));
+        ui.label(small(said(build, "builds")));
+        ui.horizontal(|ui| {
+            let can = build["can"] == true;
+            let asked = ui
+                .add_enabled(can, egui::Button::new("Build"))
+                .on_hover_text("Runs your C compiler over this project's files, and keeps the program beside your settings");
+            if asked.clicked() {
+                *action = Some(Act::Build(said(told, "id").to_string()));
+            }
+            let says = egui::RichText::new(said(build, "says"));
+            ui.label(match said(build, "state") {
+                "failed" | "stale" => says.color(warn).strong(),
+                _ => says,
+            });
+        });
+        if let Some(needs) = build["needsTrust"].as_str() {
+            ui.label(small(needs));
+        }
+        // What the compiler said, when it did not build.
+        if let Some(output) = build["output"].as_str() {
+            egui::ScrollArea::vertical().id_salt("build_output").max_height(180.0).show(ui, |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(output).monospace().small()).wrap());
+            });
+        }
+    }
     let rebuilt = &told["rebuilt"];
     if !rebuilt.is_null() {
         heading(ui, said(rebuilt, "title"));
@@ -1028,6 +1078,10 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
     let now = agents::snapshot();
     if !now.waiting.is_empty() || now.plans.iter().any(|plan| plan.ended.is_none()) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    }
+    // So does it while a project is being built: the time it has taken is shown.
+    if c::Builder::global().building() > 0 {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
 
     let outcome = action.map(|action| act(app, &ctx, &mut state, action, driven, open));
@@ -1154,6 +1208,23 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             *open = false;
             Ok(String::new())
         }
+        Act::CheckCompiler(named) => {
+            let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+            // Only the compiler is set here: what else the settings hold stays as it is.
+            let mut kept = settings::load(&at.settings);
+            kept.compiler = named.trim().to_string();
+            settings::save(&at.settings, &kept)?;
+            state.compiler = kept.compiler.clone();
+            c::find(&kept.compiler).map(|found| format!("{} answers. It builds your C projects.", found.describe()))
+        }
+        Act::Build(id) => {
+            let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+            let named = settings::load(&at.settings).compiler;
+            // The build runs beside the window, which is drawn again when it has ended.
+            let again = ctx.clone();
+            c::Builder::global().start(&at, &id, &named, move || again.request_repaint())?;
+            Ok(String::new())
+        }
         Act::CreateShowcase => projects::create_showcase(),
         // Showing a panel is opening it: the person's alone to do (checked above).
         Act::ShowShowcase { docked: true } => {
@@ -1195,7 +1266,7 @@ mod tests {
     use std::time::Duration;
 
     use egui::accesskit::Role;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
     use gridcraft_aniefork_dev::python::PythonHost;
 
     use super::*;
@@ -2676,6 +2747,12 @@ mod tests {
             "{\"act\":\"createProject\",\"name\":\"Rusty\",\"kit\":\"rust\"}",
             "{\"act\":\"createProject\",\"name\":\"Rusty\",\"kit\":7}",
             "{\"act\":\"createProject\",\"name\":\"Rusty\",\"kit\":\"../c\"}",
+            // A build of no project, and a compiler with no name to it.
+            "{\"act\":\"build\"}",
+            "{\"act\":\"build\",\"id\":\"../blink\"}",
+            "{\"act\":\"build\",\"id\":7}",
+            "{\"act\":\"checkCompiler\"}",
+            "{\"act\":\"checkCompiler\",\"compiler\":7}",
             wordy.as_str(),
         ] {
             assert!(!devpage::handle(h.state_mut(), &ctx, bad), "{bad:.40}");
@@ -2725,6 +2802,30 @@ mod tests {
             (Some("c"), ["project.toml".to_string(), "src/main.c".to_string()].as_slice())
         );
         assert_eq!(list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "blink").unwrap()["status"], "untrusted");
+        // The page is told of its build as GridCraft's own window is, and asks for one the same
+        // way: it is not trusted, so nothing is built.
+        assert_eq!((&blink["pane"]["build"]["state"], &blink["pane"]["build"]["can"]), (&json!("none"), &json!(false)));
+        assert_eq!(blink["pane"]["build"]["needsTrust"], kits::BUILD_NEEDS_TRUST);
+        page(&mut h, json!({"act": "build", "id": "blink"}));
+        for _ in 0..600 {
+            if gridcraft_aniefork_dev::c::Builder::global().building() == 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let refused = told(&mut h);
+        assert_eq!(refused["pane"]["build"]["state"], "failed");
+        assert!(refused["pane"]["build"]["says"].as_str().is_some_and(|says| says.contains("Blink is not trusted as it is now")));
+        assert!(!s.0.join("built").join("blink").exists());
+        // The compiler is named from the page as from the window: kept, and asked what it is.
+        page(&mut h, json!({"act": "go", "to": "kit:c"}));
+        assert_eq!(told(&mut h)["pane"]["compiler"]["says"], kits::COMPILER_FOUND);
+        page(&mut h, json!({"act": "checkCompiler", "compiler": " gridcraft-no-such-compiler "}));
+        assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "gridcraft-no-such-compiler");
+        let named = told(&mut h);
+        assert_eq!(named["pane"]["compiler"]["named"], "gridcraft-no-such-compiler");
+        page(&mut h, json!({"act": "checkCompiler", "compiler": ""}));
+        assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "");
         page(&mut h, json!({"act": "go", "to": "kit:anie"}));
         // A new project made there is the code of the workbook that is open: GridCraft says
         // which workbook that is, whatever the page sends with it.
@@ -2882,6 +2983,93 @@ mod tests {
         h.state_mut().ui.ribbon_tab = crate::aniefork::developer::TAB.into();
         h.run_steps(3);
         assert_eq!(h.state().ui.ribbon_tab, crate::aniefork::developer::TAB);
+    }
+
+    /// Clicks the button of that name (a heading may have the same words).
+    fn press(h: &mut Harness, button: &str) {
+        h.run_steps(3);
+        h.get_by_role_and_label(Role::Button, button).click();
+        h.run_steps(4);
+    }
+
+    /// Draws the window until `label` is on it, for as long as a build may take.
+    fn wait_for(h: &mut Harness, label: &str) {
+        for _ in 0..1200 {
+            h.run_steps(2);
+            if h.query_by_label_contains(label).is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("{label:?} never came on screen");
+    }
+
+    #[test]
+    fn the_compiler_is_named_by_hand_and_a_trusted_c_project_is_built_from_its_part() {
+        let s = Sandbox::new("agents-build");
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        projects::create_project_in(&kit::C, "Blink", None).unwrap();
+        open_top(&mut h);
+        go(&mut h, "C Development Kit");
+        // The compiler is a program GridCraft will run: the control channel can't name one.
+        h.get_by_role_and_label(Role::TextInput, "C compiler:").focus();
+        h.run_steps(2);
+        h.get_by_role_and_label(Role::TextInput, "C compiler:").type_text("gridcraft-no-such-compiler");
+        h.run_steps(2);
+        drive(&mut h);
+        click(&mut h, "Check Compiler");
+        assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
+        assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "", "nothing was kept");
+        quiet(&mut h);
+        // By hand it is kept, and asked what it is: this one is no compiler.
+        click(&mut h, "Check Compiler");
+        assert!(message(&mut h).is_some_and(|why| why.contains("gridcraft-no-such-compiler did not answer as zig does")));
+        assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "gridcraft-no-such-compiler");
+        // The project's part: its recipe, and a build that waits for the person's trust.
+        go(&mut h, "Blink");
+        h.get_by_label("It builds 1 C file into one WebAssembly program: src/main.c.");
+        h.get_by_label("Not built yet.");
+        h.get_by_label(kits::BUILD_NEEDS_TRUST);
+        assert!(h.get_by_role_and_label(Role::Button, "Build").accesskit_node().is_disabled(), "not until it is trusted");
+        trust(h.state(), "blink", list()["projects"][0]["fingerprint"].as_str().unwrap(), false).unwrap();
+        h.run_steps(3);
+        assert!(h.query_by_label(kits::BUILD_NEEDS_TRUST).is_none());
+        // Building runs the person's compiler: it is not the control channel's to ask for.
+        drive(&mut h);
+        press(&mut h, "Build");
+        assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
+        assert!(gridcraft_aniefork_dev::c::Builder::global().progress(&s.0.join("projects"), "blink").is_none(), "no build was started");
+        quiet(&mut h);
+        // By hand it is built beside the window, which says how it ended: there is no such compiler.
+        press(&mut h, "Build");
+        wait_for(&mut h, "did not answer as zig does");
+        h.get_by_label_contains("gridcraft-no-such-compiler did not answer as zig does");
+        assert!(!s.0.join("built/blink").exists(), "nothing was kept");
+        // With a compiler on this machine, it is built, and the program kept beside the settings.
+        let named = std::env::var("GRIDCRAFT_TEST_ZIG").unwrap_or_default();
+        if gridcraft_aniefork_dev::c::find(&named).is_err() {
+            return;
+        }
+        go(&mut h, "C Development Kit");
+        let field = h.get_by_role_and_label(Role::TextInput, "C compiler:");
+        field.focus();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.get_by_role_and_label(Role::TextInput, "C compiler:").type_text(&named);
+        h.run_steps(2);
+        click(&mut h, "Check Compiler");
+        h.get_by_label_contains("answers. It builds your C projects.");
+        assert_eq!(settings::load(&s.0.join("developer.json")).compiler, named);
+        go(&mut h, "Blink");
+        press(&mut h, "Build");
+        wait_for(&mut h, "Built: program.wasm");
+        h.get_by_label_contains("from 1 C file, in ");
+        let print = list()["projects"][0]["fingerprint"].as_str().unwrap().to_string();
+        let kept = s.0.join("built/blink").join(&print).join("program.wasm");
+        assert_eq!(std::fs::read(&kept).unwrap().get(..4), Some(b"\0asm".as_slice()));
+        assert_eq!(list()["projects"][0]["status"], "trusted", "building changed nothing of the project");
+        assert_eq!(asked.questions().len(), 1, "only the trust was asked about");
     }
 
     #[test]

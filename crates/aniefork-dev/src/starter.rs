@@ -145,7 +145,8 @@ fn panel_text(name: &str) -> String {
     )
 }
 
-/// The manifest of a C project. It asks for nothing: there is nothing of it GridCraft can run yet.
+/// The manifest of a C project. It asks for nothing: there is nothing of it GridCraft can run
+/// yet. Its recipe builds every C file in `src`.
 fn c_manifest_text(id: &str, name: &str, workbook: Option<&str>) -> String {
     let workbook = workbook_line(workbook);
     let kit = kit::C.id;
@@ -165,8 +166,18 @@ kit = "{kit}"
 #   read     see what is in the open workbooks
 #   write    change the open workbooks
 #   files    open, save and export files
-# It asks for nothing so far: GridCraft can't build or run a C project yet.
+# It asks for nothing so far: GridCraft builds a C project, and can't run one yet.
 permissions = []
+
+# What is built, as WebAssembly, by the compiler you name in GridCraft (zig). A list, never a
+# command: GridCraft writes the compiler's command line itself.
+#   sources   C files, or folders (every .c file directly in a folder)
+#   include   folders searched for #include "..."          (optional)
+#   define    names, or NAME=value                          (optional)
+#   optimize  size | speed | none                           (optional: size)
+#   entry     main, or none when its page calls what it exports (optional: main)
+[c]
+sources = ["src"]
 "#
     )
 }
@@ -178,10 +189,8 @@ fn c_source_text(id: &str) -> String {
         r#"/*
  * {id}: a project of GridCraft's C Development Kit.
  *
- * GridCraft lists this project and keeps your trust in it. It can't build or run it yet.
- * Until it can, build it with a C compiler of your own, from the project's folder:
- *
- *     zig cc src/main.c -o {id}
+ * GridCraft builds this project as WebAssembly once you trust it (Developer, Development,
+ * the project, Build). It can't run what it builds yet.
  */
 #include <stdio.h>
 
@@ -373,6 +382,13 @@ mod tests {
         assert_eq!((manifest.kit.as_str(), manifest.name.as_str()), ("c", "Blink"));
         assert_eq!(kit::of(Some(&manifest)), &kit::C);
         assert!(manifest.permissions.is_empty(), "it asks for nothing: nothing of it can run yet");
+        // Its recipe builds what is in src: the one file it starts with.
+        let recipe = manifest.c.clone().unwrap();
+        assert_eq!(
+            (recipe.sources.as_slice(), recipe.sources_among(&m.files).unwrap()),
+            (["src".to_string()].as_slice(), vec!["src/main.c".to_string()])
+        );
+        assert_eq!((recipe.optimize, recipe.entry), (crate::c::Optimize::Size, crate::c::Entry::Main));
         assert_eq!((manifest.panel, manifest.python, manifest.workbook), (None, None, None));
         let source = std::fs::read_to_string(m.dir.join("src/main.c")).unwrap();
         assert!(source.contains("puts(\"Hello from blink.\");") && source.contains("int main(void)"));

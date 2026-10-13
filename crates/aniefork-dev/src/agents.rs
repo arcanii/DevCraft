@@ -3002,8 +3002,12 @@ Kits. A project is of one development kit, which project.toml names with kit = "
 (development_status lists the kits this GridCraft has, and list_projects says each project's).
 Without the line it is of the Anie Development Kit, which is what is described here: a panel
 and Python scripts. A project of the C Development Kit (kit = "c") holds C sources; it has no
-panel and no scripts, and may ask for read, write and files only. GridCraft can't build or run
-a C project yet, and create_project does not make one.
+panel and no scripts, and may ask for read, write and files only. Its project.toml has a
+recipe, [c], that says what is built: sources = ["src"] (C files, or folders of them), and
+optionally include (folders), define (NAME or NAME=value), optimize (size, speed, none) and
+entry (main, or none). GridCraft builds it as WebAssembly with the person's compiler when the
+person asks, for a project they trust; it can't run what it built yet. You can't ask for a
+build, and create_project does not make a C project.
 
 Git. A project's folder may be a git repository. What git keeps there (the .git folder) is
 not part of the project: it is not among its files or in its fingerprint, and it can't be
@@ -4898,10 +4902,17 @@ mod served {
             (&told["kits"][1]["id"], &told["kits"][1]["name"], &told["kits"][1]["madeOf"]),
             (&json!("c"), &json!("C Development Kit"), &json!(["C"]))
         );
-        assert!(told["kits"][1]["cannotYet"].as_str().is_some_and(|says| says.contains("can't build or run")));
+        assert!(told["kits"][1]["cannotYet"].as_str().is_some_and(|says| says.contains("can't run a C project yet")));
         assert_eq!(told["kits"].as_array().map(Vec::len), Some(2));
         let project = s.call("reference", json!({"topic": "project"})).1;
-        for part in ["kit = \"c\"", "create_project does not make one", "the .git folder", "not among its files or in its fingerprint"] {
+        for part in [
+            "kit = \"c\"",
+            "create_project does not make a C project",
+            "sources = [\"src\"]",
+            "You can't ask for a\nbuild",
+            "the .git folder",
+            "not among its files or in its fingerprint",
+        ] {
             assert!(project.contains(part), "{part}");
         }
         // The open workbook's macros, of which nothing is rebuilt yet.

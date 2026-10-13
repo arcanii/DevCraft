@@ -1228,7 +1228,7 @@ is built, with what must hold whatever the design:
 | Phase | What | Waits for |
 |---|---|---|
 | K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | **Built 2026-10-13** (below) |
-| K2 | The C kit builds, to WebAssembly: the compiler found or named (zig first), the recipe as a list in `project.toml`, a build as a request, what is built kept under the fingerprint of its sources | K1. (Built by hand with zig, 2026-10-13) |
+| K2 | The C kit builds, to WebAssembly: the compiler found or named (zig first), the recipe as a list in `project.toml`, what is built kept under the fingerprint of its sources; then a build as an agent's request | **First slice built 2026-10-13** (below): the person builds. An agent's request is the second |
 | K3 | The C kit runs what it built in the project's panel: a C project may have a panel, and the kit serves beside its page what the program asks of a system | K2 |
 | D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built by the kit, docked beside the sheet; the table of its variables written four times a second, with formulas and charts over it; then the "GridCraft Doom" repository | K3. (Tried by hand in a panel, 2026-10-13) |
 | P1 | Files a project changes itself | D1 shows what it needs |
@@ -1357,15 +1357,92 @@ runs it in the project's panel, in place of a program of its own first.
   and, served beside a C project's page as `spreadsheet.js` is, the little of a system the
   program asks for: a clock, a place to print, files in memory. The trial's page has that
   in its own script: it is what the kit takes over.
-- **Still to design in K2**: where what is built is kept. The trial's `doom.wasm` is a file
-  of the project, in its fingerprint, so trust covers exactly what runs; built by the kit,
-  it should be kept and served under the fingerprint of the sources it was built from.
+- **Where what is built is kept** was left for K2, and is settled there (below): beside
+  the settings, under the fingerprint of the files it was built from. The trial's
+  `doom.wasm` is a file of the project, in its fingerprint, which a build by the kit must
+  not be: a build would then end the trust it needed.
 - **A program of its own is put aside, not ruled out**: for what a page can't do (sound
   devices, long work without a window), as a thing a project asks to be allowed, worded as
   `python` is.
 
 **Checked.** The panel's rules: the crate's tests (a panel is served with the word and
 without `'unsafe-eval'`), and the gate's eight steps on the whole. The trial: as above.
+
+### The C kit builds (phase K2, first slice)
+
+**Built 2026-10-13, on the owner's word ("Start K2"). Not committed until the owner says.**
+
+**1. The recipe is a list, never a command.** A C project's `project.toml` has `[c]`:
+`sources` (C files, or folders: every `.c` file directly in a folder), and optionally
+`include` (folders), `define` (a C name, or a name and a plain value), `optimize` (`size`,
+`speed`, `none`) and `entry` (`main`, or `none` when its page is to call what it exports).
+GridCraft writes the compiler's command line itself: nothing a project says becomes an
+option of its own choosing, and what a recipe names has to be in the project, or the project
+can't be used. A recipe is the C kit's: a project of the first kit that has one is refused.
+
+**2. The compiler is the person's, found or named**, like the Python: zig, used as `zig cc`,
+which carries the C library a WebAssembly program needs. It is named in the C kit's part of
+the Development window, **by hand only**: it is a program GridCraft will run, so the control
+channel can't name it (as it can't name the Python). GridCraft ships none.
+
+**3. A build is for a project the person trusts as it is**, like running a script: it runs
+their compiler over the project's files. `c::build` decides that for itself, reading the
+project and the person's decisions fresh from disk. Asking for one is the person's alone
+(the Build button, in the project's part of either window); the control channel is refused.
+It runs beside the window, which says how long it has taken and how it ended. **An agent
+can't ask for a build yet** (the second slice: a request, with what the compiler says
+fenced).
+
+**4. A project is built from its own files and the compiler's, and from nothing else.**
+Each source is compiled by itself, and the compiler says every file it read for it
+(`#include`, `#embed`). One that is neither the project's nor the compiler's own fails the
+build, and nothing is kept. Inline assembly is turned off: the assembler can take a file
+in (`.incbin`) without the compiler saying so. What git keeps in the project is not the
+project's here either. So a program can hold nothing of the computer but what the person
+reviewed when they trusted the project: without this, a project "held to what it was
+granted" when it runs could have carried the person's files inside it from the day it was
+built. **It rests on the compiler telling the truth about what it read**: a guard, tested
+against the four ways tried, not a proof.
+
+**5. What is built is kept outside the project**, beside the settings, under the
+fingerprint of the files it was built from: `built/<id>/<fingerprint>/program.wasm`. A
+build writes nothing into the project (zig's own cache is beside what is built too), so it
+never ends the trust it needed. What was built from other files than the project holds now
+is shown as such ("build it again") and is not the project's; it is removed at the next
+build. The project is read again when the build ends: files changed by hand meanwhile give
+no program. This settles the question left open: K3 serves the program kept under the
+fingerprint of the project as it is trusted then, and no other.
+
+**6. Tried: Doom, built by the kit.** `doomgeneric`'s 80 files of Doom and the one file of
+glue, as a C project with a five-line recipe (`sources = ["doom", "src"]`, an include
+folder, one definition, `entry = "none"`): 81 sources, 394 KB, **8.6 seconds** on a new
+cache (eight compilers at once), and the program plays the shareware demo in Node with the
+same values second for second as the one built by hand. Nothing was written into the
+project.
+
+**What it found on the way.**
+
+- **A compiler can be damaged, and says so badly.** The first copy of zig in the scratch
+  folder stopped building: its 130 empty files (headers that are empty on purpose) had gone,
+  all at 14:11:54 on 2026-10-13, six minutes before anything of this work touched it.
+  What removed them is not known; a second copy, unpacked beside it, kept its own. The
+  kit shows the compiler's own words when a build fails, which is how it was found.
+- **Dependency flags on one command for many sources name only one of them**, which is why
+  each source is compiled by itself.
+
+**Not built.** An agent asking for a build. Running what was built (K3). A compiler other
+than zig. A build can't be stopped once started (each step has ten minutes). Nothing clears
+zig's cache (52 MB after Doom).
+
+**Checked.** Tests: the recipe (and what it refuses), the sources of a folder, the
+compiler's list of files read, the store, who may build, and both windows; with a zig on the
+machine (`GRIDCRAFT_TEST_ZIG`, or one that is found), real builds: a starter, a second build
+after a change, the four ways in from outside, a mistake in the C. Without one those check
+nothing, and say nothing: the gate has no compiler. The gate's eight steps pass, 1590 tests
+with a zig named. In the app (an isolated copy, the projects trusted there by its own
+file): Build, pressed in the page on Doom laid out as a C project, gave "Built:
+program.wasm, 385 KB, from 81 C files, in 7.7 s, by zig 0.17.0", and the program was
+kept under the project's fingerprint.
 
 ### Backlog
 

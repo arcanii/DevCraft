@@ -6,9 +6,9 @@
 //!   and a web panel (written with Svelte or any other web toolkit). Most of this crate is that
 //!   kit at work: its scripts ([`crate::python`]) and panels ([`crate::bridge`]).
 //! - the **C Development Kit**: a project is a folder with a `project.toml` and C sources. It
-//!   is listed, and its projects can be made, read and trusted; it can't build or run one yet.
-//!   When it can, a project's C is to be built as WebAssembly and run in its panel (the
-//!   owner's decision, 2026-10-13; ADR-0001 has the phases).
+//!   builds a project's C as WebAssembly with the person's own compiler ([`crate::c`]); it
+//!   can't run what it built yet. That is to be in the project's panel (the owner's decision,
+//!   2026-10-13; ADR-0001 has the phases).
 //!
 //! What every kit's projects share is not a kit's: a project on disk and its fingerprint
 //! ([`crate::project`]), the person's trust in it ([`crate::trust`]), what it asks to be
@@ -52,6 +52,8 @@ pub struct Kit {
     pub panels: bool,
     /// Its projects may have Python scripts (`[python]` in the manifest).
     pub scripts: bool,
+    /// Its projects are built, from a recipe (`[c]` in the manifest).
+    pub builds: bool,
 }
 
 /// The kit there was before there were two: Python scripts and a web panel.
@@ -66,16 +68,17 @@ pub const ANIE: Kit = Kit {
     permissions: &Permission::ALL,
     panels: true,
     scripts: true,
+    builds: false,
 };
 
-/// Programs written in C. Listed, and not yet able to build or run one.
+/// Programs written in C. It builds them, and can't run them yet.
 pub const C: Kit = Kit {
     id: "c",
     name: "C Development Kit",
     made_of: &["C"],
     says: "Projects written in C, to be built as WebAssembly by a compiler you name and run in the project's panel. A project does nothing until you trust it.",
     project_is: "A project is a folder with a project.toml and C sources.",
-    not_yet: "GridCraft can't build or run a C project yet. Its projects can be made, read and trusted, and that is all so far.",
+    not_yet: "GridCraft can't run a C project yet. It builds one as WebAssembly, with zig as the compiler, once you trust the project.",
     built_in: true,
     // What a project's page will be able to ask of the spreadsheet for the program it runs.
     // The program is to be WebAssembly: it reaches nothing but what that page hands it, so
@@ -83,6 +86,7 @@ pub const C: Kit = Kit {
     permissions: &[Permission::Read, Permission::Write, Permission::Files],
     panels: false,
     scripts: false,
+    builds: true,
 };
 
 /// The kits that are loaded, in the order they are listed.
@@ -117,6 +121,9 @@ pub fn check(manifest: &Manifest) -> Result<&'static Kit, String> {
     }
     if manifest.python.is_some() && !kit.scripts {
         return Err(format!("it has Python scripts, which a project of the {} can't have", kit.name));
+    }
+    if manifest.c.is_some() && !kit.builds {
+        return Err(format!("it has a C recipe, which a project of the {} can't have", kit.name));
     }
     Ok(kit)
 }
@@ -194,7 +201,8 @@ mod tests {
         }
         assert_eq!(ANIE.id, manifest::DEFAULT_KIT, "a project that names no kit is the first kit's");
         // The first kit is whole; the second says what it can't do yet.
-        assert!(ANIE.not_yet.is_empty() && C.not_yet.contains("can't build or run"));
+        assert!(ANIE.not_yet.is_empty() && C.not_yet.contains("can't run a C project yet"));
+        assert_eq!((C.builds, ANIE.builds), (true, false), "the second kit builds its projects; the first has nothing to build");
         assert_eq!((named("rust"), named(""), named("C")), (None, None, None));
     }
 
@@ -225,6 +233,10 @@ mod tests {
         assert_eq!(scripts, "it has Python scripts, which a project of the C Development Kit can't have");
         let panel = check(&read("kit = \"c\"\n[panel]\nentry = \"panel/index.html\"")).unwrap_err();
         assert_eq!(panel, "it has a panel, which a project of the C Development Kit can't have");
+        // A recipe is the C kit's: it is nothing the first kit builds.
+        assert_eq!(check(&read("kit = \"c\"\n[c]\nsources = [\"src\"]")), Ok(&C));
+        let recipe = check(&read("[c]\nsources = [\"src\"]")).unwrap_err();
+        assert_eq!(recipe, "it has a C recipe, which a project of the Anie Development Kit can't have");
         // No kit's projects may be given something that is not a permission at all.
         for kit in loaded() {
             assert!(kit.permissions.iter().all(|allowed| Permission::ALL.contains(allowed)));

@@ -441,9 +441,9 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
 - **MCP Server** under it, beside the kits and not in one: the level, the connection, what
   waits for an answer, the plans.
 - **Development Kits**: the kits that are loaded. This build has two, both compiled in: the
-  **Anie Development Kit** (Python and Svelte) and the **C Development Kit**, which is
-  listed and can't build or run a project yet. There is no way to load another, and the
-  window says so.
+  **Anie Development Kit** (Python and Svelte) and the **C Development Kit**, which builds
+  a project's C as WebAssembly and can't run it yet. There is no way to load another, and
+  the window says so.
 - **Projects** under the kit, by what they are for: **workbook code** and **libraries**. A
   project has a part of its own; a new one is made in the kit's part.
 - Both windows show it: GridCraft's own, and the page, redrawn around the list.
@@ -451,8 +451,8 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
 **Planned, not built: a second kit, Doom, and source control** (the owner's request and
 decisions, 2026-10-13; ADR-0001 has the plan).
 
-- **A C Development Kit**, beside the Anie kit (listed since K1; it builds and runs nothing
-  yet): C built **as WebAssembly** by a compiler the person names (as the Python is), and
+- **A C Development Kit**, beside the Anie kit (listed since K1; it builds since K2's first
+  slice, and runs nothing yet): C built **as WebAssembly** by a compiler the person names (as the Python is), and
   run in the project's panel. Its projects are held to what they were granted, which a
   Python script can't be. Decided by the owner on 2026-10-13, in place of a program of its
   own first, which is put aside for later.
@@ -528,9 +528,16 @@ own.
   was tried once, on one small procedure.
 - **Kits: two, and no way to load another.** How one would be loaded is not decided
   (ADR-0001 has what is known). A kit can't be turned off as a whole. The second, for C,
-  is compiled in like the first: it shows two kits, and still loads none. **It can't build
-  or run a project**: its projects can be made, read and trusted, and that is all. An
-  agent's `create_project` makes the first kit's starter only.
+  is compiled in like the first: it shows two kits, and still loads none. **It builds a
+  project and can't run one**: what it builds is kept, and nothing uses it yet. An
+  agent's `create_project` makes the first kit's starter only, and an agent can't ask for
+  a build.
+- **A build needs zig**, which GridCraft does not ship: found where programs are looked
+  for, or named by hand. Only zig. A build can't be stopped once started, and zig's cache
+  beside what is built is never cleared.
+- **"Built from its own files and the compiler's" rests on the compiler saying what it
+  read.** Four ways of taking a file in from outside were tried and are refused; it is a
+  guard, not a proof.
 - **A project's `.git` is left out of it**, and out of everything GridCraft serves, reads
   and writes of a project. A program the person runs in that folder themselves is not
   GridCraft's to stop.
@@ -660,6 +667,17 @@ included.
 
 Newest first.
 
+- **2026-10-13 (K2, first slice: the C kit builds):** On the owner's word. A C project's
+  `project.toml` has a recipe, `[c]`: a list of sources and a few named options, never a
+  command. The compiler is the person's zig, found or named by hand. **The person builds a
+  project they trust** from its part of the Development window; the control channel
+  can't, and an agent can't ask yet. Each source is compiled by itself and **every file
+  the compiler read must be the project's or the compiler's own**, with inline assembly
+  off: four ways in from outside were tried and are refused. What is built is kept beside
+  the settings **under the fingerprint of the files it was built from**, so a build never
+  ends the trust it needed. **Doom built by the kit**: 81 sources, 394 KB, 8.6 seconds,
+  and it plays the demo as the hand-built one did. Found on the way: the scratch copy of
+  zig had lost its 130 empty files to something on the machine, which is not known.
 - **2026-10-13 (a panel may run WebAssembly; Doom tried docked; WebAssembly first):** The
   owner asked for Doom "dockable inside a gridcraft sheet", with variables that "auto
   update in the sheet", and for the shareware data ("more nostalgic"). **A panel's page

@@ -175,7 +175,10 @@ pub fn load(dir: &Path) -> Project {
             let of_no_kit = kit::check(&m).err();
             let missing_panel = m.panel.as_ref().filter(|entry| !project.files.contains(entry));
             let missing_scripts = m.python.as_ref().filter(|folder| !project.files.iter().any(|f| f.starts_with(&format!("{folder}/"))));
-            if let Some(problem) = of_no_kit {
+            // What a recipe names to build has to be in it too.
+            let unbuildable =
+                m.c.as_ref().and_then(|recipe| recipe.sources_among(&project.files).and_then(|_| recipe.includes_among(&project.files)).err());
+            if let Some(problem) = of_no_kit.or(unbuildable) {
                 project.problem = Some(problem);
             } else if let Some(entry) = missing_panel {
                 project.problem = Some(format!("its panel, {entry}, is not in it"));
@@ -379,6 +382,18 @@ pub(crate) mod tests {
         );
         t.write("paneled/panel/index.html", "<h1>x</h1>");
         assert!(load(&t.0.join("paneled")).problem.unwrap().contains("it has a panel"));
+        // A recipe that names what is not in the project: it can't be used either.
+        t.write(
+            "gone/project.toml",
+            "id = \"gone\"\nname = \"Gone\"\nversion = \"1\"\nkit = \"c\"\n\n[c]\nsources = [\"src/main.c\"]\ninclude = [\"include\"]\n",
+        );
+        assert_eq!(load(&t.0.join("gone")).problem.as_deref(), Some("its source, src/main.c, is not in it"));
+        t.write("gone/src/main.c", "int main(void) { return 0; }\n");
+        assert_eq!(load(&t.0.join("gone")).problem.as_deref(), Some("its include folder, include, is not in it"));
+        t.write("gone/include/x.h", "");
+        let whole = load(&t.0.join("gone"));
+        assert!(whole.is_sound(), "{:?}", whole.problem);
+        assert_eq!(whole.manifest.unwrap().c.unwrap().sources_among(&whole.files).unwrap(), ["src/main.c"]);
         // A kit this build doesn't have: the project is listed, and says so.
         t.write("rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
         let rusty = load(&t.0.join("rusty"));

@@ -30,8 +30,9 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::kit::{self, Kit, ProjectKind};
-use gridcraft_aniefork_dev::{Project, TrustStore, describe, manifest, project, rebuilt, settings, showcase, vba};
+use gridcraft_aniefork_dev::{Project, TrustStore, c, describe, manifest, project, rebuilt, settings, showcase, vba};
 use serde_json::{Value as Json, json};
 
 use super::{agents, card, macros, projects};
@@ -424,6 +425,84 @@ pub(super) fn overview(app: &SheetApp, now: &agents::Snapshot) -> Json {
     })
 }
 
+/// What is said where no compiler is named: which one is looked for, and when.
+pub(super) const COMPILER_FOUND: &str = "zig, looked for when a project is built";
+/// Said beside the field the compiler is named in.
+pub(super) const COMPILER_HINT: &str = "A path or a command. Empty: zig, wherever programs are found.";
+/// Said of a project that has a recipe and is not trusted as it is.
+pub(super) const BUILD_NEEDS_TRUST: &str = "It is built once you trust it as it is: building runs your compiler over its files.";
+
+/// A size in words: whole kilobytes, and never none.
+fn kilobytes(bytes: u64) -> String {
+    format!("{} KB", bytes.div_ceil(1024).max(1))
+}
+
+/// A time in words, from milliseconds: tenths of a second when it is short.
+fn seconds(millis: u64) -> String {
+    if millis < 10_000 { format!("{}.{} s", millis / 1000, (millis % 1000) / 100) } else { format!("{} s", millis / 1000) }
+}
+
+/// A project's build: what its recipe builds, how it stands, and whether the person can build
+/// it now. `None` for a project that has no recipe.
+fn build_says(at: &Places, on_disk: &Project, status: &str) -> Option<Json> {
+    let recipe = on_disk.manifest.as_ref()?.c.as_ref()?;
+    let builds = match recipe.sources_among(&on_disk.files) {
+        Ok(sources) => {
+            let shown: Vec<&str> = sources.iter().map(String::as_str).take(NAMED).collect();
+            let more = sources.len().saturating_sub(shown.len());
+            format!(
+                "It builds {} C file{} into one WebAssembly program: {}{}.",
+                sources.len(),
+                plural(sources.len()),
+                shown.join(", "),
+                if more > 0 { format!(", and {more} more") } else { String::new() }
+            )
+        }
+        Err(why) => format!("It can't be built: {why}."),
+    };
+    let standing = c::standing(&at.settings, &on_disk.id, on_disk.fingerprint.as_deref());
+    let by_standing = || match &standing {
+        c::Standing::Built { bytes } => ("built", format!("Built from the files it holds now: {}, {}.", c::OUTPUT, kilobytes(*bytes))),
+        c::Standing::Stale => ("stale", "What was built is from other files than it holds now. Build it again.".to_string()),
+        c::Standing::NotBuilt => ("none", "Not built yet.".to_string()),
+    };
+    let (state, says, output) = match c::Builder::global().progress(&at.projects, &on_disk.id) {
+        Some(c::Progress::Building { millis }) => ("building", format!("Building… {} so far.", seconds(millis)), None),
+        Some(c::Progress::Done(Err(why))) => {
+            let (first, rest) = why.split_once('\n').map_or((why.as_str(), ""), |(first, rest)| (first, rest));
+            ("failed", first.to_string(), (!rest.trim().is_empty()).then(|| rest.to_string()))
+        }
+        Some(c::Progress::Done(Ok(built))) if matches!(standing, c::Standing::Built { .. }) => (
+            "built",
+            format!(
+                "Built: {}, {}, from {} C file{}, in {}, by {}.",
+                c::OUTPUT,
+                kilobytes(built.bytes),
+                built.sources,
+                plural(built.sources),
+                seconds(built.millis),
+                built.compiler
+            ),
+            None,
+        ),
+        _ => {
+            let (state, says) = by_standing();
+            (state, says, None)
+        }
+    };
+    let trusted = status == "trusted";
+    Some(json!({
+        "title": "Build",
+        "builds": builds,
+        "state": state,
+        "says": says,
+        "output": output,
+        // Building is for a project the person trusts as it is, and one build at a time.
+        "can": trusted && state != "building",
+        "needsTrust": if trusted { Json::Null } else { json!(BUILD_NEEDS_TRUST) },
+    }))
+}
+
 /// One project in the kit's list.
 fn project_row(project: &Json, open: Option<&str>) -> Json {
     let id = text(project, "id");
@@ -493,6 +572,16 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
         let python = settings::load(&at.settings).python;
         told["python"] = json!(format!("Python: {}.", if python.is_empty() { "found automatically" } else { python.as_str() }));
     }
+    // The compiler that builds: for a kit whose projects are built. The person names it here.
+    if kit.builds {
+        let named = settings::load(&at.settings).compiler;
+        told["compiler"] = json!({
+            "title": "C compiler",
+            "says": if named.is_empty() { COMPILER_FOUND } else { named.as_str() },
+            "named": named,
+            "hint": COMPILER_HINT,
+        });
+    }
     // The showcase is a project of the first kit.
     if kit.id == kit::ANIE.id {
         let standing = found.projects.iter().find(|project| project["id"] == showcase::ID).map(|project| project["status"] == "trusted");
@@ -518,6 +607,11 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
     let open = open_workbook(app);
     let kind = kind_of(project);
     let kit = kit_of(project);
+    // What of it is built, and how that stands: for a project with a recipe.
+    let build = match (projects::places(), found.on_disk.iter().find(|on_disk| on_disk.id == id)) {
+        (Some(at), Some(on_disk)) if kit.builds => build_says(&at, on_disk, text(project, "status")),
+        _ => None,
+    };
     let workbook = text(project, "workbook");
     let status = text(project, "status");
     let for_says = match (kind, open.as_deref().is_some_and(|open| manifest::same_workbook(open, workbook))) {
@@ -600,6 +694,7 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
         "asks": asks,
         "asksNothing": if kit.panels { "Show its panel, and nothing more." } else { "Nothing." },
         "parts": parts,
+        "build": build,
         "rebuilt": rebuilt,
         "manage": "Reviewing, trusting and running it is done in Projects.",
         "canOpenFolder": app.services.open_url.is_some(),
@@ -824,6 +919,13 @@ mod tests {
         );
         // What only the first kit has is not said of this one.
         assert_eq!((&empty["python"], &empty["showcase"]), (&Json::Null, &Json::Null));
+        // It builds: the compiler is named here, or looked for. The first kit has none to name.
+        assert_eq!(empty["compiler"], json!({"title": "C compiler", "says": COMPILER_FOUND, "named": "", "hint": COMPILER_HINT}));
+        assert_eq!(kit_pane(&a, &ctx, &kit::ANIE)["compiler"], Json::Null);
+        std::fs::write(s.0.join("developer.json"), r#"{"compiler": "C:\\tools\\zig\\zig.exe"}"#).unwrap();
+        let named = kit_pane(&a, &ctx, &kit::C);
+        assert_eq!((&named["compiler"]["says"], &named["compiler"]["named"]), (&json!("C:\\tools\\zig\\zig.exe"), &json!("C:\\tools\\zig\\zig.exe")));
+        std::fs::remove_file(s.0.join("developer.json")).unwrap();
         // A project made in it is its own, and not the first kit's.
         assert_eq!(projects::create_project_in(&kit::C, "Blink", None).unwrap(), "Blink was created. It is not trusted yet.");
         forget();
@@ -842,6 +944,35 @@ mod tests {
         assert_eq!(one["above"], json!(["Development", "Development Kits", "C Development Kit"]));
         assert_eq!((&one["notYet"], &one["asks"], &one["asksNothing"]), (&json!(kit::C.not_yet), &json!([]), &json!("Nothing.")));
         assert_eq!(one["parts"], json!([{"label": "2 files", "value": "project.toml, src/main.c"}]), "no panel and no scripts");
+        // Its recipe, and how its build stands: not built, and not to be until it is trusted.
+        assert_eq!(
+            one["build"],
+            json!({
+                "title": "Build",
+                "builds": "It builds 1 C file into one WebAssembly program: src/main.c.",
+                "state": "none",
+                "says": "Not built yet.",
+                "output": null,
+                "can": false,
+                "needsTrust": BUILD_NEEDS_TRUST,
+            })
+        );
+        // A program kept under its fingerprint is its own; one kept under another is not.
+        let print = found().unwrap().on_disk.iter().find(|on_disk| on_disk.id == "blink").unwrap().fingerprint.clone().unwrap();
+        let kept = s.0.join("built/blink").join("0".repeat(64));
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::write(kept.join("program.wasm"), b"\0asm....").unwrap();
+        assert_eq!(project_pane(&a, "blink").unwrap()["build"]["state"], "stale");
+        assert_eq!(project_pane(&a, "blink").unwrap()["build"]["says"], "What was built is from other files than it holds now. Build it again.");
+        let own = s.0.join("built/blink").join(&print);
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join("program.wasm"), vec![0u8; 3000]).unwrap();
+        let built = project_pane(&a, "blink").unwrap()["build"].clone();
+        assert_eq!((&built["state"], &built["says"]), (&json!("built"), &json!("Built from the files it holds now: program.wasm, 3 KB.")));
+        // A project without a recipe, and one of the first kit, have nothing to build.
+        assert_eq!(project_pane(&a, "clean-data").unwrap()["build"], Json::Null);
+        assert_eq!((kilobytes(1), kilobytes(1024), kilobytes(1025), kilobytes(0)), ("1 KB".into(), "1 KB".into(), "2 KB".into(), "1 KB".into()));
+        assert_eq!((seconds(950), seconds(3_240), seconds(25_900)), ("0.9 s".into(), "3.2 s".into(), "25 s".into()));
         // One that asks for what the first kit runs can't be used, and says why.
         write(&s, "sly/project.toml", "id = \"sly\"\nname = \"Sly\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"python\"]\n");
         // One of a kit this GridCraft doesn't have is listed under the first kit, as a problem.

@@ -15,6 +15,9 @@
 //!
 //! [python]
 //! scripts = "python"                 # optional: the folder its panel may run scripts from
+//!
+//! [c]                                # optional, for a project of the C kit: what is built
+//! sources = ["src"]                  # (`crate::c` has the whole of it)
 //! ```
 //!
 //! A manifest is written by a stranger: everything in it is checked, and anything not understood
@@ -122,6 +125,8 @@ pub struct Manifest {
     /// none). Whether this build has such a kit, and what a project of it may hold, is for
     /// `kit::check` to say.
     pub kit: String,
+    /// What of it is built, and how: the C kit's recipe.
+    pub c: Option<crate::c::Recipe>,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +139,7 @@ struct Raw {
     permissions: Option<Vec<String>>,
     workbook: Option<String>,
     kit: Option<String>,
+    c: Option<crate::c::Raw>,
     panel: Option<RawPanel>,
     python: Option<RawPython>,
 }
@@ -277,6 +283,7 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
         python: raw.python.and_then(|p| p.scripts).map(|p| inner_path(&p)).transpose()?,
         workbook: raw.workbook.map(|name| workbook_name(&name)).transpose()?.flatten(),
         kit,
+        c: raw.c.map(crate::c::Recipe::read).transpose()?,
     })
 }
 
@@ -310,6 +317,14 @@ scripts = "python"
         assert!(m.permissions.is_empty() && m.panel.is_none() && m.python.is_none() && m.author.is_empty());
         assert_eq!(m.workbook, None, "a project that names no workbook is a library");
         assert_eq!(m.kit, DEFAULT_KIT, "and one that names no kit is of the kit there was before there were two");
+        assert_eq!(m.c, None, "and it has no C recipe");
+        // A recipe is read with the rest, and a recipe that won't do makes the manifest invalid.
+        let built = parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nkit = \"c\"\n[c]\nsources = [\"src\"]", "x").unwrap();
+        assert_eq!(built.c.map(|recipe| recipe.sources), Some(vec!["src".to_string()]));
+        assert!(parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nkit = \"c\"\n[c]\nsources = [\"../x.c\"]", "x").is_err());
+        assert!(
+            parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nkit = \"c\"\n[c]\ndefine = [\"A\"]", "x").unwrap_err().contains("names no sources")
+        );
         // Keys it doesn't know are ignored: a newer project still loads.
         assert!(parse("id = \"x\"\nname = \"X\"\nversion = \"1\"\nfuture = true\n[panel]\nwidth = 300", "x").is_ok());
     }
