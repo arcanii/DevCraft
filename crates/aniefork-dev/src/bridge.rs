@@ -566,7 +566,13 @@ mod server {
 
     /// What the browser is told when the project wasn't granted `network`: load and call nothing
     /// that isn't this bridge's.
-    const CLOSED: &str = "default-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    ///
+    /// `'wasm-unsafe-eval'` lets the page run WebAssembly, which a browser otherwise refuses
+    /// under a policy like this one. It gives a panel nothing it didn't have: a panel's own
+    /// scripts already run, WebAssembly reaches the world only through them, and what it
+    /// loads still comes from this bridge alone. Text is still not run as script (there is
+    /// no `'unsafe-eval'`). It is what a project written in C needs to run in its panel.
+    const CLOSED: &str = "default-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
     /// With `network`: anything, but still in no other page's frame.
     const OPEN: &str = "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
@@ -1408,6 +1414,10 @@ mod served {
         ] {
             assert!(head.contains(header), "{header} is missing from\n{head}");
         }
+        // It may run WebAssembly (a project written in C runs so, in its panel), and still
+        // may not run text as script or load from anywhere else.
+        assert!(head.contains("default-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' data: blob:;"), "{head}");
+        assert!(!head.contains("'unsafe-eval'") && !head.contains("default-src *"), "{head}");
         assert_eq!(s.get("index.html").2, PAGE);
         let (status, head, body) = s.get("app.js?v=2#top");
         assert_eq!((status, body.as_str()), (200, "console.log('panel');"));

@@ -451,12 +451,13 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
 **Planned, not built: a second kit, Doom, and source control** (the owner's request and
 decisions, 2026-10-13; ADR-0001 has the plan).
 
-- **A C Development Kit**, beside the Anie kit, the easiest way first: C built by a compiler
-  the person names (as the Python is), and run as a program of its own that calls the
-  spreadsheet. Like Python it can't be limited. A WebAssembly kit, whose projects could be
-  held to what they were granted, can come later.
+- **A C Development Kit**, beside the Anie kit (listed since K1; it builds and runs nothing
+  yet): C built **as WebAssembly** by a compiler the person names (as the Python is), and
+  run in the project's panel. Its projects are held to what they were granted, which a
+  Python script can't be. Decided by the owner on 2026-10-13, in place of a program of its
+  own first, which is put aside for later.
 - **Doom as its demonstration**, in a repository of its own ("GridCraft Doom"), never in
-  this one: its code is under the GPL. It runs in its own window at first, **with its live
+  this one: its code is under the GPL. It is docked beside the sheet, **with its live
   variables updating in a table** (health, armour, ammunition, the monsters nearby and in
   sight, kills, the level and its clock, where the player stands) and formulas and a chart
   over them. Freedoom's game data by default.
@@ -659,6 +660,17 @@ included.
 
 Newest first.
 
+- **2026-10-13 (a panel may run WebAssembly; Doom tried docked; WebAssembly first):** The
+  owner asked for Doom "dockable inside a gridcraft sheet", with variables that "auto
+  update in the sheet", and for the shareware data ("more nostalgic"). **A panel's page
+  may run WebAssembly**: one word in the rules it is served under, and nothing else
+  loosened. **Doom in a panel**: built by hand with zig as WebAssembly, in a project
+  outside the repository that asks for `read` and `write`. Seen: the game in Node and in
+  a browser under the panel's rules, and in an isolated GridCraft the sheet its commands
+  make (23 variables, worked-out cells, two charts). **Not seen: the panel docked and
+  writing**, which takes the person's own click; the project was put in the owner's
+  projects folder, untrusted, for that. **Decided by the owner: the C kit takes
+  WebAssembly first**, in a project's panel, in place of a program of its own.
 - **2026-10-13 (K1: kits as two):** On the owner's word. The C Development Kit is listed
   beside the Anie kit; `kit = "…"` in `project.toml` says which a project is of (none: the
   first, as before); a project that holds or asks for what its kit doesn't have can't be

@@ -6,8 +6,9 @@
 //!   and a web panel (written with Svelte or any other web toolkit). Most of this crate is that
 //!   kit at work: its scripts ([`crate::python`]) and panels ([`crate::bridge`]).
 //! - the **C Development Kit**: a project is a folder with a `project.toml` and C sources. It
-//!   is listed, and its projects can be made, read and trusted; it can't build or run one yet
-//!   (ADR-0001 has the phases).
+//!   is listed, and its projects can be made, read and trusted; it can't build or run one yet.
+//!   When it can, a project's C is to be built as WebAssembly and run in its panel (the
+//!   owner's decision, 2026-10-13; ADR-0001 has the phases).
 //!
 //! What every kit's projects share is not a kit's: a project on disk and its fingerprint
 //! ([`crate::project`]), the person's trust in it ([`crate::trust`]), what it asks to be
@@ -72,12 +73,13 @@ pub const C: Kit = Kit {
     id: "c",
     name: "C Development Kit",
     made_of: &["C"],
-    says: "Projects written in C, to be built by a compiler you name and run as programs of their own. A project does nothing until you trust it.",
+    says: "Projects written in C, to be built as WebAssembly by a compiler you name and run in the project's panel. A project does nothing until you trust it.",
     project_is: "A project is a folder with a project.toml and C sources.",
     not_yet: "GridCraft can't build or run a C project yet. Its projects can be made, read and trusted, and that is all so far.",
     built_in: true,
-    // What a program will be able to ask of the spreadsheet. Running it at all comes with the
-    // kit's next phases, and will be a thing to ask for like `python`.
+    // What a project's page will be able to ask of the spreadsheet for the program it runs.
+    // The program is to be WebAssembly: it reaches nothing but what that page hands it, so
+    // running it needs no leave of its own, as `python` does.
     permissions: &[Permission::Read, Permission::Write, Permission::Files],
     panels: false,
     scripts: false,

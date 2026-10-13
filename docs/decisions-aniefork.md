@@ -992,7 +992,9 @@ Doom is to show: "we can demonstrate live variables updating in the spreadsheet.
 2. **Freedoom's game data by default**, "but we should allow for a project to change project
    files as a feature."
 3. **The easiest way first.** "We should take the easiest approach first. We can always make
-   a WebAssembly Dev kit later." So C runs first as a program of its own, as Python does.
+   a WebAssembly Dev kit later." So C was to run first as a program of its own, as Python
+   does. **Changed the same day, once Doom docked had been asked for and tried: "switch to
+   WebAssembly first"** (the section after K1's, below).
 4. **The compiler is the person's, and named.** "As this is a development kit, we can
    specify what the compiler is (and use external like we are doing for Python)."
 5. **Push later.**
@@ -1025,7 +1027,9 @@ project is the Anie kit's, so every project there is stays as it is. The C kit i
 into GridCraft like the first. That shows a second kit; it does not settle how a kit that is
 not compiled in gets loaded, which stays open.
 
-**2. The C kit: C built by the person's compiler, and run as a program.**
+**2. The C kit: C built by the person's compiler, and run as WebAssembly in the project's
+panel.** (As first planned it ran as a program of its own: the owner changed that on
+2026-10-13, and the three points on running, below, are as they stand since.)
 
 - **The compiler is external and named**, as the Python is: found, or named in the window.
   First a compiler that takes the usual command line (`zig cc`, clang, gcc); Microsoft's
@@ -1043,19 +1047,16 @@ not compiled in gets loaded, which stays open.
 - **What is built is kept outside the project**, beside the settings, under the fingerprint
   of the sources it was built from. A build then never changes what the person trusted, and
   a program built from other sources than the ones trusted now can't be the one that runs.
-- **It runs as a program of its own**, the way a script does: started by GridCraft after
-  the trust check, in a process of its own, speaking to GridCraft over its pipes. It calls
-  the spreadsheet through a small C file the kit gives a project (as the runner gives a
-  Python script its `spreadsheet`), and every call is checked against what the project was
-  granted at that moment. Unlike a script it may run until it is closed: the person starts
-  it and stops it, and for an agent starting it is a request.
-- **It can't be limited**, like Python: a program can do anything a program the person runs
-  can do. So it is a thing a project asks to be allowed, worded as `python` is, and the
-  window says so before trust is given.
-- **Later, a WebAssembly kit** (the owner: "we can always make a WebAssembly Dev kit
-  later"). Its reason stands: a WebAssembly module can do only what whoever runs it hands
-  it, so its projects would be the first that are *held* to what they were granted. It
-  would run in a project's panel, or inside GridCraft by an interpreter written in Rust.
+- **It runs as WebAssembly, in the project's panel**: the page the kit serves starts the
+  program and hands it the little of a system it asks for. The page makes the calls to the
+  spreadsheet, and every call is checked against what the project was granted at that
+  moment, as for any panel.
+- **It is held to what it was granted.** A WebAssembly program can do only what whoever
+  runs it hands it: a C project is the first kind that can't do more than it asked. It
+  needs no leave of its own to run, as `python` does.
+- **A program of its own is put aside, not ruled out**: for what a page can't do, later,
+  as a thing a project asks to be allowed, worded as `python` is. Inside GridCraft by an
+  interpreter written in Rust (for C that needs no panel) stays a maybe.
 
 **The trial with zig (2026-10-13), on the owner's word** ("go ahead and try zig with
 doomgeneric"). Done in a scratch folder outside the repository: nothing was installed, put
@@ -1102,17 +1103,18 @@ on the path, or added here.
   what an editor is to a GPL program opened in it. Until GridCraft has source control,
   `doomgeneric` is cloned by hand into the projects folder. Making the repository on GitHub
   is for when the demonstration works, on the owner's word.
-- **Its window, at first, is its own**: the one `doomgeneric`'s port for Windows opens.
-  Docked beside the sheet comes with the WebAssembly kit, or with frames carried over to
-  GridCraft; not in the first showing.
+- **It is docked beside the sheet**, in its project's panel (it was first shown in a
+  window of its own, as a program built for Windows).
 - **Its live variables update in the cells** as it is played (the owner's addition), in a
   table (below): health, armour, ammunition, the monsters nearby, what was killed, the
   level's clock, where the player stands; and formulas and a chart over them that move
   with the game. It makes the showcase about the spreadsheet, not only beside it. Doom asks
-  for `write` and to run its program.
+  for `read` and `write`, and nothing else.
 - **Its game data is Freedoom's by default** (3-clause BSD, which may be passed on with its
-  licence text; the shareware WAD may not be, and the rule on assets keeps it out of here
-  in any case), kept with the Doom project, not in GridCraft's repository.
+  licence text; the shareware WAD is id Software's, under terms of its own, and the rule on
+  assets keeps it out of here in any case), kept with the Doom project, not in GridCraft's
+  repository. For the demonstration on their own machine the owner asked for the shareware
+  data.
 
 **The table of the game's variables** (the owner, 2026-10-13: "can we expose some of the
 internal variables in a table that will update with the game? Variables like Health, Ammo,
@@ -1226,14 +1228,14 @@ is built, with what must hold whatever the design:
 | Phase | What | Waits for |
 |---|---|---|
 | K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | **Built 2026-10-13** (below) |
-| K2 | The C kit builds: the compiler found or named, the recipe, a build as a request, what is built kept outside the project | K1. (zig builds `doomgeneric` as it stands: tried, 2026-10-13) |
-| K3 | The C kit runs a program: started and stopped by the person, the spreadsheet called from C, held to nothing but its grants' checks | K2 |
-| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built, run in its own window; the table of its variables written four times a second, with formulas and a chart over it; then the "GridCraft Doom" repository | K3. (Built and run by hand, 2026-10-13) |
+| K2 | The C kit builds, to WebAssembly: the compiler found or named (zig first), the recipe as a list in `project.toml`, a build as a request, what is built kept under the fingerprint of its sources | K1. (Built by hand with zig, 2026-10-13) |
+| K3 | The C kit runs what it built in the project's panel: a C project may have a panel, and the kit serves beside its page what the program asks of a system | K2 |
+| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built by the kit, docked beside the sheet; the table of its variables written four times a second, with formulas and charts over it; then the "GridCraft Doom" repository | K3. (Tried by hand in a panel, 2026-10-13) |
 | P1 | Files a project changes itself | D1 shows what it needs |
 | G1 | Source control, local: repositories among the projects, changes, a commit | |
 | G2 | Clone from an address; fetch and pull | G1 |
 | L1 | Live values that are not edits: a project publishes them, a function shows them (`RTD`) | A hook in upstream's formula code |
-| later | Push and signing in to GitHub; a WebAssembly kit; Doom docked beside the sheet | |
+| later | Push and signing in to GitHub; C as a program of its own, for what a page can't do | |
 
 **Still the owner's to say.**
 
@@ -1291,6 +1293,79 @@ almost every git command.
 manifest's line, a project against its kit, what git keeps (in a project, from an agent,
 from a panel), the C starter, and both windows. In the app (an isolated copy): the
 Development window lists the two kits, the second with what it can't do yet.
+
+### A panel may run WebAssembly; Doom in a panel; C as WebAssembly first
+
+**2026-10-13. Asked for by the owner:** "can we make the screen dockable inside a gridcraft
+sheet and extract some of the variables to auto update in the sheet?" **And decided by them
+the same day, when it had been tried: "switch to WebAssembly first".**
+
+**1. A panel may run WebAssembly.** The rules a panel's page is served under (when the
+project was not granted `network`) gain `'wasm-unsafe-eval'`. A browser otherwise refuses
+WebAssembly under such rules. It gives a panel nothing it didn't have: its own scripts
+already run, WebAssembly reaches the world only through them, what it loads still comes
+from the bridge alone, and text is still not run as script. It is what C needs to run in a
+panel.
+
+**2. Doom in a panel, with its variables in a sheet (tried).** The shortest way to Doom
+docked was not the one decided as easiest before docking was asked for: Doom built as
+**WebAssembly**, run in a project's panel, which GridCraft already docks beside the sheet.
+
+- **The project** ("GridCraft Doom", outside this repository; nothing of it is here): one
+  file of C that gives `doomgeneric` its five functions and gives the page a step of the
+  game, the picture, the keys and the variables; a page that runs it; and the data. Built
+  by hand with zig (`-target wasm32-wasi`): the same 80 files and that one, 394 KB. The one
+  thing the browser lacked was `system()`, which the file gives as a function that does
+  nothing.
+- **It is held to what it was granted.** The game is WebAssembly: it can reach nothing but
+  what its page hands it (a clock, a place to print, and files kept in memory: the data,
+  and what it saves until the page is closed). The page reads the variables out of it and
+  makes the calls, each checked against `read` and `write`, which is all the project asks.
+- **The sheet**: a table of 23 variables written four times a second; cells worked out
+  from them (a bar of health, kills as a share, "IN SIGHT: 2", "LOW" for ammunition); the
+  last minute second by second; and two charts over it. Made by the page in one step of
+  undo when the person links it. "Nearby" is within 512 units now: 1 to 12 through the
+  demo.
+- **The data, at the owner's wish**: the shareware episode's (`doom1.wad`, version 1.9),
+  fetched from Debian's archive and checked against the known checksums. "This is more
+  nostalgic." It is id Software's, given out free under its own terms, which are not an
+  open licence: it is in no repository of ours, and a person fetches it for themselves.
+  (An earlier line here said it may not be passed on: that was more than is known.)
+- **What was seen.** In Node, on a clock stepped by hand: it starts, plays the demo, and
+  gives the same values second for second as the program built for Windows did. In a
+  browser, served under the panel's own rules with a stand-in for `spreadsheet.js`: it
+  loads, draws and plays, and makes the calls. In GridCraft itself (an isolated copy): the
+  project is read, trusted there and offered for docking, and the very commands the page
+  makes give the sheet, the worked-out cells and the charts.
+- **What was not seen: the panel docked in GridCraft, playing and writing.** Docking is the
+  person's alone: a click posted to the window did not take, and the control channel is
+  refused by design. The project was put in the owner's own projects folder at their word,
+  untrusted, for them to trust and dock. Known before it is seen: the screen stands still
+  for a second while the picture melts between levels; there is no sound; a page that is
+  not being shown runs slowly.
+
+**3. C as WebAssembly first: decided.** The C kit builds a project's C to WebAssembly and
+runs it in the project's panel, in place of a program of its own first.
+
+- **Why it is the better first**: it is what Doom docked needs; a WebAssembly program is
+  held to what its project was granted, where a program of its own can't be limited at
+  all; it needs no new thing to ask to be allowed; and it runs wherever a panel does.
+- **What it changes in what was built**: a C project will have a panel, which K1 refuses
+  for now (`kit::C`), and the kit's words in the window say WebAssembly and the panel.
+- **What the kit will bring** (phases K2 and K3, below in the table): the build, by the
+  compiler the person names (zig first: it has the C library a WebAssembly program needs);
+  and, served beside a C project's page as `spreadsheet.js` is, the little of a system the
+  program asks for: a clock, a place to print, files in memory. The trial's page has that
+  in its own script: it is what the kit takes over.
+- **Still to design in K2**: where what is built is kept. The trial's `doom.wasm` is a file
+  of the project, in its fingerprint, so trust covers exactly what runs; built by the kit,
+  it should be kept and served under the fingerprint of the sources it was built from.
+- **A program of its own is put aside, not ruled out**: for what a page can't do (sound
+  devices, long work without a window), as a thing a project asks to be allowed, worded as
+  `python` is.
+
+**Checked.** The panel's rules: the crate's tests (a panel is served with the word and
+without `'unsafe-eval'`), and the gate's eight steps on the whole. The trial: as above.
 
 ### Backlog
 
