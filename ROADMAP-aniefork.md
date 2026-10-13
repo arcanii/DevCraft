@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-13, upstream `fc45b7f` (GridCraft 0.6.1: 6 commits since the merge before) |
+| Last merge of upstream | 2026-10-13, upstream `84acf62` (407 commits since the merge before; no release since 0.6.1) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 15 changes upstream lacks (below) |
 
@@ -63,8 +63,8 @@ The fork no longer carries these. They are kept here as the record of what happe
   [storytold/gridcraft#463](https://github.com/storytold/gridcraft/pull/463) (2026-10-12, branch
   `recent-modified`) and **merged** on 2026-10-13: the recent list's "modified" column on
   upstream's File page, read on a thread of its own so a slow drive never holds up the view,
-  with its strings in upstream's catalogs. The fork's `main` does not carry it yet: it arrives
-  with the next merge of upstream.
+  with its strings in upstream's catalogs. The fork's `main` has it since the merge of
+  upstream `84acf62` (2026-10-13).
 - **The outline on the gridlines, and the highlight that stays on its cell while typing**, are
   offered together as
   [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (2026-10-12, branch
@@ -666,9 +666,9 @@ still there:
 | File | Hook |
 |---|---|
 | `crates/ui-egui/src/lib.rs` | `pub mod aniefork;` |
-| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `aniefork: aniefork::Prefs`, flattened (`#[serde(flatten)]`), after `animations`: every preference of the fork's, in one field |
+| `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `aniefork: aniefork::Prefs`, flattened (`#[serde(flatten)]`), after `autocomplete` (upstream's, which follows `animations`): every preference of the fork's, in one field |
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, first thing | `let look = crate::aniefork::selection::look(app, p.ctx());`, and then `look.shown` added to four conditions (the fill's `keep`, the outline, the active cell's own stroke, the fill handle) |
-| `crates/ui-egui/src/grid.rs`, `paint_selection`, the outline | `crate::aniefork::selection::paint_outline(p, outline, look.width, t.sel_border);` in place of upstream's `rect_stroke` |
+| `crates/ui-egui/src/grid.rs`, `paint_selection`, the outline | `crate::aniefork::selection::paint_outline(p, outline, look.width, t.sel_border);` in place of upstream's loop over `outline_bands`. The hook draws with upstream's `outline_bands` itself: nothing else in the app calls it, so if the hook stopped using it the build would fail on an unused function |
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill handle | `crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);` in place of upstream's three lines that size and paint it |
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's size | `let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);` in place of upstream's `w` and `h`, and `Rect::from_min_size(rect.min, grown)` for `erect` |
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
@@ -723,11 +723,17 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
   in `ribbon.rs` (upstream replaced the Dark Mode checkbox with a Display theme picker). The hooks
   in `grid.rs`, `UiState` and `run_ui_command` merged by themselves. The 0.6.1 merge conflicted
   at one: `services()` in the app's `main.rs`, where upstream replaced the `print` service with
-  `printers` and `print_native`, on the lines right above the fork's `confirm`.
+  `printers` and `print_native`, on the lines right above the fork's `confirm`. The merge of
+  `84acf62` (407 commits) conflicted at two: `UiState` in `lib.rs`, where upstream added
+  `autocomplete` on the line the fork's field stood on (upstream's first, the fork's after it),
+  and the outline in `grid.rs`, where upstream replaced its stroked rectangle with four filled
+  sides cut to the screen (`outline_bands`, its #767: a whole column's outline lost its sides).
+  The fork's outline is its own ring on the gridlines; it is now drawn by that function, so the
+  fork has upstream's fix too.
 - **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
-  must list commands in the shape upstream's listing uses (0.5.0 added `params`), and
-  `aniefork::tr` covers the interface languages upstream has: when upstream adds one, the fork's
-  strings show in English there until they are added to that table.
+  must list commands in the shape upstream's listing uses (0.5.0 added `params`). The fork's
+  own strings are in English in every interface language (upstream had eleven at the merge of
+  `84acf62`, which brought Serbian).
 - **`ATTRIBUTION.md`:** when both sides add assets (the fork has none so far).
 
 After a merge, run `cargo xtask ci` before committing it, and update the tables above.
@@ -757,6 +763,21 @@ included.
 
 Newest first.
 
+- **2026-10-13 (merge of upstream `84acf62`):** 407 commits since the merge before, and no
+  release among them (still 0.6.1). What they bring, in the main: AutoComplete for cell values
+  with its switch on the Options page; a horizontal scrollbar in the sheet tab bar and an All
+  Sheets navigator; rows that grow to their tallest font; the fork's own "modified" column of
+  the recent list (#463, now upstream's); a selection outline that keeps its sides round a
+  whole column; many fixes to XLSX and XLS round trips, number formats, functions and PDF
+  output; Serbian as an interface language. **Two conflicts**, both settled as the fork's rule
+  says (upstream's code, and the hook put back): the fork's field in `UiState`, and the
+  selection's outline in `grid.rs` (see "Syncing with upstream"). Every hook was counted file
+  by file before and after, and is in place. **One change to the fork's own code**:
+  `selection::paint_outline` draws its ring with upstream's `outline_bands`. Checked on the
+  result: the gate's eight steps, 1867 tests. The work that was uncommitted at the time
+  (the viewer in Review, the Development window's new look and words) was set aside for the
+  merge and put back after it. **Not in this merge**: upstream's pull request 990, which would
+  make GridCraft run VBA. It is open and unreviewed; what it would mean here is in ADR-0001.
 - **2026-10-13 (whose word is taken for a developer: decided and designed):** The owner
   decided the four points left by the review: keys first; where an organisation has set
   GridCraft up a person trusts no developer themselves ("this would be at the organization

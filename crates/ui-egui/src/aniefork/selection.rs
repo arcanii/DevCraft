@@ -138,12 +138,16 @@ impl Bars {
 
 /// Hook of `grid::paint_selection`: paints the selection's outline round `cells`, `width` points
 /// wide, on the gridlines.
+///
+/// Where the outline lies and how wide it is are the fork's ([`Bars`]); the drawing is
+/// upstream's `outline_bands`, which cuts each side to what is on screen. A side as tall as a
+/// whole column would otherwise be lost in the drawing (upstream's #687). The four bars are one
+/// ring of one weight, which is what `outline_bands` draws: round the middle of the ring.
 pub fn paint_outline(p: &egui::Painter, cells: Rect, width: f32, colour: Color32) {
     let bars = Bars::new(cells, width, p.ctx().pixels_per_point());
-    for bar in [bars.left, bars.top, bars.right, bars.bottom] {
-        if bar.is_finite() && bar.is_positive() {
-            p.rect_filled(bar, 0.0, colour);
-        }
+    let weight = bars.right.width();
+    for side in crate::grid::outline_bands(bars.inner().expand(weight / 2.0), weight, p.clip_rect()) {
+        p.rect_filled(side, 0.0, colour);
     }
 }
 
