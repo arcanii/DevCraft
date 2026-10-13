@@ -10,7 +10,7 @@
 //!     Anie Development Kit       Python and Svelte
 //!       Workbook code            projects that are the code of one workbook
 //!       Libraries                projects for any workbook
-//!     C Development Kit          C: listed, and not yet able to build or run
+//!     C Development Kit          C: built as WebAssembly, and run in the project's panel
 //!       …                        its projects, by the same two kinds
 //! ```
 //!
@@ -432,6 +432,39 @@ pub(super) const COMPILER_HINT: &str = "A path or a command. Empty: zig, whereve
 /// Said of a project that has a recipe and is not trusted as it is.
 pub(super) const BUILD_NEEDS_TRUST: &str = "It is built once you trust it as it is: building runs your compiler over its files.";
 
+/// Said of a project that has a panel and is not trusted as it is.
+pub(super) const PANEL_NEEDS_TRUST: &str = "Its panel is shown once you trust it as it is.";
+/// Said of the panel of a project that is built, by how its build stands.
+pub(super) const PANEL_RUNS: &str = "Its panel runs the program built from the files it holds now.";
+pub(super) const PANEL_UNBUILT: &str = "Its panel runs the program built from it, and there is none for the files it holds now: build it first.";
+/// Said of any other project's panel.
+pub(super) const PANEL_SHOWN: &str = "Its page, shown beside the sheet or in your browser.";
+
+/// A project's panel: what it shows, and whether the person can show it now, docked in the
+/// window or in their browser. `None` for a project that has no panel. Showing a panel is the
+/// person's alone to do: this only says whether the buttons are there.
+fn panel_says(app: &SheetApp, ctx: &egui::Context, project: &Json, build: Option<&Json>) -> Option<Json> {
+    let entry = project["panel"].as_str()?;
+    let status = text(project, "status");
+    let trusted = status == "trusted";
+    let says = match build.map(|build| text(build, "state")) {
+        Some("built") => PANEL_RUNS,
+        Some(_) => PANEL_UNBUILT,
+        None => PANEL_SHOWN,
+    };
+    Some(json!({
+        "title": "Panel",
+        "entry": entry,
+        "says": says,
+        // A panel is shown for a project the person trusts as it is, where there is a way to.
+        "canDock": trusted && super::dock::available(ctx),
+        "canBrowse": trusted && app.services.open_url.is_some(),
+        "docked": super::dock::docked(ctx).is_some_and(|docked| docked.project == text(project, "id")),
+        // One that can't be used says so above: it has no trust to be given.
+        "needsTrust": if trusted || status == "problem" { Json::Null } else { json!(PANEL_NEEDS_TRUST) },
+    }))
+}
+
 /// A size in words: whole kilobytes, and never none.
 fn kilobytes(bytes: u64) -> String {
     format!("{} KB", bytes.div_ceil(1024).max(1))
@@ -601,7 +634,7 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
 
 /// One project: what it is for, where it stands, what it asks, what is in it, and what it says
 /// it rebuilds of its workbook's macros. `None` when there is no such project any more.
-pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
+pub(super) fn project_pane(app: &SheetApp, ctx: &egui::Context, id: &str) -> Option<Json> {
     let found = found()?;
     let project = found.projects.iter().find(|project| project["id"] == id)?;
     let open = open_workbook(app);
@@ -612,6 +645,8 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
         (Some(at), Some(on_disk)) if kit.builds => build_says(&at, on_disk, text(project, "status")),
         _ => None,
     };
+    // Its panel, and the way to show it: a C project's is where the program built from it runs.
+    let panel = panel_says(app, ctx, project, build.as_ref());
     let workbook = text(project, "workbook");
     let status = text(project, "status");
     let for_says = match (kind, open.as_deref().is_some_and(|open| manifest::same_workbook(open, workbook))) {
@@ -692,9 +727,14 @@ pub(super) fn project_pane(app: &SheetApp, id: &str) -> Option<Json> {
         "problem": project["problem"],
         "asksTitle": if status == "trusted" { "You allowed it to:" } else { "It asks to be allowed to:" },
         "asks": asks,
-        "asksNothing": if kit.panels { "Show its panel, and nothing more." } else { "Nothing." },
+        "asksNothing": match (panel.is_some(), build.is_some()) {
+            (true, true) => "Show its panel and run its program there, and nothing more.",
+            (true, false) => "Show its panel, and nothing more.",
+            (false, _) => "Nothing.",
+        },
         "parts": parts,
         "build": build,
+        "panel": panel,
         "rebuilt": rebuilt,
         "manage": "Reviewing, trusting and running it is done in Projects.",
         "canOpenFolder": app.services.open_url.is_some(),
@@ -709,7 +749,7 @@ pub(super) fn pane(app: &SheetApp, ctx: &egui::Context, pane: &Pane, now: &agent
         // The server's part is said by whoever draws it: what waits there is decided on.
         Pane::Server => json!({"kind": "server", "title": SERVER, "above": [TOP]}),
         Pane::Kit(id) => kit_pane(app, ctx, kit::named(id).unwrap_or(&kit::ANIE)),
-        Pane::Project(id) => project_pane(app, id).unwrap_or_else(|| kit_pane(app, ctx, &kit::ANIE)),
+        Pane::Project(id) => project_pane(app, ctx, id).unwrap_or_else(|| kit_pane(app, ctx, &kit::ANIE)),
     }
 }
 
@@ -827,12 +867,13 @@ mod tests {
             (&top["server"]["level"], &top["kits"][0]["name"], &top["kits"][0]["projects"]),
             (&json!("Off"), &json!("Anie Development Kit"), &json!("2 projects, 0 trusted"))
         );
-        // Each kit counts its own projects, and the one that is not whole says what it can't do.
+        // Each kit counts its own projects, and neither says there is something it can't do yet.
         assert_eq!(
             (&top["kits"][1]["name"], &top["kits"][1]["projects"], &top["kits"][1]["go"]),
             (&json!("C Development Kit"), &json!("2 projects, 0 trusted"), &json!("kit:c"))
         );
-        assert_eq!((&top["kits"][0]["notYet"], &top["kits"][1]["notYet"]), (&Json::Null, &json!(kit::C.not_yet)));
+        assert_eq!((&top["kits"][0]["notYet"], &top["kits"][1]["notYet"]), (&Json::Null, &Json::Null));
+        assert_eq!(top["kits"][1]["says"], kit::C.says);
         assert_eq!(top["kits"].as_array().map(Vec::len), Some(2));
         assert_eq!(top["kitsNote"], KITS_NOTE);
     }
@@ -867,7 +908,7 @@ mod tests {
         assert_eq!(code["says"], "Of the workbook's macros it says: 1 rebuilt, 0 in part, 1 left as they are.");
         assert_eq!(groups[1]["projects"][0]["name"], "Clean Data");
         // One project, in full.
-        let one = project_pane(&a, "budget").unwrap();
+        let one = project_pane(&a, &ctx, "budget").unwrap();
         assert_eq!(
             (&one["title"], &one["kindLabel"], &one["statusLabel"]),
             (&json!("Budget Macros"), &json!("Workbook code"), &json!("Not trusted"))
@@ -885,7 +926,7 @@ mod tests {
             (&rows[1]["from"], &rows[1]["stateLabel"], &rows[1]["script"]),
             (&json!("ThisWorkbook.Workbook_Open"), &json!("Left as it is"), &Json::Null)
         );
-        let library = project_pane(&a, "clean-data").unwrap();
+        let library = project_pane(&a, &ctx, "clean-data").unwrap();
         assert_eq!(
             (&library["kindLabel"], &library["forSays"], &library["rebuilt"]),
             (&json!("Library"), &json!("It is for any workbook."), &Json::Null)
@@ -893,7 +934,7 @@ mod tests {
         assert_eq!((&library["kit"], &library["kitGo"], &library["notYet"]), (&json!("Anie Development Kit"), &json!("kit:anie"), &Json::Null));
         assert_eq!(library["asksNothing"], "Show its panel, and nothing more.");
         // A project that is gone gives the first kit's part.
-        assert!(project_pane(&a, "nowhere").is_none());
+        assert!(project_pane(&a, &ctx, "nowhere").is_none());
         assert_eq!(pane(&a, &ctx, &Pane::Project("nowhere".into()), &agents::snapshot())["kind"], "kit");
         assert_eq!(pane(&a, &ctx, &Pane::Project("budget".into()), &agents::snapshot())["kind"], "project");
     }
@@ -904,14 +945,18 @@ mod tests {
         projects::create("Clean Data").unwrap();
         let a = app_with(None);
         let ctx = egui::Context::default();
-        // With no project of its own yet, it says what it is and what it can't do.
+        // With no project of its own yet, it says what it is. It builds and runs: there is
+        // nothing it says it can't do yet.
         let empty = kit_pane(&a, &ctx, &kit::C);
         assert_eq!(
             (&empty["kind"], &empty["id"], &empty["title"], &empty["madeOf"], &empty["standing"]),
             (&json!("kit"), &json!("c"), &json!("C Development Kit"), &json!(["C"]), &json!("Built in  ·  loaded"))
         );
-        assert_eq!((&empty["notYet"], &empty["projectsSays"]), (&json!(kit::C.not_yet), &json!("No projects yet")));
-        assert_eq!(empty["projectsNote"], "A project is a folder with a project.toml and C sources. It does nothing until you trust it.");
+        assert_eq!((&empty["notYet"], &empty["projectsSays"]), (&Json::Null, &json!("No projects yet")));
+        assert_eq!(
+            empty["projectsNote"],
+            "A project is a folder with a project.toml, C sources and a web panel that runs the program built from them. It does nothing until you trust it."
+        );
         assert_eq!(
             (&empty["groups"][0]["projects"], &empty["groups"][1]["projects"]),
             (&json!([]), &json!([])),
@@ -935,15 +980,36 @@ mod tests {
         let first = kit_pane(&a, &ctx, &kit::ANIE);
         assert_eq!((&first["projectsSays"], &first["groups"][1]["projects"].as_array().map(Vec::len)), (&json!("1 project, 0 trusted"), &Some(1)));
         assert_eq!(pane(&a, &ctx, &Pane::kit(&kit::C), &agents::snapshot())["title"], "C Development Kit");
-        // The project says which kit it is of, and what that kit can't do yet.
-        let one = project_pane(&a, "blink").unwrap();
+        // The project says which kit it is of.
+        let one = project_pane(&a, &ctx, "blink").unwrap();
         assert_eq!(
             (&one["title"], &one["kit"], &one["kitGo"], &one["kindLabel"], &one["statusLabel"]),
             (&json!("Blink"), &json!("C Development Kit"), &json!("kit:c"), &json!("Library"), &json!("Not trusted"))
         );
         assert_eq!(one["above"], json!(["Development", "Development Kits", "C Development Kit"]));
-        assert_eq!((&one["notYet"], &one["asks"], &one["asksNothing"]), (&json!(kit::C.not_yet), &json!([]), &json!("Nothing.")));
-        assert_eq!(one["parts"], json!([{"label": "2 files", "value": "project.toml, src/main.c"}]), "no panel and no scripts");
+        assert_eq!(
+            (&one["notYet"], &one["asks"], &one["asksNothing"]),
+            (&Json::Null, &json!([]), &json!("Show its panel and run its program there, and nothing more."))
+        );
+        assert_eq!(
+            one["parts"],
+            json!([{"label": "Panel", "value": "panel/index.html"}, {"label": "3 files", "value": "panel/index.html, project.toml, src/main.c"}]),
+            "a panel and no scripts"
+        );
+        // Its panel is where the program built from it runs. It is not trusted, and nothing
+        // was built from it: there is no way to show the panel, and it says what is missing.
+        assert_eq!(
+            one["panel"],
+            json!({
+                "title": "Panel",
+                "entry": "panel/index.html",
+                "says": PANEL_UNBUILT,
+                "canDock": false,
+                "canBrowse": false,
+                "docked": false,
+                "needsTrust": PANEL_NEEDS_TRUST,
+            })
+        );
         // Its recipe, and how its build stands: not built, and not to be until it is trusted.
         assert_eq!(
             one["build"],
@@ -962,15 +1028,23 @@ mod tests {
         let kept = s.0.join("built/blink").join("0".repeat(64));
         std::fs::create_dir_all(&kept).unwrap();
         std::fs::write(kept.join("program.wasm"), b"\0asm....").unwrap();
-        assert_eq!(project_pane(&a, "blink").unwrap()["build"]["state"], "stale");
-        assert_eq!(project_pane(&a, "blink").unwrap()["build"]["says"], "What was built is from other files than it holds now. Build it again.");
+        assert_eq!(project_pane(&a, &ctx, "blink").unwrap()["build"]["state"], "stale");
+        assert_eq!(
+            project_pane(&a, &ctx, "blink").unwrap()["build"]["says"],
+            "What was built is from other files than it holds now. Build it again."
+        );
+        assert_eq!(project_pane(&a, &ctx, "blink").unwrap()["panel"]["says"], PANEL_UNBUILT, "a program built from other files is not its panel's");
         let own = s.0.join("built/blink").join(&print);
         std::fs::create_dir_all(&own).unwrap();
         std::fs::write(own.join("program.wasm"), vec![0u8; 3000]).unwrap();
-        let built = project_pane(&a, "blink").unwrap()["build"].clone();
+        let built = project_pane(&a, &ctx, "blink").unwrap()["build"].clone();
         assert_eq!((&built["state"], &built["says"]), (&json!("built"), &json!("Built from the files it holds now: program.wasm, 3 KB.")));
-        // A project without a recipe, and one of the first kit, have nothing to build.
-        assert_eq!(project_pane(&a, "clean-data").unwrap()["build"], Json::Null);
+        assert_eq!(project_pane(&a, &ctx, "blink").unwrap()["panel"]["says"], PANEL_RUNS);
+        // A project without a recipe, and one of the first kit, have nothing to build: the
+        // first kit's panel is a page, and no program's.
+        let first = project_pane(&a, &ctx, "clean-data").unwrap();
+        assert_eq!(first["build"], Json::Null);
+        assert_eq!((&first["panel"]["says"], &first["panel"]["entry"]), (&json!(PANEL_SHOWN), &json!("panel/index.html")));
         assert_eq!((kilobytes(1), kilobytes(1024), kilobytes(1025), kilobytes(0)), ("1 KB".into(), "1 KB".into(), "2 KB".into(), "1 KB".into()));
         assert_eq!((seconds(950), seconds(3_240), seconds(25_900)), ("0.9 s".into(), "3.2 s".into(), "25 s".into()));
         // One that asks for what the first kit runs can't be used, and says why.
@@ -978,12 +1052,66 @@ mod tests {
         // One of a kit this GridCraft doesn't have is listed under the first kit, as a problem.
         write(&s, "rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
         forget();
-        let sly = project_pane(&a, "sly").unwrap();
+        let sly = project_pane(&a, &ctx, "sly").unwrap();
         assert_eq!((&sly["kit"], &sly["statusLabel"]), (&json!("C Development Kit"), &json!("Can't be used")));
         assert_eq!(sly["problem"], "it asks for \"python\", which a project of the C Development Kit can't be given");
-        let rusty = project_pane(&a, "rusty").unwrap();
+        let rusty = project_pane(&a, &ctx, "rusty").unwrap();
         assert_eq!((&rusty["kit"], &rusty["statusLabel"]), (&json!("Anie Development Kit"), &json!("Can't be used")));
         assert_eq!(rusty["problem"], "it is a project of the kit \"rust\", which this GridCraft doesn't have");
+    }
+
+    #[test]
+    fn a_projects_panel_can_be_shown_once_it_is_trusted_and_where_there_is_a_way_to() {
+        use crate::aniefork::dock;
+        let s = Sandbox::new("kits-panel");
+        projects::create("Clean Data").unwrap();
+        let asked = crate::aniefork::projects::tests::yes();
+        let mut a = app_with(Some(&asked));
+        let ctx = egui::Context::default();
+        let panel = |a: &SheetApp| {
+            forget();
+            project_pane(a, &ctx, "clean-data").unwrap()["panel"].clone()
+        };
+        let ways = |a: &SheetApp| {
+            let told = panel(a);
+            (told["canDock"] == true, told["canBrowse"] == true, told["docked"] == true, told["needsTrust"].clone())
+        };
+        // This copy of GridCraft has a web view and a browser to hand a panel to. A project
+        // that is not trusted still has no way to be shown.
+        dock::host_is_here(&ctx);
+        a.services.open_url = Some(Box::new(|_: &str| {}));
+        assert_eq!(ways(&a), (false, false, false, json!(PANEL_NEEDS_TRUST)));
+        let print = found().unwrap().on_disk[0].fingerprint.clone().unwrap();
+        projects::trust(&a, "clean-data", &print, false).unwrap();
+        assert_eq!(ways(&a), (true, true, false, Json::Null));
+        // Each way is offered only where it is there.
+        a.services.open_url = None;
+        assert_eq!(ways(&a), (true, false, false, Json::Null));
+        let bare = egui::Context::default();
+        forget();
+        let told = project_pane(&a, &bare, "clean-data").unwrap()["panel"].clone();
+        assert_eq!((&told["canDock"], &told["canBrowse"]), (&json!(false), &json!(false)), "no web view, no browser: nothing is offered");
+        // Docked, its part says so.
+        dock::dock(&a, &ctx, "clean-data").unwrap();
+        assert_eq!(ways(&a), (true, false, true, Json::Null));
+        // Its files change: it is not the project that was trusted, and there is no way again.
+        write(&s, "clean-data/panel/extra.js", "console.log('new');");
+        assert_eq!(ways(&a), (false, false, true, json!(PANEL_NEEDS_TRUST)));
+        // A project without a panel has none to show, and asks for nothing by being there.
+        write(&s, "plain/project.toml", "id = \"plain\"\nname = \"Plain\"\nversion = \"1\"\n");
+        forget();
+        let plain = project_pane(&a, &ctx, "plain").unwrap();
+        assert_eq!((&plain["panel"], &plain["asksNothing"]), (&Json::Null, &json!("Nothing.")));
+        // One that can't be used says why above, and is not told to be trusted.
+        write(
+            &s,
+            "broken/project.toml",
+            "id = \"broken\"\nname = \"Broken\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"python\"]\n\n[panel]\nentry = \"panel/index.html\"\n",
+        );
+        write(&s, "broken/panel/index.html", "<h1>x</h1>");
+        forget();
+        let broken = project_pane(&a, &ctx, "broken").unwrap();
+        assert_eq!((&broken["status"], &broken["panel"]["canDock"], &broken["panel"]["needsTrust"]), (&json!("problem"), &json!(false), &Json::Null));
     }
 
     #[test]

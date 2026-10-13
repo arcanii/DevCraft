@@ -32,6 +32,14 @@
 //! TypeScript is told its shape by [`typings`]. Both are text made here: the repository holds no
 //! JavaScript files.
 //!
+//! **A project of the C kit** (one with a recipe) is served two things more beside its page,
+//! under the same checks: `program.wasm`, the program GridCraft built from the project's files
+//! as they are trusted at that moment (the one kept under their fingerprint, and no other: a
+//! project that was not built from these files is answered 404), and `program.js`, the loader
+//! that runs it ([`crate::c_program`]). The program can reach only what the loader hands it;
+//! what it does with the workbook, the page does for it through `spreadsheet`, checked like any
+//! panel's calls. A project of the first kit keeps its own files of those names.
+//!
 //! A project that wasn't granted `network` is served with a policy that makes the browser refuse
 //! its requests to anywhere but this bridge. In a browser that policy cannot stop a page from
 //! sending the user to another address, which can carry data with it: that needs the panel docked
@@ -557,7 +565,7 @@ mod server {
     use crate::http::{self, Incoming, lock, same};
     use crate::python::{self, PythonHost, RunError};
     use crate::trust::{Status, TrustStore};
-    use crate::{manifest, project, settings};
+    use crate::{c, c_program, kit, manifest, project, settings};
 
     /// The most requests answered at once for one project; more are turned away.
     const MAX_CONNECTIONS: usize = 32;
@@ -898,11 +906,32 @@ mod server {
                 let commands = lock(&site.shared.commands).clone();
                 Reply::new(200, "OK", "text/plain; charset=utf-8", typings(&commands).into_bytes())
             }
+            // A C project's program and the loader that runs it: GridCraft's, not the project's.
+            ("GET", "program.js") if is_built(&found) => {
+                Reply::new(200, "OK", "text/javascript; charset=utf-8", c_program::LOADER.as_bytes().to_vec())
+            }
+            ("GET", "program.wasm") if is_built(&found) => program(site, &found),
             ("GET", rest) => file(&found, rest),
             _ => Reply { allow: Some("GET"), ..Reply::plain(405, "Method Not Allowed", "Pages are read with GET.") },
         };
         reply.network = granted.contains(&Permission::Network);
         reply
+    }
+
+    /// Whether the project is one GridCraft builds a program from: its kit builds, and it has a
+    /// recipe. Only such a project is served a program and its loader.
+    fn is_built(found: &project::Project) -> bool {
+        found.manifest.as_ref().is_some_and(|manifest| manifest.c.is_some() && kit::of(Some(manifest)).builds)
+    }
+
+    /// The program built from the project as it is now, which is as the person trusts it: the
+    /// one kept under the fingerprint of the files it holds, and no other. A project that was
+    /// not built from these files has none, whatever was built from it before.
+    fn program(site: &Site, found: &project::Project) -> Reply {
+        match found.fingerprint.as_deref().and_then(|print| c::program_bytes(&site.places.settings, &found.id, print)) {
+            Some(built) => Reply::new(200, "OK", "application/wasm", built),
+            None => Reply::plain(404, "Not Found", "Nothing was built from this project's files as they are now. Build it in GridCraft."),
+        }
     }
 
     /// Undoes the `%XX` of a path. `None` when it isn't a path a browser would send.
@@ -1550,6 +1579,122 @@ mod served {
         let places = Places { projects: t.0.join("projects"), trust: t.0.join("trust.json"), settings: t.0.join("developer.json") };
         TrustStore::load(&places.trust).trust(&project::load(&places.projects.join("plain")), false).unwrap();
         assert_eq!(Bridge::new(|| {}).serve(&places, "plain"), Err("Plain has no panel.".to_string()));
+    }
+
+    /// A project of the C kit, with a panel and a recipe, trusted and being served.
+    fn c_project(tag: &str) -> Served {
+        let t = TempDir::new(tag);
+        t.write(
+            "projects/blink/project.toml",
+            "id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\npermissions = []\n\n[panel]\nentry = \"panel/index.html\"\n\n[c]\nsources = [\"src\"]\n",
+        );
+        t.write("projects/blink/panel/index.html", PAGE);
+        t.write("projects/blink/src/main.c", "int main(void) { return 0; }\n");
+        let places = Places { projects: t.0.join("projects"), trust: t.0.join("trusted-projects.json"), settings: t.0.join("developer.json") };
+        let found = project::load(&places.projects.join("blink"));
+        assert!(found.is_sound(), "{:?}", found.problem);
+        TrustStore::load(&places.trust).trust(&found, false).unwrap();
+        let bridge = Bridge::new(|| {});
+        let address = bridge.serve(&places, "blink").unwrap();
+        let (port, token) = address.strip_prefix("http://127.0.0.1:").unwrap().split_once('/').unwrap();
+        let (port, token) = (port.parse().unwrap(), token.trim_end_matches('/').to_string());
+        Served { t, places, bridge, port, token, woken: Arc::default() }
+    }
+
+    #[test]
+    fn a_c_projects_program_and_its_loader_are_served_beside_its_page() {
+        let s = c_project("c-program");
+        let blink = || project::load(&s.places.projects.join("blink"));
+        let kept = |print: &str| format!("built/blink/{print}/program.wasm");
+        // The loader is GridCraft's own, as spreadsheet.js is: neither is a file of the project.
+        let (status, head, body) = s.get("program.js");
+        assert_eq!((status, body.as_str()), (200, crate::c_program::LOADER));
+        assert!(head.contains("Content-Type: text/javascript"), "{head}");
+        assert_eq!((s.get("").2.as_str(), s.get("spreadsheet.js").2.as_str()), (PAGE, CLIENT));
+        // Nothing was built from it yet: there is no program, and whoever asks is told why.
+        let (status, _, body) = s.get("program.wasm");
+        assert!(status == 404 && body.contains("Build it in GridCraft"), "{status} {body}");
+        // Built from the files it holds now: that program is served, as WebAssembly, under the
+        // panel's own rules, and never from a browser's memory of an earlier build.
+        let first = blink().fingerprint.unwrap();
+        s.t.write(&kept(&first), "\0asm\u{1}\0\0\0first");
+        let (status, head, body) = s.get("program.wasm?v=2");
+        assert_eq!((status, body.as_str()), (200, "\0asm\u{1}\0\0\0first"));
+        for header in [
+            "Content-Type: application/wasm",
+            "'wasm-unsafe-eval'",
+            "connect-src 'self'",
+            "Cache-Control: no-store",
+            "X-Content-Type-Options: nosniff",
+        ] {
+            assert!(head.contains(header), "{header} is missing from\n{head}");
+        }
+        // Like the page, only with the token, by this bridge's address, and to the project's own page.
+        let host = s.host();
+        for (request, status) in [
+            (format!("GET /{}/program.wasm HTTP/1.1\r\nHost: {host}\r\n\r\n", "0".repeat(64)), 404),
+            (format!("GET /{}/program.wasm HTTP/1.1\r\nHost: evil.example:{}\r\n\r\n", s.token, s.port), 403),
+            (format!("GET /{}/program.wasm HTTP/1.1\r\nHost: {host}\r\nSec-Fetch-Site: cross-site\r\n\r\n", s.token), 403),
+            (format!("GET /{}/program.js HTTP/1.1\r\nHost: {host}\r\nSec-Fetch-Site: cross-site\r\n\r\n", s.token), 403),
+            (format!("PUT /{}/program.wasm HTTP/1.1\r\nHost: {host}\r\n\r\n", s.token), 405),
+        ] {
+            let (got, _, body) = s.send(&request);
+            assert_eq!(got, status, "{}", request.chars().take(100).collect::<String>());
+            assert!(!body.contains("first"), "{body}");
+        }
+        assert_eq!(s.woken.load(Ordering::SeqCst), 0, "serving a program doesn't concern the app");
+
+        // A source changes: it is no longer the project that was trusted, and nothing is served.
+        s.t.write("projects/blink/src/main.c", "int main(void) { return 1; }\n");
+        let (status, _, body) = s.get("program.wasm");
+        assert!(status == 403 && body.contains("changed since you trusted it") && !body.contains("first"), "{status} {body}");
+        assert_eq!(s.get("program.js").0, 403);
+        // Trusted again, as it is now. The program that is kept was built from other files: it
+        // is not this project's, and it is not what the panel is given.
+        TrustStore::load(&s.places.trust).trust(&blink(), false).unwrap();
+        let second = blink().fingerprint.unwrap();
+        assert_ne!(first, second);
+        assert!(s.t.0.join(kept(&first)).is_file(), "the earlier build is still kept");
+        let (status, _, body) = s.get("program.wasm");
+        assert!(status == 404 && !body.contains("first"), "{status} {body}");
+        assert_eq!(s.get("program.js").0, 200, "the loader says so to the page");
+        // Built again from the files as they are: that one is served.
+        s.t.write(&kept(&second), "\0asm\u{1}\0\0\0second");
+        assert_eq!(s.get("program.wasm").2, "\0asm\u{1}\0\0\0second");
+
+        // A project trusted to follow its changes is still given only the program built from
+        // the files it holds at that moment.
+        TrustStore::load(&s.places.trust).trust(&blink(), true).unwrap();
+        s.t.write("projects/blink/src/main.c", "int main(void) { return 2; }\n");
+        assert_eq!((s.get("").0, s.get("program.wasm").0), (200, 404));
+        // The two names are the kit's: a file of the panel's by one of them is not what is served.
+        s.t.write("projects/blink/panel/program.js", "console.log('the project wrote this');");
+        s.t.write("projects/blink/panel/program.wasm", "the project wrote this");
+        assert_eq!(s.get("program.js").2, crate::c_program::LOADER);
+        assert_eq!(s.get("program.wasm").0, 404);
+        // Trust is taken back: at once, nothing.
+        TrustStore::load(&s.places.trust).revoke("blink").unwrap();
+        assert_eq!((s.get("program.js").0, s.get("program.wasm").0), (403, 403));
+    }
+
+    #[test]
+    fn a_project_of_the_first_kit_keeps_its_own_files_named_like_a_program() {
+        let s = Served::new("c-program-not", "\"read\"", Limits::default());
+        // Nothing of the C kit is served to it: it has no recipe, and nothing is built from it.
+        assert_eq!((s.get("program.js").0, s.get("program.wasm").0), (404, 404));
+        // Files of its own by those names are its panel's, like any other.
+        s.t.write("projects/clean-data/panel/program.js", "console.log('its own');");
+        s.t.write("projects/clean-data/panel/program.wasm", "its own bytes");
+        s.trust(false);
+        // Even with something kept where a C project's program would be.
+        let print = project::load(&s.places.projects.join("clean-data")).fingerprint.unwrap();
+        s.t.write(&format!("built/clean-data/{print}/program.wasm"), "\0asm not its own");
+        let (status, head, body) = s.get("program.js");
+        assert_eq!((status, body.as_str()), (200, "console.log('its own');"));
+        assert!(!head.contains("application/wasm") && !body.contains("CProgram"));
+        let (status, head, body) = s.get("program.wasm");
+        assert_eq!((status, body.as_str()), (200, "its own bytes"));
+        assert!(head.contains("Content-Type: application/wasm"), "{head}");
     }
 
     #[test]

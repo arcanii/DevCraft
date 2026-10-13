@@ -329,7 +329,7 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     };
     // A project that is no longer there gives way to its kit.
     if let Pane::Project(id) = &state.pane
-        && kits::project_pane(app, id).is_none()
+        && kits::project_pane(app, ctx, id).is_none()
     {
         state.pane = Pane::first_kit();
     }
@@ -447,6 +447,12 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         }
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
+        // A project's panel, docked in GridCraft's window or in the browser: the project by its id.
+        "showPanel" => {
+            let project = message.get("id").and_then(Json::as_str).filter(|id| gridcraft_aniefork_dev::manifest::valid_id(id));
+            let docked = message.get("docked").and_then(Json::as_bool);
+            project.zip(docked).map(|(project, docked)| Act::ShowPanel { project: project.to_string(), docked })
+        }
         _ => None,
     };
     let Some(action) = action else { return false };

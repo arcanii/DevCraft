@@ -1229,7 +1229,7 @@ is built, with what must hold whatever the design:
 |---|---|---|
 | K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | **Built 2026-10-13** (below) |
 | K2 | The C kit builds, to WebAssembly: the compiler found or named (zig first), the recipe as a list in `project.toml`, what is built kept under the fingerprint of its sources; then a build as an agent's request | **First slice built 2026-10-13** (below): the person builds. An agent's request is the second |
-| K3 | The C kit runs what it built in the project's panel: a C project may have a panel, and the kit serves beside its page what the program asks of a system | K2 |
+| K3 | The C kit runs what it built in the project's panel: a C project may have a panel, and the kit serves beside its page what the program asks of a system | **Built 2026-10-13** (below), and seen: the starter, built by the kit, running in its panel docked beside the sheet |
 | D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built by the kit, docked beside the sheet; the table of its variables written four times a second, with formulas and charts over it; then the "GridCraft Doom" repository | K3. (Tried by hand in a panel, 2026-10-13) |
 | P1 | Files a project changes itself | D1 shows what it needs |
 | G1 | Source control, local: repositories among the projects, changes, a commit | |
@@ -1370,7 +1370,7 @@ without `'unsafe-eval'`), and the gate's eight steps on the whole. The trial: as
 
 ### The C kit builds (phase K2, first slice)
 
-**Built 2026-10-13, on the owner's word ("Start K2"). Not committed until the owner says.**
+**Built 2026-10-13, on the owner's word ("Start K2").**
 
 **1. The recipe is a list, never a command.** A C project's `project.toml` has `[c]`:
 `sources` (C files, or folders: every `.c` file directly in a folder), and optionally
@@ -1443,6 +1443,132 @@ with a zig named. In the app (an isolated copy, the projects trusted there by it
 file): Build, pressed in the page on Doom laid out as a C project, gave "Built:
 program.wasm, 385 KB, from 81 C files, in 7.7 s, by zig 0.17.0", and the program was
 kept under the project's fingerprint.
+
+### The C kit runs what it built (phase K3)
+
+**Built 2026-10-13, as the next task the owner named.**
+
+**1. A C project has a panel, and the panel is where its program runs.** `[panel]` in a C
+project's manifest is no longer a reason it can't be used (`kit::C.panels`). The kit has
+nothing left that it tells the person it can't do: what is left, an agent asking for a build,
+is not the person's concern, and an agent is told of it in `reference`.
+
+**2. GridCraft serves two things beside a C project's page that are not files of the
+project**, as `spreadsheet.js` is not, and under every check the page itself is served under
+(the token, the bridge's own address, and the person's trust read from disk for each
+request):
+
+- **`program.wasm`**: the program kept under the fingerprint of the files the project holds
+  at that request, which is as the person trusts them, and no other
+  (`c::program_bytes`). When nothing was built from those files the answer is 404, which the
+  loader turns into words that say to build. What was built from other files stays where it
+  is and is never handed out: a project that changed after it was built has no program
+  until it is built again, and that holds for one the person lets follow its changes too.
+- **`program.js`**: the loader (`c_program::LOADER`).
+
+Only a project whose kit builds and that has a recipe is served them. A project of the first
+kit keeps its own files of those names. For a C project the two names are the kit's: a file
+of its panel by one of them is not what is served.
+
+**3. The loader hands the program a small system, and nothing else** (`CProgram.load`,
+`CProgram.start`): a clock, a place to print (a line at a time, handed to the page), random
+numbers, its arguments, and files kept in memory: the ones the page hands it, which it can
+read and can't write over, and the ones it writes itself, which are gone with the page.
+Anything else the program was built to ask for is answered "there is no such thing". It has
+no way to the spreadsheet, to the network or to the computer's files. What the program is to
+do with the workbook, its page does for it through `spreadsheet`, each call checked against
+what the project was granted at that moment. That is what "held to what it was granted" rests
+on: the program is WebAssembly, its page is served under the panel's rules, and the bridge is
+the one door out of the page.
+
+- **It is JavaScript, as text in Rust source**: the fork's fourth exception to upstream's
+  "Rust only", after `spreadsheet.js`, the showcase and the Development window's page. A
+  page is what runs a WebAssembly program, and a page is written in JavaScript. The
+  repository still holds no JavaScript file.
+- **It was written and tried before it was taken in**, in the session before this one and
+  outside the repository: in Node on three programs the kit had built (one that prints, one
+  that uses files and its arguments and ends with 3, and Doom), and Doom in a browser under
+  the panel's rules. `c_program.rs` is that text, with a test of what it holds and of what
+  it never names, and with one change made here: when the program is refused, the loader
+  now says GridCraft's own sentence of why ("… has changed since you trusted it …") in
+  place of "could not be loaded (403)". The three programs were not run again after that
+  change; the starter was (below).
+
+**4. The C starter has a panel.** `panel/index.html` loads the two scripts, runs the program
+and shows what it printed, or why there is no program. The project still asks for nothing.
+Only its id is written into the page's script; its name is in the title and the heading, as
+text.
+
+**5. A project's part of the Development window says of its panel, and shows it**: **Dock
+Panel** and **Open in Browser**, for a project of either kit that the person trusts as it
+is, each where this copy of GridCraft has the means (a web view; a browser to hand the
+address to). By hand only, as in Projects: refused while the control channel is putting
+input into the window, and both ways decide for themselves whether the project is trusted
+(`dock::dock`, `panels::open`). For a C project the part also says whether there is a
+program for the files it holds now.
+
+- **In both windows**: GridCraft's own, and the page (`showPanel`), which was built again
+  for it on the owner's word (`npm install --ignore-scripts`, with the three versions
+  `page.rs` names, and `npm run build`).
+
+**6. An agent is told** what a C project holds now (C sources and a panel), that its panel
+runs the program, that a program belongs to the files it was built from, and how a page
+uses `CProgram` (`reference`, topics `project` and `panel`). The kit no longer reports
+something it can't do. An agent still can't ask for a build, and `create_project` still
+makes the first kit's starter only.
+
+**Checked.** Tests, new and changed: the loader's text; the kit and a project against it; the
+store's `program_bytes`; the bridge over real connections (the loader and the program are
+served only so, a program built from other files is not served, a first-kit project keeps its
+own files of those names), with a few bytes standing in for a program; the C starter and a
+hostile name against its page; what an agent is told; both windows' words, the panel's part
+by trust and by the means at hand, and Dock Panel and Open in Browser by hand and refused to
+the control channel, with the docked address then serving the starter's page, the loader and
+a program kept under the project's fingerprint. The gate's eight steps pass, 1595 tests, with
+a zig named (`GRIDCRAFT_TEST_ZIG`), so the build tests build: one of them takes five seconds
+with it, and no time without.
+
+**Seen, in GridCraft itself** (an isolated copy with settings of its own; the starter made
+and trusted there by that folder's own file, standing in for the person; zig named there).
+zig was put on the machine for it, where the owner said (`C:\util\Tools\zig-0.17.0`, unpacked
+from the archive fetched earlier that day, its checksum checked again; not on the path).
+
+- **The page draws the panel's part**, and **Dock Panel**, pressed in the page, docked the
+  starter's panel beside the sheet. Nothing was built yet, and the panel said so in the
+  loader's words: "This project has not been built from the files it holds now. Build it in
+  GridCraft …".
+- **Build**, pressed in the page: "Built: program.wasm, 3 KB, from 1 C file, in 6.4 s, by
+  zig 0.17.0", and the part then said the panel runs the program built from the files it
+  holds, and that it is docked.
+- **Run It Again**, pressed in the docked panel: **"Hello from blink."**, and the Developer
+  console had the page's line "blink ran and ended with 0". **A C program, built by the
+  kit, running in a panel docked in GridCraft: seen for the first time.**
+- **A source changed** (by hand, in the project's folder): the panel was given no program
+  (403), though the earlier one was still kept. **Trusted again and not built again**: "has
+  not been built from the files it holds now". **Built again in the page**: the changed
+  program's line, and only the new program was kept.
+- **Docked as GridCraft starts** (`GRIDCRAFT_DOCK`): the program ran. After another change
+  the panel said "Blink has changed since you trusted it. Review it again in Developer >
+  Projects."
+- In Node, the starter as the kit built it, with the loader as it is now: its line, and 0.
+
+**Not seen.** Open in Browser was not pressed in the app (the tests press it, with a
+stand-in for the browser). GridCraft's own window (the one that is not the page) was not
+looked at: clicks posted to it do not land, and its buttons are pressed only in the tests.
+Doom was not built or run here: that is D1, and running it is for the owner's word. A
+program that reads files or its arguments was not run in the web view, only the starter,
+which prints.
+
+**Open.**
+
+- **A large program.** The loader makes the program from its bytes in one step on the page's
+  own thread, which browsers limit by size (to a few megabytes in Chromium, as far as is
+  known: not tried), while the kit keeps programs of up to 64 MB. Doom is 394 KB.
+- **A program that never returns holds its page**: `run()` is `main` to its end. Doom is
+  built without a `main` and stepped by its page.
+- The program is read whole from disk for each request, and a browser keeps no copy.
+- A C project can't ask for `network`, so its page loads and calls nothing but the bridge.
+  Whether one should be able to is not decided.
 
 ### Backlog
 

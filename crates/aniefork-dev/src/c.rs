@@ -37,7 +37,9 @@
 //! what the person trusted, and what was built from other files than the project holds now is
 //! not what is found for it.
 //!
-//! Nothing here runs what was built: that is the kit's next phase (ADR-0001).
+//! Nothing here runs what was built. The project's panel does: the bridge serves, beside the
+//! page, the program kept for the project as it is trusted then ([`program_bytes`]) and the
+//! loader that starts it ([`crate::c_program`]).
 
 use std::path::{Path, PathBuf};
 
@@ -281,6 +283,23 @@ pub fn standing(settings: &Path, id: &str, fingerprint: Option<&str>) -> Standin
     }
     let others = std::fs::read_dir(built_dir(settings).join(id)).map(|entries| entries.flatten().any(|entry| entry.path().join(OUTPUT).is_file()));
     if others.unwrap_or(false) { Standing::Stale } else { Standing::NotBuilt }
+}
+
+/// The program built from the project `id` as its files are now (they have this fingerprint),
+/// for whoever serves it to the project's panel. `None` when nothing was built from these
+/// files: what was built from others is not this project's, and is never what is handed out.
+/// Also for what is no project's id or no fingerprint, and for what is kept there but is not
+/// a plain file of a program's size (a link is not followed).
+pub fn program_bytes(settings: &Path, id: &str, fingerprint: &str) -> Option<Vec<u8>> {
+    if !manifest::valid_id(id) || !is_fingerprint(fingerprint) {
+        return None;
+    }
+    let kept = program_for(settings, id, fingerprint);
+    let found = std::fs::symlink_metadata(&kept).ok()?;
+    if !found.is_file() || found.len() > MAX_OUTPUT_BYTES {
+        return None;
+    }
+    std::fs::read(&kept).ok()
 }
 
 /// 64 hexadecimal digits: what a fingerprint is, and so what a folder kept under one is named.
@@ -1155,5 +1174,19 @@ mod tests {
         assert_eq!(standing(&settings, "other", Some(&print)), Standing::NotBuilt);
         assert_eq!(standing(&settings, "../blink", Some(&print)), Standing::NotBuilt);
         assert_eq!(standing(&settings, "blink", Some("../../blink/x")), Standing::Stale, "not a fingerprint: only the others are seen");
+        // What is handed out to be run is the program kept under the project's own fingerprint,
+        // and never one kept under another.
+        assert_eq!(program_bytes(&settings, "blink", &print).as_deref(), Some("\0asm........".as_bytes()));
+        assert_eq!(program_bytes(&settings, "blink", &other).as_deref(), Some("\0asm....".as_bytes()));
+        let unbuilt = "c".repeat(64);
+        assert_eq!(program_bytes(&settings, "blink", &unbuilt), None, "nothing was built from those files");
+        for (id, fingerprint) in
+            [("other", print.as_str()), ("../blink", print.as_str()), ("blink", "../../blink/x"), ("blink", ""), ("", print.as_str())]
+        {
+            assert_eq!(program_bytes(&settings, id, fingerprint), None, "{id:?} {fingerprint:?}");
+        }
+        // A folder where the program would be is not a program.
+        std::fs::create_dir_all(program_for(&settings, "blink", &unbuilt)).unwrap();
+        assert_eq!(program_bytes(&settings, "blink", &unbuilt), None);
     }
 }

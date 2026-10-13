@@ -8,16 +8,18 @@
 //! granted.
 //!
 //! - [`kit`]: the development kits that are loaded (the Anie Development Kit, which is most
-//!   of this crate, and the C Development Kit, which is listed and can't build or run yet),
-//!   and the two kinds of project: the code of one workbook, and a library.
+//!   of this crate, and the C Development Kit, which builds a project's C and runs it in the
+//!   project's panel), and the two kinds of project: the code of one workbook, and a library.
 //! - [`manifest`]: `project.toml`, and the permissions a project can ask for.
 //! - [`project`]: projects on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
 //! - [`python`]: running a trusted project's scripts in a process of their own.
 //! - [`c`]: the C kit's recipe, and building a trusted project's C as WebAssembly with the
 //!   person's own compiler.
-//! - [`bridge`]: serving a trusted project's panel to the browser, carrying its calls, and telling
-//!   it what happens in GridCraft.
+//! - [`c_program`]: the loader a C project's page runs its program with.
+//! - [`bridge`]: serving a trusted project's panel to the browser (and, for a C project, the
+//!   program built from it and its loader), carrying its calls, and telling it what happens in
+//!   GridCraft.
 //! - [`console`]: the Developer console: what projects printed and logged, and what failed.
 //! - [`agents`]: the Development server, a second MCP server for agents that help with
 //!   development work, as far as the user lets them go.
@@ -35,6 +37,7 @@
 pub mod agents;
 pub mod bridge;
 pub mod c;
+pub mod c_program;
 pub mod console;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;

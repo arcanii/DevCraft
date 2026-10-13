@@ -381,7 +381,10 @@ pub(crate) mod tests {
             "id = \"paneled\"\nname = \"Paneled\"\nversion = \"1\"\nkit = \"c\"\n\n[panel]\nentry = \"panel/index.html\"\n",
         );
         t.write("paneled/panel/index.html", "<h1>x</h1>");
-        assert!(load(&t.0.join("paneled")).problem.unwrap().contains("it has a panel"));
+        // A panel is a C project's to have: it is where the program built from it runs.
+        let paneled = load(&t.0.join("paneled"));
+        assert!(paneled.is_sound(), "{:?}", paneled.problem);
+        assert_eq!(paneled.manifest.as_ref().unwrap().panel.as_deref(), Some("panel/index.html"));
         // A recipe that names what is not in the project: it can't be used either.
         t.write(
             "gone/project.toml",

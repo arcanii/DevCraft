@@ -5,7 +5,7 @@
 //! The starter is an ordinary project: it is created untrusted, like any other.
 //!
 //! Each kit has its own: the Anie kit's is a panel and a Python script it can run; the C kit's
-//! is a program of a few lines.
+//! is a program of a few lines and a panel that runs it.
 
 use std::fs;
 use std::path::Path;
@@ -145,8 +145,8 @@ fn panel_text(name: &str) -> String {
     )
 }
 
-/// The manifest of a C project. It asks for nothing: there is nothing of it GridCraft can run
-/// yet. Its recipe builds every C file in `src`.
+/// The manifest of a C project. It asks for nothing: its panel runs the program and shows
+/// what it prints, which needs no leave. Its recipe builds every C file in `src`.
 fn c_manifest_text(id: &str, name: &str, workbook: Option<&str>) -> String {
     let workbook = workbook_line(workbook);
     let kit = kit::C.id;
@@ -156,7 +156,7 @@ id = "{id}"
 name = "{name}"
 version = "0.1.0"
 author = ""
-description = "A starter project: a program written in C."
+description = "A starter project: a program written in C, and a panel that runs it."
 
 # The development kit this is a project of. Without this line a project is of the Anie
 # Development Kit (Python scripts and a web panel).
@@ -166,8 +166,16 @@ kit = "{kit}"
 #   read     see what is in the open workbooks
 #   write    change the open workbooks
 #   files    open, save and export files
-# It asks for nothing so far: GridCraft builds a C project, and can't run one yet.
+# It asks for nothing so far: its panel runs the program and shows what it prints. The program
+# itself can reach nothing: what it is to do with a workbook, its panel's page does for it,
+# with what is asked for here.
 permissions = []
+
+# The page that runs the program GridCraft built. GridCraft serves two things beside it that
+# are not files of this project: program.wasm (built from these files as you trust them now)
+# and program.js (the loader that runs it).
+[panel]
+entry = "panel/index.html"
 
 # What is built, as WebAssembly, by the compiler you name in GridCraft (zig). A list, never a
 # command: GridCraft writes the compiler's command line itself.
@@ -182,6 +190,74 @@ sources = ["src"]
     )
 }
 
+/// The page a C project starts from: it loads the program GridCraft built, runs it, and shows
+/// what it printed. The name is written where a page holds text (the title and the heading);
+/// only the id, which is plain, is written into the script.
+fn c_panel_text(id: &str, name: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{name}</title>
+  <style>
+    body {{ font: 14px system-ui, sans-serif; margin: 20px; color: #222; max-width: 40em; }}
+    h1 {{ font-size: 18px; }}
+    button {{ font: inherit; padding: 6px 12px; }}
+    #out {{ font: 13px ui-monospace, monospace; background: #f4f4f4; padding: 10px; min-height: 3em; white-space: pre-wrap; }}
+  </style>
+</head>
+<body>
+  <h1>{name}</h1>
+  <p>This panel runs the program GridCraft built from this project's C. What it prints:</p>
+  <div id="out"></div>
+  <p><button id="run">Run It Again</button></p>
+
+  <!-- GridCraft serves these two beside this page: neither is a file of the project.
+       program.js gives the page CProgram, which loads program.wasm (the program built from
+       this project's files as you trust them now) and runs it. The program can reach nothing
+       but what this page hands it: a clock, a place to print, and files kept in memory.
+       spreadsheet.js gives the page its spreadsheet object, for what the project was granted. -->
+  <script src="spreadsheet.js"></script>
+  <script src="program.js"></script>
+  <script>
+    const out = document.getElementById("out");
+    const say = (line) => {{
+      const row = document.createElement("div");
+      row.textContent = line;
+      out.append(row);
+    }};
+
+    async function run() {{
+      out.replaceChildren();
+      try {{
+        // Each line the program prints is handed to print.
+        const program = await CProgram.load({{ args: ["{id}"], print: say }});
+        // main(), to its end. A program built with entry = "none" has no main: its page calls
+        // what it exports (program.exports.step()), and looks into its memory with
+        // program.string(pointer) and program.bytes(pointer, length).
+        const code = program.run();
+        if (code !== 0) say("(it ended with " + code + ")");
+        // A line for Developer > Console in GridCraft.
+        spreadsheet.log("{id} ran and ended with", code);
+        // What the program is to do with the workbook, this page does for it. Ask for "write"
+        // in project.toml, and then, for one:
+        //   await spreadsheet.write("A1", [[out.textContent]]);
+      }} catch (error) {{
+        // A project that was not built from the files it holds now has no program: it says so.
+        say(String(error.message || error));
+      }}
+    }}
+
+    document.getElementById("run").onclick = run;
+    run();
+  </script>
+</body>
+</html>
+"#
+    )
+}
+
 /// The program a C project starts from. Only the project's id is written into it: an id is
 /// lowercase letters, digits and hyphens, which can end neither a comment nor a string.
 fn c_source_text(id: &str) -> String {
@@ -190,7 +266,8 @@ fn c_source_text(id: &str) -> String {
  * {id}: a project of GridCraft's C Development Kit.
  *
  * GridCraft builds this project as WebAssembly once you trust it (Developer, Development,
- * the project, Build). It can't run what it builds yet.
+ * the project, Build), and the project's panel (panel/index.html) runs what was built:
+ * what this prints shows there. After a change, trust it as it is and build it again.
  */
 #include <stdio.h>
 
@@ -245,7 +322,11 @@ fn files_for(kit: &Kit, name: &str, workbook: Option<&str>) -> Option<(String, V
         return None;
     }
     let files = if kit.id == kit::C.id {
-        vec![(manifest::FILE, c_manifest_text(&id, &shown, workbook)), ("src/main.c", c_source_text(&id))]
+        vec![
+            (manifest::FILE, c_manifest_text(&id, &shown, workbook)),
+            ("src/main.c", c_source_text(&id)),
+            ("panel/index.html", c_panel_text(&id, &shown)),
+        ]
     } else {
         vec![
             (manifest::FILE, manifest_text(&id, &shown, workbook)),
@@ -377,11 +458,11 @@ mod tests {
         let t = TempDir::new("starter-c");
         let m = create_in(&t.0, &kit::C, "Blink", None).unwrap();
         assert!(m.is_sound(), "{:?}", m.problem);
-        assert_eq!(m.files, ["project.toml", "src/main.c"], "a manifest and a program: no panel, no scripts");
+        assert_eq!(m.files, ["panel/index.html", "project.toml", "src/main.c"], "a manifest, a program and the panel that runs it: no scripts");
         let manifest = m.manifest.clone().unwrap();
         assert_eq!((manifest.kit.as_str(), manifest.name.as_str()), ("c", "Blink"));
         assert_eq!(kit::of(Some(&manifest)), &kit::C);
-        assert!(manifest.permissions.is_empty(), "it asks for nothing: nothing of it can run yet");
+        assert!(manifest.permissions.is_empty(), "it asks for nothing: its panel shows what the program prints, and no more");
         // Its recipe builds what is in src: the one file it starts with.
         let recipe = manifest.c.clone().unwrap();
         assert_eq!(
@@ -389,9 +470,22 @@ mod tests {
             (["src".to_string()].as_slice(), vec!["src/main.c".to_string()])
         );
         assert_eq!((recipe.optimize, recipe.entry), (crate::c::Optimize::Size, crate::c::Entry::Main));
-        assert_eq!((manifest.panel, manifest.python, manifest.workbook), (None, None, None));
+        assert_eq!((manifest.panel.as_deref(), manifest.python, manifest.workbook), (Some("panel/index.html"), None, None));
         let source = std::fs::read_to_string(m.dir.join("src/main.c")).unwrap();
         assert!(source.contains("puts(\"Hello from blink.\");") && source.contains("int main(void)"));
+        // Its panel loads the program GridCraft built, with the loader GridCraft serves, runs
+        // it and shows what it printed. Neither of the two is a file of the project.
+        let page = std::fs::read_to_string(m.dir.join("panel/index.html")).unwrap();
+        for part in [
+            "<title>Blink</title>",
+            "<script src=\"program.js\"></script>",
+            "<script src=\"spreadsheet.js\"></script>",
+            "CProgram.load({ args: [\"blink\"], print: say })",
+            "program.run()",
+        ] {
+            assert!(page.contains(part), "{part}");
+        }
+        assert!(!m.files.iter().any(|file| file.ends_with("program.js") || file.ends_with("program.wasm")));
         // It can be the code of a workbook, like any project.
         let doom = create_in(&t.0, &kit::C, "Doom", Some("Doom.xlsx")).unwrap();
         assert_eq!(doom.manifest.unwrap().workbook.as_deref(), Some("Doom.xlsx"));
@@ -408,6 +502,16 @@ mod tests {
         assert!(!source.contains("system") || source.contains("evil-int-system-const-char-s"));
         assert_eq!(source.matches('"').count(), 2, "and the one string is the starter's own");
         assert!(odd.manifest.unwrap().permissions.is_empty());
+        // Nor into the page's script: the name is in the title and the heading, as text, and
+        // only the id is in the script.
+        let shown = plain("Evil */ int system(const char *); /* \" \\ %s");
+        let page = std::fs::read_to_string(odd.dir.join("panel/index.html")).unwrap();
+        assert_eq!(page.matches(&shown).count(), 2, "{shown:?}");
+        assert_eq!(page.matches("<script").count(), 3, "the page's scripts are the starter's own three");
+        assert!(!page.contains('\\') && page.contains("args: [\"evil-int-system-const-char-s\"]"));
+        let marked = create_in(&t.0, &kit::C, "Mark <script>alert(1)</script> & \"co\"", None).unwrap();
+        let page = std::fs::read_to_string(marked.dir.join("panel/index.html")).unwrap();
+        assert!(marked.is_sound() && !page.contains("<script>alert") && page.matches("<script").count() == 3, "{:?}", marked.problem);
         // The same names are refused, and nothing is written over.
         assert!(create_in(&t.0, &kit::C, "blink", None).unwrap_err().contains("already a project folder named blink"));
         assert!(create_in(&t.0, &kit::C, "!!!", None).is_err());

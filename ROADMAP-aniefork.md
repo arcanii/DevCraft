@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-13, upstream `fc45b7f` (GridCraft 0.6.1: 6 commits since the merge before) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 13 changes upstream lacks (below) |
+| Fork carries | 14 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -38,6 +38,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
 | **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development, the MCP server, the development kits, and under the Anie Development Kit its projects, as workbook code or libraries. Each has a part of its own, and a new project is made in the kit's part. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, changes in `development.rs`, `devpage.rs`, `projects.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
+| **The C Development Kit** (phases K1 to K3): a second kit beside the first, compiled in. A project names its kit (`kit = "c"`), holds C sources and a panel, and says what is built in a recipe that is a list, never a command. The person's own zig builds it as one WebAssembly program, by hand, for a project they trust, from the project's files and the compiler's and nothing else; the program is kept beside the settings under the fingerprint of the files it was built from. The project's panel runs it: GridCraft serves the program built from the files as they are trusted then, and a loader that hands it a clock, a place to print and files in memory, and no more. What git keeps in a project (`.git`) is left out of it. | `crates/aniefork-dev/src/` (`kit.rs`, `c.rs`, `c_program.rs`, changes in `manifest.rs`, `project.rs`, `bridge.rs`, `starter.rs`, `settings.rs`, `agents.rs`); `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`) | Not offered: fork-only (the loader is JavaScript as text, against upstream's "Rust only") |
 | **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding; Developer ▸ Macros shows it beside the macros. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs`; `crates/ui-egui/src/aniefork/macros.rs` | Not offered; a direction of the fork's own |
 | **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
@@ -57,12 +58,12 @@ The fork no longer carries these. They are kept here as the record of what happe
 | **File ▸ Options** as a dialog, and a `file.options` command | Upstream now has an Options page in its File view and a `file.options` command that opens it. The fork's dialog and command were retired at the merge; its two settings moved onto upstream's page. |
 
 ### Open
-- **The follow-up the maintainers invited** is offered as
+- **The follow-up the maintainers invited** was offered as
   [storytold/gridcraft#463](https://github.com/storytold/gridcraft/pull/463) (2026-10-12, branch
-  `recent-modified`): the recent list's "modified" column on upstream's File page, read on a
-  thread of its own so a slow drive never holds up the view, with its ten strings in upstream's
-  nine catalogs. The fork's `main` does not carry it: it arrives with the merge after upstream
-  takes it.
+  `recent-modified`) and **merged** on 2026-10-13: the recent list's "modified" column on
+  upstream's File page, read on a thread of its own so a slow drive never holds up the view,
+  with its strings in upstream's catalogs. The fork's `main` does not carry it yet: it arrives
+  with the next merge of upstream.
 - **The outline on the gridlines, and the highlight that stays on its cell while typing**, are
   offered together as
   [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (2026-10-12, branch
@@ -74,7 +75,8 @@ The fork no longer carries these. They are kept here as the record of what happe
   upstream's code and pass it the fork's width. Its check was red for a reason outside it
   (upstream's `main` failed two engine tests of its own). Upstream fixed them in 0.6.0, and on
   2026-10-13 this branch and #463's were brought up to upstream's `main` (0.6.1) by a merge,
-  after upstream's own gate passed on each result here. Neither has a review yet. Upstream's #456
+  after upstream's own gate passed on each result here. #463 was merged that day; this one has
+  no review yet (looked: 2026-10-13, its check green and no conflict). Upstream's #456
   (and the pull requests stacked on it) changes the height line of the same function to cap the
   editor at five lines; it is not the same work, but whichever lands second needs a rebase.
 - Following the system's reduced-motion setting is now an open pull request of someone else's:
@@ -442,17 +444,41 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
   waits for an answer, the plans.
 - **Development Kits**: the kits that are loaded. This build has two, both compiled in: the
   **Anie Development Kit** (Python and Svelte) and the **C Development Kit**, which builds
-  a project's C as WebAssembly and can't run it yet. There is no way to load another, and
-  the window says so.
+  a project's C as WebAssembly and runs it in the project's panel. There is no way to load
+  another, and the window says so.
 - **Projects** under the kit, by what they are for: **workbook code** and **libraries**. A
   project has a part of its own; a new one is made in the kit's part.
 - Both windows show it: GridCraft's own, and the page, redrawn around the list.
 
-**Planned, not built: a second kit, Doom, and source control** (the owner's request and
-decisions, 2026-10-13; ADR-0001 has the plan).
+**The C Development Kit builds a project and runs it in its panel** (phases K1 to K3,
+2026-10-13; ADR-0001 has each).
+
+- **A C project** is a folder with a `project.toml` that says `kit = "c"`, C sources, a
+  recipe (`[c]`: a list of sources and a few named options, never a command) and a panel.
+- **The person builds it**, for a project they trust, from its part of the Development
+  window, with their own zig (found, or named by hand). It is built from its own files and
+  the compiler's and nothing else, and what is built is kept beside the settings under the
+  fingerprint of the files it was built from.
+- **Its panel runs the program.** GridCraft serves beside the panel's page the program
+  built from the project's files as they are trusted at that moment, and no other, and a
+  loader of its own (`program.js`, giving the page `CProgram`) that hands the program a
+  clock, a place to print, random numbers, its arguments and files kept in memory. The
+  program can reach nothing else: what it does with the workbook, its page does for it
+  through `spreadsheet`, checked against what the project was granted.
+- **The starter** is a program of a few lines and a panel that runs it and shows what it
+  printed. It asks for nothing.
+- **Dock Panel and Open in Browser are on a project's own part** of the Development window,
+  in both its forms, for a trusted project of either kit that has a panel. By hand only.
+- **Seen (2026-10-13, an isolated copy):** the starter, built by the kit from the page's
+  Build button, running in its panel docked beside the sheet ("Hello from blink."); a
+  changed project given no program until it is trusted and built again; and the panel
+  saying why in GridCraft's words.
+
+**Planned, not built: Doom, and source control** (the owner's request and decisions,
+2026-10-13; ADR-0001 has the plan).
 
 - **A C Development Kit**, beside the Anie kit (listed since K1; it builds since K2's first
-  slice, and runs nothing yet): C built **as WebAssembly** by a compiler the person names (as the Python is), and
+  slice, and runs what it built since K3: above): C built **as WebAssembly** by a compiler the person names (as the Python is), and
   run in the project's panel. Its projects are held to what they were granted, which a
   Python script can't be. Decided by the owner on 2026-10-13, in place of a program of its
   own first, which is put aside for later.
@@ -528,10 +554,14 @@ own.
   was tried once, on one small procedure.
 - **Kits: two, and no way to load another.** How one would be loaded is not decided
   (ADR-0001 has what is known). A kit can't be turned off as a whole. The second, for C,
-  is compiled in like the first: it shows two kits, and still loads none. **It builds a
-  project and can't run one**: what it builds is kept, and nothing uses it yet. An
-  agent's `create_project` makes the first kit's starter only, and an agent can't ask for
-  a build.
+  is compiled in like the first: it shows two kits, and still loads none. An agent's
+  `create_project` makes the first kit's starter only, and an agent can't ask for a build.
+- **Only the C starter has been seen running in a docked panel**: a program that prints.
+  One that uses files or its arguments, and Doom, have run under the loader in Node and a
+  browser, not yet in GridCraft's window.
+- **A C program is made on the page's own thread, in one step**, which browsers limit by
+  size (a few megabytes in Chromium, as far as is known: not tried); the kit keeps programs
+  up to 64 MB. One that never returns from `main` holds its page.
 - **A build needs zig**, which GridCraft does not ship: found where programs are looked
   for, or named by hand. Only zig. A build can't be stopped once started, and zig's cache
   beside what is built is never cleared.
@@ -547,8 +577,8 @@ own.
   finds them gone: they are `create_project` and the like now.
 - **A project names its workbook by the file's name**: two workbooks of one name are the
   same to it.
-- Reviewing, trusting and running a project is still done in Projects, not in its own part
-  of the Development window.
+- Reviewing and trusting a project, and running its scripts, are still done in Projects,
+  not in its own part of the Development window. Its panel can be shown from either.
 - **The Development window as a page is Windows only**, and a second thing to keep alike:
   what the two windows say is shared, how they are laid out is not. Its place and size are
   not remembered. To change the page: `cargo test -p gridcraft -- --ignored
@@ -667,6 +697,26 @@ included.
 
 Newest first.
 
+- **2026-10-13 (K3: the C kit runs what it built):** The next task the owner named. **A C
+  project has a panel**, and GridCraft serves two things beside its page that are not the
+  project's files: `program.wasm`, the program built from the project's files as they are
+  trusted at that request and no other (none built: 404, and the page says to build), and
+  `program.js`, a loader that hands the program a clock, a place to print, random numbers,
+  its arguments and files kept in memory, and nothing else. The loader is the text that
+  was tried in the session before (Node, on three programs the kit built; Doom in a
+  browser), with one change: a refusal is said in GridCraft's own words. It is the fork's
+  fourth JavaScript-as-text exception. **The C starter has a panel** that runs the
+  program and shows what it printed. **Dock Panel and Open in Browser are on a project's
+  part of the Development window**, in both its forms, by hand only; the page was built
+  again for it (npm, on the owner's word). An agent is told of the panel and `CProgram`.
+  **zig is on the machine now**, where the owner said: `C:\util\Tools\zig-0.17.0`, not on
+  the path. **Seen, in an isolated copy: the starter built from the page's Build button
+  and running in its panel docked beside the sheet**, the first C program seen there; a
+  changed project given no program until trusted and built again. **Not seen:** Doom or
+  any program that uses files in the docked panel; Open in Browser pressed in the app;
+  GridCraft's own (not the page's) window, whose buttons only the tests press. Gate:
+  eight steps, 1595 tests, with zig named so the build tests build. Also put right: this
+  file's table had no row for the C kit, and its open list still called #463 unmerged.
 - **2026-10-13 (K2, first slice: the C kit builds):** On the owner's word. A C project's
   `project.toml` has a recipe, `[c]`: a list of sources and a few named options, never a
   command. The compiler is the person's zig, found or named by hand. **The person builds a

@@ -117,6 +117,12 @@ pub(super) enum Act {
     ShowShowcase {
         docked: bool,
     },
+    /// Show a project's panel: docked in the window, or in the browser. Opening a panel is the
+    /// person's alone to do, as it is in Projects.
+    ShowPanel {
+        project: String,
+        docked: bool,
+    },
 }
 
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
@@ -975,6 +981,27 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
             });
         }
     }
+    // Its panel, and the ways to show it: beside the sheet, or in the browser.
+    let panel = &told["panel"];
+    if panel.is_object() {
+        heading(ui, said(panel, "title"));
+        ui.label(small(said(panel, "says")));
+        ui.horizontal(|ui| {
+            let id = || said(told, "id").to_string();
+            if panel["canDock"] == true && ui.button("Dock Panel").on_hover_text("Shows its panel inside the window, beside the sheet").clicked() {
+                *action = Some(Act::ShowPanel { project: id(), docked: true });
+            }
+            if panel["canBrowse"] == true && ui.button("Open in Browser").on_hover_text("Opens its panel in your browser").clicked() {
+                *action = Some(Act::ShowPanel { project: id(), docked: false });
+            }
+            if panel["docked"] == true {
+                ui.label(small("It is docked in the window."));
+            }
+        });
+        if let Some(needs) = panel["needsTrust"].as_str() {
+            ui.label(small(needs));
+        }
+    }
     let rebuilt = &told["rebuilt"];
     if !rebuilt.is_null() {
         heading(ui, said(rebuilt, "title"));
@@ -1032,7 +1059,7 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             let now = agents::snapshot();
             // A project that is no longer there gives way to its kit.
             if let Pane::Project(id) = &state.pane
-                && kits::project_pane(app, id).is_none()
+                && kits::project_pane(app, &ctx, id).is_none()
             {
                 state.pane = Pane::first_kit();
             }
@@ -1227,14 +1254,8 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
         }
         Act::CreateShowcase => projects::create_showcase(),
         // Showing a panel is opening it: the person's alone to do (checked above).
-        Act::ShowShowcase { docked: true } => {
-            let said = super::dock::dock(app, ctx, showcase::ID)?;
-            // The window makes way: the panel is shown where it would be standing.
-            *open = false;
-            app.toast = Some((said, crate::now_ms()));
-            Ok(String::new())
-        }
-        Act::ShowShowcase { docked: false } => super::panels::open(app, ctx, showcase::ID),
+        Act::ShowShowcase { docked } => show_panel(app, ctx, showcase::ID, docked, open),
+        Act::ShowPanel { project, docked } => show_panel(app, ctx, &project, docked, open),
         Act::OpenFolder => match (projects::places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
                 std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
@@ -1244,6 +1265,19 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             _ => Err(projects::UNAVAILABLE.into()),
         },
     }
+}
+
+/// Shows the panel of the project `id`: docked in the window, or in the person's browser. Both
+/// decide for themselves whether the project is trusted as it is now and has a panel.
+fn show_panel(app: &mut SheetApp, ctx: &egui::Context, id: &str, docked: bool, open: &mut bool) -> Result<String, String> {
+    if !docked {
+        return super::panels::open(app, ctx, id);
+    }
+    let said = super::dock::dock(app, ctx, id)?;
+    // The window makes way: the panel is shown where it would be standing.
+    *open = false;
+    app.toast = Some((said, crate::now_ms()));
+    Ok(String::new())
 }
 
 /// The person said yes on the card of the request `id`.
@@ -2776,31 +2810,53 @@ mod tests {
         );
         assert_eq!((&first_kit["groups"][0]["label"], &first_kit["groups"][0]["projects"]), (&json!("Workbook code"), &json!([])));
         assert_eq!(first_kit["groups"][1]["projects"][0]["name"], "Clean Data");
-        // The second kit has a part of its own, which says what it can't do yet.
+        // The second kit has a part of its own. It builds and runs: there is nothing it says
+        // it can't do yet.
         page(&mut h, json!({"act": "go", "to": "kit:c"}));
         let second = told(&mut h);
         assert_eq!(
             (&second["pane"]["kind"], &second["pane"]["id"], &second["pane"]["title"], &second["pane"]["notYet"]),
-            (&json!("kit"), &json!("c"), &json!("C Development Kit"), &json!(kit::C.not_yet))
+            (&json!("kit"), &json!("c"), &json!("C Development Kit"), &Json::Null)
         );
+        assert_eq!(second["pane"]["says"], kit::C.says);
         assert_eq!(
             (&second["pane"]["python"], &second["pane"]["showcase"], &second["pane"]["projectsSays"]),
             (&Json::Null, &Json::Null, &json!("No projects yet"))
         );
         assert!(second["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:c" && row["selected"] == true));
-        // A project made there is that kit's: a manifest and a program, untrusted.
+        // A project made there is that kit's: a manifest, a program and the panel that runs
+        // it, untrusted.
         page(&mut h, json!({"act": "createProject", "name": "Blink", "kit": "c"}));
         let blink = told(&mut h);
         assert_eq!(blink["said"], "Blink was created. It is not trusted yet.");
         assert_eq!(
             (&blink["pane"]["kind"], &blink["pane"]["id"], &blink["pane"]["kit"], &blink["pane"]["notYet"]),
-            (&json!("project"), &json!("blink"), &json!("C Development Kit"), &json!(kit::C.not_yet))
+            (&json!("project"), &json!("blink"), &json!("C Development Kit"), &Json::Null)
         );
         let on_disk = gridcraft_aniefork_dev::project::load(&s.0.join("projects/blink"));
         assert_eq!(
             (on_disk.manifest.as_ref().map(|m| m.kit.as_str()), on_disk.files.as_slice()),
-            (Some("c"), ["project.toml".to_string(), "src/main.c".to_string()].as_slice())
+            (Some("c"), ["panel/index.html".to_string(), "project.toml".to_string(), "src/main.c".to_string()].as_slice())
         );
+        // The page is told of its panel as GridCraft's own window is, and asks for it the same
+        // way: it is not trusted, so there is no way to show it, and asking shows nothing.
+        let panel = &blink["pane"]["panel"];
+        assert_eq!(
+            (&panel["says"], &panel["canDock"], &panel["canBrowse"], &panel["needsTrust"]),
+            (&json!(kits::PANEL_UNBUILT), &json!(false), &json!(false), &json!(kits::PANEL_NEEDS_TRUST))
+        );
+        for docked in [true, false] {
+            page(&mut h, json!({"act": "showPanel", "id": "blink", "docked": docked}));
+            assert!(told(&mut h)["error"].as_str().is_some_and(|why| !why.is_empty()), "docked: {docked}");
+        }
+        assert!(crate::aniefork::dock::docked(&ctx).is_none() && crate::aniefork::panels::serving(&ctx).is_empty());
+        for bad in [
+            "{\"act\":\"showPanel\",\"id\":\"blink\"}",
+            "{\"act\":\"showPanel\",\"id\":\"../blink\",\"docked\":true}",
+            "{\"act\":\"showPanel\",\"docked\":true}",
+        ] {
+            assert!(!devpage::handle(h.state_mut(), &ctx, bad), "{bad}");
+        }
         assert_eq!(list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "blink").unwrap()["status"], "untrusted");
         // The page is told of its build as GridCraft's own window is, and asks for one the same
         // way: it is not trusted, so nothing is built.
@@ -2944,12 +3000,12 @@ mod tests {
         h.get_by_label(&format!("It says it is the code of the workbook {title:?}, which is open now."));
         h.get_by_label(&format!("Budget Macros was created, as the code of {title}. It is not trusted yet."));
         assert_eq!(h.state().dialog.as_ref().and_then(|d| d.values.get("part")), Some(&json!("project:budget-macros")));
-        // The second kit: its own part, which says what it can't do yet and has nothing of
-        // what only the first kit has.
+        // The second kit: its own part, which has nothing of what only the first kit has.
+        // It builds and runs its projects: nothing is said that it can't do yet.
         go(&mut h, "C Development Kit");
         assert_eq!(h.state().dialog.as_ref().and_then(|d| d.values.get("part")), Some(&json!("kit:c")));
         h.get_by_label(kit::C.says);
-        h.get_by_label(kit::C.not_yet);
+        assert!(h.query_by_label_contains("can't run a C project").is_none());
         h.get_by_label("No projects yet");
         h.get_by_label(&kits::projects_note(&kit::C));
         assert!(
@@ -2965,12 +3021,15 @@ mod tests {
         assert!(blink.is_sound(), "{:?}", blink.problem);
         assert_eq!(
             (blink.manifest.as_ref().map(|m| m.kit.as_str()), blink.files.as_slice()),
-            (Some("c"), ["project.toml".to_string(), "src/main.c".to_string()].as_slice())
+            (Some("c"), ["panel/index.html".to_string(), "project.toml".to_string(), "src/main.c".to_string()].as_slice())
         );
         h.get_by_label("C Development Kit  ·  Library");
-        h.get_by_label(kit::C.not_yet);
         h.get_by_label("Blink was created. It is not trusted yet.");
-        h.get_by_label("•  Nothing.");
+        h.get_by_label("•  Show its panel and run its program there, and nothing more.");
+        // Its panel is said, with no way to show it: it is not trusted.
+        h.get_by_label(kits::PANEL_UNBUILT);
+        h.get_by_label(kits::PANEL_NEEDS_TRUST);
+        assert!(h.query_by_label("Dock Panel").is_none() && h.query_by_label("Open in Browser").is_none());
         go(&mut h, "C Development Kit");
         h.get_by_label("1 project, 0 trusted");
         go(&mut h, "Anie Development Kit");
@@ -3069,6 +3128,84 @@ mod tests {
         let kept = s.0.join("built/blink").join(&print).join("program.wasm");
         assert_eq!(std::fs::read(&kept).unwrap().get(..4), Some(b"\0asm".as_slice()));
         assert_eq!(list()["projects"][0]["status"], "trusted", "building changed nothing of the project");
+        assert_eq!(asked.questions().len(), 1, "only the trust was asked about");
+    }
+
+    /// Reads `path` from a panel's address, as the page shown there would: the status, and
+    /// what came back.
+    fn fetch(address: &str, path: &str) -> (u16, String) {
+        let (host, token) = address.strip_prefix("http://").unwrap().split_once('/').unwrap();
+        let mut stream = TcpStream::connect(host).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        write!(stream, "GET /{token}{path} HTTP/1.1\r\nHost: {host}\r\nSec-Fetch-Site: same-origin\r\n\r\n").unwrap();
+        let mut reply = Vec::new();
+        let _ = stream.read_to_end(&mut reply);
+        let text = String::from_utf8_lossy(&reply).into_owned();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text.as_str(), ""));
+        (head.split(' ').nth(1).and_then(|status| status.parse().ok()).unwrap_or(0), body.to_string())
+    }
+
+    #[test]
+    fn a_trusted_c_projects_panel_is_shown_from_its_part_by_the_person_and_is_served_its_program() {
+        use crate::aniefork::dock;
+        let s = Sandbox::new("agents-panel");
+        let asked = yes();
+        let mut app = app_with(Some(&asked));
+        let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let seen = opened.clone();
+        app.services.open_url = Some(Box::new(move |address: &str| seen.borrow_mut().push(address.to_string())));
+        let mut h = harness(app);
+        projects::create_project_in(&kit::C, "Blink", None).unwrap();
+        open_top(&mut h);
+        go(&mut h, "Blink");
+        // Not trusted: its panel is said, and there is no way to show it.
+        h.get_by_label(kits::PANEL_UNBUILT);
+        h.get_by_label(kits::PANEL_NEEDS_TRUST);
+        assert!(h.query_by_label("Dock Panel").is_none() && h.query_by_label("Open in Browser").is_none());
+        let print = list()["projects"][0]["fingerprint"].as_str().unwrap().to_string();
+        trust(h.state(), "blink", &print, false).unwrap();
+        h.run_steps(3);
+        assert!(h.query_by_label(kits::PANEL_NEEDS_TRUST).is_none());
+        // A copy of GridCraft without a web view offers the browser, and only that. Showing a
+        // panel is the person's to do: not by the control channel.
+        assert!(h.query_by_label("Dock Panel").is_none());
+        drive(&mut h);
+        click(&mut h, "Open in Browser");
+        assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
+        assert!(opened.borrow().is_empty() && crate::aniefork::panels::serving(&h.ctx).is_empty());
+        quiet(&mut h);
+        click(&mut h, "Open in Browser");
+        assert_eq!(opened.borrow().len(), 1, "{:?}", h.state().message);
+        // With a web view, the panel is docked beside the sheet, and the window makes way.
+        let ctx = h.ctx.clone();
+        dock::host_is_here(&ctx);
+        h.run_steps(3);
+        drive(&mut h);
+        click(&mut h, "Dock Panel");
+        assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
+        assert!(dock::docked(&ctx).is_none());
+        quiet(&mut h);
+        click(&mut h, "Dock Panel");
+        assert!(h.state().dialog.is_none(), "{:?}", h.state().message);
+        let docked = dock::docked(&ctx).unwrap();
+        assert_eq!((docked.project.as_str(), docked.name.as_str(), docked.network), ("blink", "Blink", false));
+        assert_eq!(docked.address, opened.borrow()[0], "the same panel the browser was given, on the same bridge");
+        // What the page shown there is served: the starter's page, the loader that is
+        // GridCraft's, and no program, since nothing was built from the project.
+        assert!(fetch(&docked.address, "").1.contains("CProgram.load("));
+        assert_eq!(fetch(&docked.address, "program.js"), (200, gridcraft_aniefork_dev::c_program::LOADER.to_string()));
+        assert_eq!(fetch(&docked.address, "program.wasm").0, 404);
+        // A program kept where a build keeps it, under the fingerprint of the files the project
+        // holds: that is the one its panel is given, and the project's part says so.
+        let kept = s.0.join("built/blink").join(&print);
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::write(kept.join("program.wasm"), "\0asm\u{1}\0\0\0").unwrap();
+        assert_eq!(fetch(&docked.address, "program.wasm"), (200, "\0asm\u{1}\0\0\0".to_string()));
+        open_top(&mut h);
+        go(&mut h, "Blink");
+        h.get_by_label(kits::PANEL_RUNS);
+        h.get_by_label("It is docked in the window.");
+        assert_eq!(list()["projects"][0]["status"], "trusted", "showing its panel changed nothing of the project");
         assert_eq!(asked.questions().len(), 1, "only the trust was asked about");
     }
 

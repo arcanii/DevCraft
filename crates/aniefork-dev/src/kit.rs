@@ -5,10 +5,12 @@
 //! - the **Anie Development Kit**: a project is a folder with a `project.toml`, Python scripts
 //!   and a web panel (written with Svelte or any other web toolkit). Most of this crate is that
 //!   kit at work: its scripts ([`crate::python`]) and panels ([`crate::bridge`]).
-//! - the **C Development Kit**: a project is a folder with a `project.toml` and C sources. It
-//!   builds a project's C as WebAssembly with the person's own compiler ([`crate::c`]); it
-//!   can't run what it built yet. That is to be in the project's panel (the owner's decision,
-//!   2026-10-13; ADR-0001 has the phases).
+//! - the **C Development Kit**: a project is a folder with a `project.toml`, C sources and a
+//!   web panel. It builds a project's C as one WebAssembly program with the person's own
+//!   compiler ([`crate::c`]), and the project's panel runs it: the bridge serves the program
+//!   beside the page, with the loader that starts it ([`crate::c_program`]). The program can
+//!   reach nothing but what its page hands it (the owner's decision, 2026-10-13: WebAssembly
+//!   first; ADR-0001 has the phases).
 //!
 //! What every kit's projects share is not a kit's: a project on disk and its fingerprint
 //! ([`crate::project`]), the person's trust in it ([`crate::trust`]), what it asks to be
@@ -16,8 +18,9 @@
 //!
 //! A project says which kit it is of with `kit = "…"` in its `project.toml`. One that says
 //! nothing is the Anie kit's, as every project was before there were two. A kit's projects may
-//! hold only what the kit knows how to serve and run ([`check`]): a C project has no panel and
-//! no scripts, so nothing of the Anie kit can be made to run for it.
+//! hold only what the kit knows how to serve and run ([`check`]): a C project has no scripts
+//! and can't ask for `python` or `network`, so nothing of the Anie kit that can't be limited
+//! can be made to run for it.
 //!
 //! Both kits are compiled into GridCraft. There is no way to load one yet: how a kit that isn't
 //! compiled in would be loaded is not decided (ADR-0001).
@@ -71,20 +74,21 @@ pub const ANIE: Kit = Kit {
     builds: false,
 };
 
-/// Programs written in C. It builds them, and can't run them yet.
+/// Programs written in C: built as WebAssembly, and run in the project's panel.
 pub const C: Kit = Kit {
     id: "c",
     name: "C Development Kit",
     made_of: &["C"],
-    says: "Projects written in C, to be built as WebAssembly by a compiler you name and run in the project's panel. A project does nothing until you trust it.",
-    project_is: "A project is a folder with a project.toml and C sources.",
-    not_yet: "GridCraft can't run a C project yet. It builds one as WebAssembly, with zig as the compiler, once you trust the project.",
+    says: "Projects written in C, built as WebAssembly by a compiler you name and run in the project's panel, where the program can do only what its page hands it. A project does nothing until you trust it.",
+    project_is: "A project is a folder with a project.toml, C sources and a web panel that runs the program built from them.",
+    // What is left (an agent asking for a build) is not the person's concern.
+    not_yet: "",
     built_in: true,
-    // What a project's page will be able to ask of the spreadsheet for the program it runs.
-    // The program is to be WebAssembly: it reaches nothing but what that page hands it, so
-    // running it needs no leave of its own, as `python` does.
+    // What a project's page can ask of the spreadsheet for the program it runs. The program
+    // is WebAssembly: it reaches nothing but what that page hands it, so running it needs no
+    // leave of its own, as `python` does.
     permissions: &[Permission::Read, Permission::Write, Permission::Files],
-    panels: false,
+    panels: true,
     scripts: false,
     builds: true,
 };
@@ -200,9 +204,11 @@ mod tests {
             assert_eq!(named(kit.id), Some(kit));
         }
         assert_eq!(ANIE.id, manifest::DEFAULT_KIT, "a project that names no kit is the first kit's");
-        // The first kit is whole; the second says what it can't do yet.
-        assert!(ANIE.not_yet.is_empty() && C.not_yet.contains("can't run a C project yet"));
+        // Both are whole: neither has something to say it can't do yet.
+        assert!(ANIE.not_yet.is_empty() && C.not_yet.is_empty());
+        assert!(C.says.contains("WebAssembly") && C.says.contains("panel") && C.project_is.contains("panel"));
         assert_eq!((C.builds, ANIE.builds), (true, false), "the second kit builds its projects; the first has nothing to build");
+        assert_eq!((C.panels, C.scripts), (true, false), "what it builds runs in the project's panel; it has no scripts");
         assert_eq!((named("rust"), named(""), named("C")), (None, None, None));
     }
 
@@ -225,14 +231,15 @@ mod tests {
         assert_eq!(check(&read(all)), Ok(&ANIE));
         // A C project may ask to see and change the workbook, and to open and save files.
         assert_eq!(check(&read("kit = \"c\"\npermissions = [\"read\", \"write\", \"files\"]")), Ok(&C));
-        // It has no scripts and no panel: nothing of the first kit can be made to run for it.
+        // It has no scripts: nothing of the first kit that can't be limited can be made to run for it.
         let python = check(&read("kit = \"c\"\npermissions = [\"python\"]")).unwrap_err();
         assert_eq!(python, "it asks for \"python\", which a project of the C Development Kit can't be given");
         assert!(check(&read("kit = \"c\"\npermissions = [\"read\", \"network\"]")).unwrap_err().contains("\"network\""));
         let scripts = check(&read("kit = \"c\"\n[python]\nscripts = \"python\"")).unwrap_err();
         assert_eq!(scripts, "it has Python scripts, which a project of the C Development Kit can't have");
-        let panel = check(&read("kit = \"c\"\n[panel]\nentry = \"panel/index.html\"")).unwrap_err();
-        assert_eq!(panel, "it has a panel, which a project of the C Development Kit can't have");
+        // It may have a panel: that is where the program built from it runs.
+        assert_eq!(check(&read("kit = \"c\"\n[panel]\nentry = \"panel/index.html\"\n[c]\nsources = [\"src\"]")), Ok(&C));
+        assert_eq!(check(&read("kit = \"c\"\n[panel]\nentry = \"panel/index.html\"")), Ok(&C));
         // A recipe is the C kit's: it is nothing the first kit builds.
         assert_eq!(check(&read("kit = \"c\"\n[c]\nsources = [\"src\"]")), Ok(&C));
         let recipe = check(&read("[c]\nsources = [\"src\"]")).unwrap_err();
@@ -241,7 +248,7 @@ mod tests {
         for kit in loaded() {
             assert!(kit.permissions.iter().all(|allowed| Permission::ALL.contains(allowed)));
         }
-        assert!(!C.permissions.iter().any(|allowed| allowed.is_unlimited()), "nothing a C project can be given yet runs anything");
+        assert!(!C.permissions.iter().any(|allowed| allowed.is_unlimited()), "nothing a C project can be given is without limit");
     }
 
     #[test]
