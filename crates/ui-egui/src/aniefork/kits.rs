@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::kit::{self, Kit, ProjectKind};
-use gridcraft_aniefork_dev::{Project, TrustStore, c, describe, manifest, project, rebuilt, settings, showcase, vba};
+use gridcraft_aniefork_dev::{Project, TrustStore, c, describe, highlight, manifest, project, rebuilt, settings, showcase, vba};
 use serde_json::{Value as Json, json};
 
 use super::{agents, card, macros, projects};
@@ -55,6 +55,10 @@ pub(super) const NO_WORKBOOK: &str = "No workbook is open.";
 const LISTED: usize = 40;
 /// The most of a project's files named.
 const NAMED: usize = 12;
+/// The most of a project's files offered for reading.
+const OFFERED: usize = 240;
+/// Said where a project's files are offered for reading.
+pub(super) const FILES_NOTE: &str = "Choose a file to read it. It is shown as text: nothing in it is run.";
 /// How long what was read from disk is shown before it is read again (milliseconds).
 const KEEP_MS: f64 = if cfg!(test) { 0.0 } else { 1000.0 };
 
@@ -123,6 +127,9 @@ thread_local! {
     /// The open workbook's macros with what the projects say of them: for which workbook and
     /// which reading of the projects.
     static COVERED: RefCell<Option<((macros::Key, u64), Arc<Coverage>)>> = const { RefCell::new(None) };
+    /// The file that is being read, as it is shown: of which project, as which fingerprint,
+    /// and which file. Reading a file into lines is not done again for every frame.
+    static VIEWED: RefCell<Option<((String, Option<String>, String), Arc<Json>)>> = const { RefCell::new(None) };
 }
 
 /// The projects, read from disk at most once a moment. `None` in a run that keeps no settings.
@@ -733,12 +740,70 @@ pub(super) fn project_pane(app: &SheetApp, ctx: &egui::Context, id: &str) -> Opt
             (false, _) => "Nothing.",
         },
         "parts": parts,
+        // Its files, to choose one to read. Which is being read is the window's own to say.
+        "files": {
+            "title": "Files",
+            "says": FILES_NOTE,
+            "list": files.iter().take(OFFERED).collect::<Vec<_>>(),
+            "more": (files.len() > OFFERED).then(|| format!("and {} more", files.len() - OFFERED)),
+        },
         "build": build,
         "panel": panel,
         "rebuilt": rebuilt,
         "manage": "Reviewing, trusting and running it is done in Projects.",
         "canOpenFolder": app.services.open_url.is_some(),
     }))
+}
+
+/// One of a project's files as it is shown to be read: its lines, each in pieces that say
+/// what they are, by the languages the project's kit describes. `None` when there is no such
+/// project any more. A file that can't be shown (it is no file of the project, is not text,
+/// is too long) says why in place of its lines.
+///
+/// The file is read as text and drawn as text. Nothing in it is followed or run, and only a
+/// file in the project's own list is read: nothing of what git keeps there, and nothing
+/// outside it.
+pub(super) fn file_view(id: &str, path: &str) -> Option<Json> {
+    let found = found()?;
+    let on_disk = found.on_disk.iter().find(|on_disk| on_disk.id == id)?;
+    let key = (id.to_string(), on_disk.fingerprint.clone(), path.to_string());
+    if let Some(kept) = VIEWED.with(|viewed| viewed.borrow().as_ref().filter(|(of, _)| *of == key).map(|(_, kept)| kept.clone())) {
+        return Some((*kept).clone());
+    }
+    let told = match on_disk.read_text(path, highlight::MAX_BYTES) {
+        Err(why) => json!({"path": path, "says": path, "problem": why, "lines": [], "more": null}),
+        Ok(text) => {
+            let shown = highlight::show(kit::of(on_disk.manifest.as_ref()), path, &text);
+            let lines: Vec<Vec<Json>> =
+                shown.lines.iter().map(|line| line.iter().map(|(piece, kind)| json!([piece, kind.map(highlight::Kind::code)])).collect()).collect();
+            let says = match shown.language {
+                Some(language) => format!("{path}  ·  {language}  ·  {} line{}", shown.of_lines, plural(shown.of_lines)),
+                None => format!("{path}  ·  {} line{}", shown.of_lines, plural(shown.of_lines)),
+            };
+            json!({
+                "path": path,
+                "language": shown.language,
+                "says": says,
+                "problem": null,
+                "lines": lines,
+                "more": shown.cut().then(|| format!("Only the first {} of its {} lines are shown.", shown.lines.len(), shown.of_lines)),
+            })
+        }
+    };
+    VIEWED.with(|viewed| *viewed.borrow_mut() = Some((key, Arc::new(told.clone()))));
+    Some(told)
+}
+
+/// Puts the file that is being read into a project's part: `viewing` is the project and the
+/// file. It is left out of any other part, and of a project that is not the one read from.
+pub(super) fn with_view(told: &mut Json, viewing: Option<&(String, String)>) {
+    let Some((id, path)) = viewing else { return };
+    if told["kind"] == "project"
+        && told["id"] == id.as_str()
+        && let Some(view) = file_view(id, path)
+    {
+        told["view"] = view;
+    }
 }
 
 /// The part of the window `pane` names, as it is now. A project that is no longer there
@@ -1112,6 +1177,85 @@ mod tests {
         forget();
         let broken = project_pane(&a, &ctx, "broken").unwrap();
         assert_eq!((&broken["status"], &broken["panel"]["canDock"], &broken["panel"]["needsTrust"]), (&json!("problem"), &json!(false), &Json::Null));
+    }
+
+    #[test]
+    fn a_projects_files_are_offered_and_one_is_shown_as_its_kit_reads_it() {
+        let s = Sandbox::new("kits-files");
+        projects::create_project_in(&kit::C, "Blink", None).unwrap();
+        projects::create("Clean Data").unwrap();
+        let a = app_with(None);
+        let ctx = egui::Context::default();
+        let reading = ("blink".to_string(), "src/main.c".to_string());
+        let one = project_pane(&a, &ctx, "blink").unwrap();
+        assert_eq!(
+            one["files"],
+            json!({"title": "Files", "says": FILES_NOTE, "list": ["panel/index.html", "project.toml", "src/main.c"], "more": null})
+        );
+        assert_eq!(one["view"], Json::Null, "none is read until one is chosen");
+        // The C source, read as the C kit describes C: in lines, each piece saying what it is.
+        let view = file_view("blink", "src/main.c").unwrap();
+        assert_eq!(
+            (&view["path"], &view["language"], &view["problem"], &view["more"]),
+            (&json!("src/main.c"), &json!("C"), &Json::Null, &Json::Null)
+        );
+        let lines = view["lines"].as_array().unwrap();
+        assert_eq!(view["says"], json!(format!("src/main.c  \u{b7}  C  \u{b7}  {} lines", lines.len())));
+        let pieces: Vec<&Json> = lines.iter().flat_map(|line| line.as_array().unwrap()).collect();
+        for piece in [json!(["/*", "comment"]), json!(["int", "keyword"]), json!(["\"Hello from blink.\"", "string"]), json!(["0", "number"])] {
+            assert!(pieces.contains(&&piece), "{piece}");
+        }
+        assert_eq!(lines[0], json!([["/*", "comment"]]));
+        // Its page is read as markup and its manifest as keys; a first-kit project's script as
+        // Python, which the C kit does not describe.
+        assert_eq!(file_view("blink", "panel/index.html").unwrap()["language"], "HTML");
+        assert_eq!(file_view("blink", "project.toml").unwrap()["language"], "TOML");
+        assert_eq!(file_view("clean-data", "python/clean.py").unwrap()["language"], "Python");
+        write(&s, "blink/notes.py", "import os\n");
+        assert_eq!(file_view("blink", "notes.py").unwrap()["language"], Json::Null);
+        assert_eq!(file_view("blink", "notes.py").unwrap()["lines"], json!([[["import os", null]]]));
+        // What is no file of the project is not read: why is said in place of its lines.
+        write(&s, "blink/.git/config", "token = secret-token");
+        std::fs::write(s.0.join("outside.txt"), "outside").unwrap();
+        for path in [".git/config", "../outside.txt", "../../outside.txt", "nowhere.c", ""] {
+            let refused = file_view("blink", path).unwrap();
+            assert!(refused["problem"].as_str().is_some_and(|why| why.ends_with("is not a file of this project.")), "{path}: {refused}");
+            assert_eq!(refused["lines"], json!([]));
+            assert!(!refused.to_string().contains("secret-token") && !refused.to_string().contains("outside\""));
+        }
+        assert!(file_view("nowhere", "src/main.c").is_none());
+        assert!(!project_pane(&a, &ctx, "blink").unwrap()["files"].to_string().contains(".git"), "what git keeps is not offered");
+        // It is put into the part of the project it is a file of, and into no other part.
+        let mut told = project_pane(&a, &ctx, "blink").unwrap();
+        with_view(&mut told, Some(&reading));
+        assert_eq!(told["view"]["path"], "src/main.c");
+        let mut other = project_pane(&a, &ctx, "clean-data").unwrap();
+        with_view(&mut other, Some(&reading));
+        let mut of_kit = kit_pane(&a, &ctx, &kit::C);
+        with_view(&mut of_kit, Some(&reading));
+        let mut none = project_pane(&a, &ctx, "blink").unwrap();
+        with_view(&mut none, None);
+        assert_eq!((&other["view"], &of_kit["view"], &none["view"]), (&Json::Null, &Json::Null, &Json::Null));
+        // The file changes: what is shown is the file as it is now.
+        write(&s, "blink/src/main.c", "int two;\n");
+        assert_eq!(file_view("blink", "src/main.c").unwrap()["lines"], json!([[["int", "keyword"], [" two;", null]]]));
+        // What is not text, and what is too long, say so.
+        std::fs::write(s.0.join("projects/blink/panel/data.bin"), [0u8, 159, 146, 150]).unwrap();
+        write(&s, "blink/long.md", &"x".repeat(highlight::MAX_BYTES as usize + 1));
+        assert_eq!(file_view("blink", "panel/data.bin").unwrap()["problem"], "panel/data.bin is not text.");
+        assert!(file_view("blink", "long.md").unwrap()["problem"].as_str().unwrap().contains("too long to show"));
+        // A long file is shown in part, and says so.
+        write(&s, "blink/many.c", &"int x;\n".repeat(highlight::MAX_LINES + 5));
+        let many = file_view("blink", "many.c").unwrap();
+        assert_eq!(many["lines"].as_array().map(Vec::len), Some(highlight::MAX_LINES));
+        assert_eq!(many["more"], json!(format!("Only the first {} of its {} lines are shown.", highlight::MAX_LINES, highlight::MAX_LINES + 5)));
+        // A project with very many files offers so many, and says there are more.
+        for n in 0..(OFFERED + 3) {
+            write(&s, &format!("blink/doom/f{n:04}.h"), "");
+        }
+        let full = project_pane(&a, &ctx, "blink").unwrap();
+        assert_eq!(full["files"]["list"].as_array().map(Vec::len), Some(OFFERED));
+        assert!(full["files"]["more"].as_str().is_some_and(|more| more.starts_with("and ") && more.ends_with(" more")));
     }
 
     #[test]

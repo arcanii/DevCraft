@@ -123,6 +123,14 @@ pub(super) enum Act {
         project: String,
         docked: bool,
     },
+    /// Read one of a project's files in the window. What a project holds is shown to the
+    /// person at the screen, not to whatever drives the window.
+    ViewFile {
+        project: String,
+        path: String,
+    },
+    /// Stop reading it.
+    CloseFile,
 }
 
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
@@ -150,6 +158,8 @@ pub(super) struct State {
     new_for: bool,
     /// The C compiler being named.
     pub(super) compiler: String,
+    /// The file that is being read: the project's id, and the file's path in it.
+    pub(super) viewing: Option<(String, String)>,
 }
 
 fn state_id() -> egui::Id {
@@ -904,6 +914,34 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
     });
 }
 
+/// A file's lines as they are drawn: each with its number, and each piece in the colour of
+/// what it is. Text, and only text: nothing in a file is followed.
+fn code(ui: &egui::Ui, view: &Json) -> egui::text::LayoutJob {
+    let t = Tokens::get(ui.ctx());
+    let font = egui::FontId::monospace(12.0);
+    let plain = ui.visuals().text_color();
+    let lines = view["lines"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let digits = lines.len().to_string().len();
+    let mut job = egui::text::LayoutJob::default();
+    let mut add = |text: &str, color: egui::Color32| job.append(text, 0.0, egui::TextFormat { font_id: font.clone(), color, ..Default::default() });
+    for (n, line) in lines.iter().enumerate() {
+        add(&format!("{:>digits$}  ", n + 1), t.text_disabled);
+        for piece in line.as_array().map(Vec::as_slice).unwrap_or_default() {
+            let color = match piece[1].as_str() {
+                Some("comment") => t.text_dim,
+                Some("string") => ui.visuals().warn_fg_color,
+                Some("number") => ui.visuals().hyperlink_color,
+                Some("keyword") => t.accent,
+                Some("name") => ui.visuals().strong_text_color(),
+                _ => plain,
+            };
+            add(piece[0].as_str().unwrap_or_default(), color);
+        }
+        add("\n", plain);
+    }
+    job
+}
+
 /// One project: what it is for, where it stands, what it asks to be allowed, what is in it,
 /// and what it says it rebuilds of its workbook's macros.
 fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
@@ -951,7 +989,51 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
             ui.end_row();
         }
     });
-    // What it says it rebuilds of the workbook's macros.
+    // Its files, to choose one to read, and the one that is being read.
+    let files = &told["files"];
+    if files.is_object() {
+        heading(ui, said(files, "title"));
+        ui.label(small(said(files, "says")));
+        let reading = told["view"]["path"].as_str();
+        egui::ScrollArea::vertical().id_salt("project_files").max_height(96.0).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for path in files["list"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(Json::as_str) {
+                    let name = egui::RichText::new(path).monospace().small();
+                    if ui.selectable_label(reading == Some(path), name).clicked() {
+                        *action = Some(Act::ViewFile { project: said(told, "id").to_string(), path: path.to_string() });
+                    }
+                }
+                if let Some(more) = files["more"].as_str() {
+                    ui.label(small(more));
+                }
+            });
+        });
+    }
+    let view = &told["view"];
+    if view.is_object() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(said(view, "says")).strong());
+            if ui.small_button("Close File").clicked() {
+                *action = Some(Act::CloseFile);
+            }
+        });
+        match view["problem"].as_str() {
+            Some(problem) => {
+                ui.label(egui::RichText::new(problem).color(warn));
+            }
+            None => {
+                egui::Frame::NONE.fill(ui.visuals().extreme_bg_color).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+                    egui::ScrollArea::both().id_salt("project_file").max_height(340.0).auto_shrink([false, true]).show(ui, |ui| {
+                        ui.add(egui::Label::new(code(ui, view)).wrap_mode(egui::TextWrapMode::Extend));
+                    });
+                });
+            }
+        }
+        if let Some(more) = view["more"].as_str() {
+            ui.label(small(more));
+        }
+    }
     // What of it is built, how that stands, and the way to build it.
     let build = &told["build"];
     if build.is_object() {
@@ -1065,7 +1147,8 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             }
             let rows = kits::nav(app, &state.pane, &now);
             // The server's part is drawn from how things stand; the others from what `kits` says.
-            let told = if state.pane == Pane::Server { Json::Null } else { kits::pane(app, &ctx, &state.pane, &now) };
+            let mut told = if state.pane == Pane::Server { Json::Null } else { kits::pane(app, &ctx, &state.pane, &now) };
+            kits::with_view(&mut told, state.viewing.as_ref());
             // On a small screen both sides scroll, and Close stays in reach.
             let room = (ctx.content_rect().height() - 220.0).max(240.0);
             let row = ui.horizontal_top(|ui| {
@@ -1148,6 +1231,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             | Act::StopPlan(_)
             | Act::CreateShowcase
             | Act::CreateProject { .. }
+            | Act::CloseFile
     );
     if !anyones && driven {
         return Err(presence::BY_HAND.to_string());
@@ -1155,6 +1239,19 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
     match action {
         Act::Go(pane) => {
             state.pane = pane;
+            state.viewing = None;
+            Ok(String::new())
+        }
+        Act::ViewFile { project, path } => {
+            // Whether it is a file of the project, and can be shown, is said where it is drawn.
+            if kits::file_view(&project, &path).is_none() {
+                return Err("That project is no longer there.".into());
+            }
+            state.viewing = Some((project, path));
+            Ok(String::new())
+        }
+        Act::CloseFile => {
+            state.viewing = None;
             Ok(String::new())
         }
         Act::CreateProject { name, for_workbook, kit } => {
@@ -3129,6 +3226,90 @@ mod tests {
         assert_eq!(std::fs::read(&kept).unwrap().get(..4), Some(b"\0asm".as_slice()));
         assert_eq!(list()["projects"][0]["status"], "trusted", "building changed nothing of the project");
         assert_eq!(asked.questions().len(), 1, "only the trust was asked about");
+    }
+
+    #[test]
+    fn a_projects_file_is_read_in_the_window_by_the_person_and_not_by_what_drives_the_window() {
+        let _s = Sandbox::new("agents-files");
+        let mut h = harness(app_with(None));
+        projects::create_project_in(&kit::C, "Blink", None).unwrap();
+        open_top(&mut h);
+        go(&mut h, "Blink");
+        h.get_by_label(kits::FILES_NOTE);
+        assert!(h.query_by_label("Close File").is_none());
+        // What a project holds is shown to the person at the screen: the control channel,
+        // which is kept out of the projects folder, can't have a file put on screen.
+        drive(&mut h);
+        click(&mut h, "src/main.c");
+        assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
+        assert!(h.query_by_label("Close File").is_none() && h.query_by_label_contains("Hello from blink").is_none());
+        quiet(&mut h);
+        // By hand: the file, as the kit reads it, in lines.
+        click(&mut h, "src/main.c");
+        h.get_by_label_contains("src/main.c  \u{b7}  C  \u{b7}  ");
+        h.get_by_label_contains("puts(\"Hello from blink.\");");
+        // Another file takes its place.
+        click(&mut h, "project.toml");
+        h.get_by_label_contains("project.toml  \u{b7}  TOML");
+        h.get_by_label_contains("kit = \"c\"");
+        assert!(h.query_by_label_contains("puts(").is_none());
+        // Closed, it is gone; and going to another part of the window closes it too.
+        click(&mut h, "Close File");
+        assert!(h.query_by_label("Close File").is_none() && h.query_by_label_contains("kit = \"c\"").is_none());
+        click(&mut h, "src/main.c");
+        h.get_by_label("Close File");
+        go(&mut h, "C Development Kit");
+        go(&mut h, "Blink");
+        assert!(h.query_by_label("Close File").is_none());
+        // Reading a file trusts nothing and changes nothing.
+        assert_eq!(list()["projects"][0]["status"], "untrusted");
+    }
+
+    #[test]
+    fn the_page_is_told_the_file_that_is_read_and_asks_for_one_the_same_way() {
+        let _s = Sandbox::new("devpage-files");
+        projects::create_project_in(&kit::C, "Blink", None).unwrap();
+        let mut h = harness_alone(app_with(None));
+        let ctx = h.ctx.clone();
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(NAME, json!({}));
+        h.run_steps(3);
+        // The page is told where the window stands when it has loaded, and is clicked after.
+        assert_eq!(told(&mut h)["pane"]["kind"], "overview");
+        page(&mut h, json!({"act": "go", "to": "project:blink"}));
+        let before = told(&mut h);
+        assert_eq!(before["pane"]["kind"], "project");
+        assert_eq!(before["pane"]["files"]["list"], json!(["panel/index.html", "project.toml", "src/main.c"]));
+        assert_eq!(before["pane"]["view"], Json::Null);
+        // A click on a file there: the page is told its lines, in pieces that say what they are.
+        page(&mut h, json!({"act": "viewFile", "id": "blink", "path": "src/main.c"}));
+        let reading = told(&mut h);
+        assert_eq!((&reading["pane"]["view"]["path"], &reading["pane"]["view"]["language"]), (&json!("src/main.c"), &json!("C")));
+        assert_eq!(reading["pane"]["view"]["lines"][0], json!([["/*", "comment"]]));
+        assert_eq!(reading["error"], "");
+        // What is no file of the project says so, and shows nothing.
+        page(&mut h, json!({"act": "viewFile", "id": "blink", "path": "../../developer.json"}));
+        let refused = told(&mut h);
+        assert!(refused["pane"]["view"]["problem"].as_str().is_some_and(|why| why.ends_with("is not a file of this project.")));
+        assert_eq!(refused["pane"]["view"]["lines"], json!([]));
+        // A project that is not there is an error, and what was shown stays.
+        page(&mut h, json!({"act": "viewFile", "id": "nowhere", "path": "src/main.c"}));
+        assert_eq!(told(&mut h)["error"], "That project is no longer there.");
+        page(&mut h, json!({"act": "closeFile"}));
+        assert_eq!(told(&mut h)["pane"]["view"], Json::Null);
+        // What is not a request to read a file is not taken for one.
+        let long = format!("{{\"act\":\"viewFile\",\"id\":\"blink\",\"path\":\"{}\"}}", "x".repeat(600));
+        for bad in [
+            "{\"act\":\"viewFile\",\"id\":\"blink\"}",
+            "{\"act\":\"viewFile\",\"path\":\"src/main.c\"}",
+            "{\"act\":\"viewFile\",\"id\":\"../blink\",\"path\":\"src/main.c\"}",
+            "{\"act\":\"viewFile\",\"id\":\"blink\",\"path\":7}",
+            "{\"act\":\"viewFile\",\"id\":\"blink\",\"path\":\"\"}",
+            long.as_str(),
+        ] {
+            assert!(!devpage::handle(h.state_mut(), &ctx, bad), "{bad:.60}");
+        }
+        assert_eq!(told(&mut h)["pane"]["view"], Json::Null);
     }
 
     /// Reads `path` from a panel's address, as the page shown there would: the status, and

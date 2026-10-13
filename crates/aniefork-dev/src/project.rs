@@ -69,6 +69,25 @@ impl Project {
     pub fn name(&self) -> &str {
         self.manifest.as_ref().map_or(self.id.as_str(), |m| m.name.as_str())
     }
+
+    /// The text of one of the project's own files, to show it to the person. Only a file in
+    /// the project's list, which is what was fingerprinted (so nothing of what git keeps, and
+    /// no path that leaves the project); only a plain file; and at most `most` bytes long.
+    /// What it holds was written by the project's author: it is text to read, and no more.
+    pub fn read_text(&self, path: &str, most: u64) -> Result<String, String> {
+        if !self.files.iter().any(|file| file == path) {
+            return Err(format!("{path} is not a file of this project."));
+        }
+        let at = self.dir.join(path);
+        let found = fs::symlink_metadata(&at).map_err(|_| format!("{path} is no longer there."))?;
+        if !found.is_file() {
+            return Err(format!("{path} is not a plain file."));
+        }
+        if found.len() > most {
+            return Err(format!("{path} is {} KB: too long to show here.", found.len().div_ceil(1024)));
+        }
+        fs::read_to_string(&at).map_err(|_| format!("{path} is not text."))
+    }
 }
 
 /// Lists a project's files (paths inside it), refusing anything that isn't a plain file or folder.
@@ -355,6 +374,40 @@ pub(crate) mod tests {
         t.write("only-git/.git/HEAD", "x");
         let only = load(&t.0.join("only-git"));
         assert!(!only.is_sound() && only.files.is_empty() && only.problem.unwrap().contains("project.toml"));
+    }
+
+    #[test]
+    fn only_a_projects_own_files_are_read_out_as_text_and_only_so_much() {
+        let t = TempDir::new("read-text");
+        let dir = sample(&t);
+        t.write("clean-data/.git/config", "[remote]\n\turl = https://user:secret-token@example.invalid/x.git\n");
+        std::fs::write(dir.join("panel/picture.bin"), [0u8, 159, 146, 150, 255]).unwrap();
+        std::fs::write(t.0.join("outside.txt"), "not the project's").unwrap();
+        let m = load(&dir);
+        assert!(m.is_sound(), "{:?}", m.problem);
+        assert_eq!(m.read_text("python/clean.py", 1_000).unwrap(), std::fs::read_to_string(dir.join("python/clean.py")).unwrap());
+        // Not what is outside it, by any spelling, nor what git keeps in it.
+        for path in [
+            "../outside.txt",
+            "python/../../outside.txt",
+            "/outside.txt",
+            ".git/config",
+            ".GIT/config",
+            "python",
+            "",
+            "nowhere.py",
+            "python\\clean.py",
+        ] {
+            let refused = m.read_text(path, 1_000).unwrap_err();
+            assert!(refused.ends_with("is not a file of this project."), "{path}: {refused}");
+        }
+        // Not what is no text, and not more than was asked for.
+        assert_eq!(m.read_text("panel/picture.bin", 1_000).unwrap_err(), "panel/picture.bin is not text.");
+        let long = m.read_text("python/clean.py", 3).unwrap_err();
+        assert!(long.starts_with("python/clean.py is 1 KB: too long"), "{long}");
+        // A file that went since the project was read is said to be gone.
+        std::fs::remove_file(dir.join("python/clean.py")).unwrap();
+        assert_eq!(m.read_text("python/clean.py", 1_000).unwrap_err(), "python/clean.py is no longer there.");
     }
 
     #[test]

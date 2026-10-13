@@ -46,6 +46,8 @@ const MAX_REASON: usize = 400;
 const MAX_NAME: usize = 80;
 /// The longest name typed for the C compiler: a path or a command (characters).
 const MAX_COMPILER: usize = 400;
+/// The longest path of a project's file the page may ask to read.
+const MAX_PATH: usize = 512;
 /// How often what the window shows is worked out again while nothing was clicked (milliseconds).
 const EVERY_MS: f64 = 300.0;
 
@@ -334,10 +336,12 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
         state.pane = Pane::first_kit();
     }
     // The list down the side, and the one part that is shown beside it.
-    let part = match &state.pane {
+    let mut part = match &state.pane {
         Pane::Server => server_part(&now, &state),
         other => kits::pane(app, ctx, other, &now),
     };
+    // The file that is being read, in the part of the project it is a file of.
+    kits::with_view(&mut part, state.viewing.as_ref());
     let told = json!({
         "theme": theme(ctx),
         "title": kits::TOP,
@@ -445,6 +449,13 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         "build" => {
             message.get("id").and_then(Json::as_str).filter(|id| gridcraft_aniefork_dev::manifest::valid_id(id)).map(|id| Act::Build(id.to_string()))
         }
+        // One of a project's files, to read: the project by its id, the file by its path in it.
+        "viewFile" => {
+            let project = message.get("id").and_then(Json::as_str).filter(|id| gridcraft_aniefork_dev::manifest::valid_id(id));
+            let path = message.get("path").and_then(Json::as_str).filter(|path| !path.is_empty() && path.len() <= MAX_PATH);
+            project.zip(path).map(|(project, path)| Act::ViewFile { project: project.to_string(), path: path.to_string() })
+        }
+        "closeFile" => Some(Act::CloseFile),
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
         // A project's panel, docked in GridCraft's window or in the browser: the project by its id.

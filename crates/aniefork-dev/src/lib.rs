@@ -23,6 +23,7 @@
 //! - [`console`]: the Developer console: what projects printed and logged, and what failed.
 //! - [`agents`]: the Development server, a second MCP server for agents that help with
 //!   development work, as far as the user lets them go.
+//! - [`highlight`]: how a project's files are read for showing, from what its kit describes.
 //! - [`starter`]: "New Project".
 //! - [`showcase`]: a project whose panel is a Svelte app, to show a web toolkit at work.
 //! - [`paths`], [`settings`]: where projects, decisions and the subsystem's settings are kept.
@@ -39,6 +40,7 @@ pub mod bridge;
 pub mod c;
 pub mod c_program;
 pub mod console;
+pub mod highlight;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;
 pub mod kit;

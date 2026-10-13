@@ -30,6 +30,7 @@
 //! the project is for: nothing is allowed or run because of it. (Until 2026-10-13 a project
 //! was called a module, and its manifest `module.toml`: what was made then is still read.)
 
+use crate::highlight::{self, Language};
 use crate::manifest::{self, Manifest, Permission};
 
 /// A development kit, as it is listed.
@@ -57,6 +58,9 @@ pub struct Kit {
     pub scripts: bool,
     /// Its projects are built, from a recipe (`[c]` in the manifest).
     pub builds: bool,
+    /// How the files its projects hold are read for showing: the languages it describes
+    /// ([`crate::highlight`]). A file of another kind is shown plain.
+    pub languages: &'static [&'static Language],
 }
 
 /// The kit there was before there were two: Python scripts and a web panel.
@@ -72,6 +76,15 @@ pub const ANIE: Kit = Kit {
     panels: true,
     scripts: true,
     builds: false,
+    languages: &[
+        &highlight::PYTHON,
+        &highlight::MARKUP,
+        &highlight::JAVASCRIPT,
+        &highlight::CSS,
+        &highlight::TOML,
+        &highlight::JSON,
+        &highlight::MARKDOWN,
+    ],
 };
 
 /// Programs written in C: built as WebAssembly, and run in the project's panel.
@@ -91,6 +104,16 @@ pub const C: Kit = Kit {
     panels: true,
     scripts: false,
     builds: true,
+    // Its own language, and those of the page that runs the program.
+    languages: &[
+        &highlight::C,
+        &highlight::MARKUP,
+        &highlight::JAVASCRIPT,
+        &highlight::CSS,
+        &highlight::TOML,
+        &highlight::JSON,
+        &highlight::MARKDOWN,
+    ],
 };
 
 /// The kits that are loaded, in the order they are listed.
