@@ -921,7 +921,10 @@ mod server {
     /// Whether the project is one GridCraft builds a program from: its kit builds, and it has a
     /// recipe. Only such a project is served a program and its loader.
     fn is_built(found: &project::Project) -> bool {
-        found.manifest.as_ref().is_some_and(|manifest| manifest.c.is_some() && kit::of(Some(manifest)).builds)
+        found
+            .manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.c.is_some() && kit::of_in(found.dir.parent().unwrap_or(&found.dir), Some(manifest)).builds)
     }
 
     /// The program built from the project as it is now, which is as the person trusts it: the

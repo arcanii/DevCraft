@@ -191,7 +191,8 @@ pub fn load(dir: &Path) -> Project {
     match checked {
         Ok(m) => {
             // It has to be a project its kit can have, and what it points at has to be in it.
-            let of_no_kit = kit::check(&m).err();
+            // Its kit is one GridCraft is built with, or one loaded beside the projects folder.
+            let of_no_kit = kit::check_in(dir.parent().unwrap_or(dir), &m).err();
             let missing_panel = m.panel.as_ref().filter(|entry| !project.files.contains(entry));
             let missing_scripts = m.python.as_ref().filter(|folder| !project.files.iter().any(|f| f.starts_with(&format!("{folder}/"))));
             // What a recipe names to build has to be in it too.
@@ -454,7 +455,7 @@ pub(crate) mod tests {
         t.write("rusty/project.toml", "id = \"rusty\"\nname = \"Rusty\"\nversion = \"1\"\nkit = \"rust\"\n");
         let rusty = load(&t.0.join("rusty"));
         assert!(!rusty.is_sound() && rusty.manifest.is_some() && rusty.fingerprint.is_some());
-        assert_eq!(rusty.problem.as_deref(), Some("it is a project of the kit \"rust\", which this GridCraft doesn't have"));
+        assert_eq!(rusty.problem.as_deref(), Some("it is a project of the kit \"rust\", which this GridCraft doesn't have: it is not loaded"));
         // Naming the first kit is the same as naming none.
         t.write("clean-data/project.toml", &format!("kit = \"anie\"\n{MANIFEST}"));
         t.write("clean-data/panel/index.html", "<h1>Clean Data</h1>");

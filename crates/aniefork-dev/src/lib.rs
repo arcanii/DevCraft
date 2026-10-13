@@ -9,7 +9,7 @@
 //!
 //! - [`kit`]: the development kits that are loaded (the Anie Development Kit, which is most
 //!   of this crate, and the C Development Kit, which builds a project's C and runs it in the
-//!   project's panel), and the two kinds of project: the code of one workbook, and a library.
+//!   project's panel), and what a project is for: the code of one workbook, or any workbook.
 //! - [`manifest`]: `project.toml`, and the permissions a project can ask for.
 //! - [`project`]: projects on disk and their fingerprints.
 //! - [`trust`]: the user's decisions, bound to fingerprints.
@@ -44,6 +44,8 @@ pub mod highlight;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;
 pub mod kit;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod kitpack;
 pub mod manifest;
 pub mod paths;
 pub mod project;
@@ -81,8 +83,8 @@ pub fn describe(project: &Project, store: &TrustStore) -> Json {
         "author": manifest.map(|m| m.author.as_str()).unwrap_or(""),
         "description": manifest.map(|m| m.description.as_str()).unwrap_or(""),
         // The kit it is listed under: the one it names, or the first when it can't be placed.
-        "kit": kit::of(manifest).id,
-        // What it is for: the code of the workbook it names, or a library.
+        "kit": kit::of_in(project.dir.parent().unwrap_or(&project.dir), manifest).id,
+        // What it is for: the code of the workbook it names, or any workbook.
         "kind": kit::ProjectKind::of(manifest).code(),
         "workbook": manifest.and_then(|m| m.workbook.as_deref()),
         // What it says it rebuilds of a workbook's macros: its own word.
@@ -122,7 +124,7 @@ mod tests {
         assert_eq!(before["asks"][1]["unlimited"], json!(true), "Python is marked as the one that can't be limited");
         assert!(before["asks"].as_array().unwrap().iter().all(|a| a["means"].as_str().is_some_and(|text| !text.is_empty())));
         assert_eq!(before["files"], json!(["panel/index.html", "project.toml", "python/clean.py"]));
-        assert_eq!((&before["kind"], &before["workbook"], &before["rebuilt"]), (&json!("library"), &Json::Null, &Json::Null));
+        assert_eq!((&before["kind"], &before["workbook"], &before["rebuilt"]), (&json!("general"), &Json::Null, &Json::Null));
         assert_eq!(before["kit"], json!("anie"), "a project that names no kit is the first kit's");
         // A project of the C kit says so; one of a kit this build lacks is listed under the first, as a problem.
         t.write("blink/project.toml", "id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\n");

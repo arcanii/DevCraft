@@ -77,6 +77,69 @@ pub fn report(p: &Json) -> Result<Json, String> {
     Ok(json!({"total": total, "kept": kept, "entries": shown, "note": NOTE}))
 }
 
+/// The most entries the Development window's Console part shows, and the most of one entry's text.
+const IN_PART: usize = 200;
+const TEXT_IN_PART: usize = 4_000;
+
+/// The Console as a part of the Development window: the latest entries, oldest first, each
+/// with who said it and when. What an entry holds was written by a project: it is text.
+pub(super) fn pane() -> Json {
+    let console = console();
+    let (total, kept) = console.counts();
+    let now = crate::now_ms();
+    let all = console.entries();
+    let mut projects: Vec<&str> = all.iter().map(|entry| entry.project.as_str()).collect();
+    projects.sort_unstable();
+    projects.dedup();
+    let entries: Vec<Json> = all
+        .iter()
+        .skip(all.len().saturating_sub(IN_PART))
+        .map(|entry| {
+            let cut = entry.text.chars().count() > TEXT_IN_PART;
+            json!({
+                "seq": entry.seq,
+                "who": heading(entry, now),
+                "project": entry.project,
+                "kind": entry.kind.code(),
+                "text": if cut { format!("{}…", entry.text.chars().take(TEXT_IN_PART).collect::<String>()) } else { entry.text.clone() },
+            })
+        })
+        .collect();
+    let dropped = usize::try_from(total).unwrap_or(usize::MAX).saturating_sub(kept);
+    json!({
+        "kind": "console",
+        "title": "Console",
+        "above": [super::kits::TOP],
+        "aboveGo": [super::kits::Pane::Overview.code()],
+        "intro": INTRO,
+        "note": NOTE,
+        "empty": EMPTY,
+        "all": ALL,
+        "says": match (kept, dropped) {
+            (0, _) => "No entries.".to_string(),
+            (kept, 0) => format!("{kept} entr{}.", if kept == 1 { "y" } else { "ies" }),
+            (kept, dropped) => format!("{kept} entr{} kept; {dropped} older were dropped.", if kept == 1 { "y" } else { "ies" }),
+        },
+        "projects": projects,
+        "entries": entries,
+    })
+}
+
+/// Forgets every entry. Whoever calls this has made sure the person asked: an agent that
+/// could clear the console could hide what a project did.
+pub(super) fn clear() -> String {
+    console().clear();
+    "The console was cleared.".into()
+}
+
+/// Copies the entries (of one project, or of all) to the clipboard as text.
+pub(super) fn copy(ctx: &egui::Context, project: Option<&str>) -> String {
+    let all = console().entries();
+    let shown: Vec<&Entry> = all.iter().filter(|entry| project.is_none_or(|id| entry.project == id)).collect();
+    ctx.copy_text(as_text(&shown));
+    format!("{} entr{} copied.", shown.len(), if shown.len() == 1 { "y was" } else { "ies were" })
+}
+
 /// What the dialog's values report when it opens.
 pub fn values() -> Json {
     json!({"entries": console().counts().1, "project": ""})
@@ -333,6 +396,36 @@ mod tests {
         h.get_by_label("what a project did next");
         // Nor is there a command that clears it.
         assert!(crate::aniefork::commands().all(|c| !c["id"].as_str().unwrap().to_lowercase().contains("clear")));
+    }
+
+    #[test]
+    fn the_console_is_a_part_of_the_development_window_too() {
+        let (mine, other) = ("clean-data", "tools");
+        let console = console();
+        console.push(mine, "clean.py", Kind::Printed, "three rows cleaned");
+        console.push(other, "panel", Kind::Refused, "no, that needs write");
+        console.push(mine, "clean.py", Kind::Error, &"x".repeat(TEXT_IN_PART + 50));
+        let told = pane();
+        assert_eq!((&told["kind"], &told["says"], &told["projects"]), (&json!("console"), &json!("3 entries."), &json!([mine, other])));
+        let entries = told["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 3, "oldest first");
+        assert_eq!(
+            (&entries[0]["text"], &entries[0]["project"], &entries[0]["kind"]),
+            (&json!("three rows cleaned"), &json!(mine), &json!("printed"))
+        );
+        assert!(entries[0]["who"].as_str().unwrap().starts_with("clean-data · clean.py · "));
+        assert_eq!(entries[1]["kind"], "refused");
+        // A long entry is cut, and says so with a mark.
+        let long = entries[2]["text"].as_str().unwrap();
+        assert_eq!(long.chars().count(), TEXT_IN_PART + 1);
+        assert!(long.ends_with('…'));
+        // Copied as text, one project's or all; and cleared.
+        let ctx = egui::Context::default();
+        assert_eq!(copy(&ctx, Some(other)), "1 entry was copied.");
+        assert_eq!(copy(&ctx, None), "3 entries were copied.");
+        assert_eq!(clear(), "The console was cleared.");
+        let empty = pane();
+        assert_eq!((&empty["says"], &empty["entries"], &empty["empty"]), (&json!("No entries."), &json!([]), &json!(EMPTY)));
     }
 
     #[test]

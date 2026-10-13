@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-13, upstream `84acf62` (407 commits since the merge before; no release since 0.6.1) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 15 changes upstream lacks (below) |
+| Fork carries | 16 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -37,9 +37,10 @@ merged; delete the row once a merge of upstream brings it back.
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
-| **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development, the MCP server, the development kits, and under the Anie Development Kit its projects, as workbook code or libraries. Each has a part of its own, and a new project is made in the kit's part. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, changes in `development.rs`, `devpage.rs`, `projects.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
+| **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development (a toolbox), the MCP server, and the development kits, each set apart in a frame with its shield. A kit's projects are listed in the kit's own part, as one list, and each has a part of its own; a new project is made in the kit's part. A project is called a project: one that names a workbook says so, one that names none is for any workbook, and none is called a library. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, `icons.rs`, changes in `development.rs`, `devpage.rs`, `developer.rs`, `projects.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
 | **The C Development Kit** (phases K1 to K3): a second kit beside the first, compiled in. A project names its kit (`kit = "c"`), holds C sources and a panel, and says what is built in a recipe that is a list, never a command. The person's own zig builds it as one WebAssembly program, by hand, for a project they trust, from the project's files and the compiler's and nothing else; the program is kept beside the settings under the fingerprint of the files it was built from. The project's panel runs it: GridCraft serves the program built from the files as they are trusted then, and a loader that hands it a clock, a place to print and files in memory, and no more. What git keeps in a project (`.git`) is left out of it. | `crates/aniefork-dev/src/` (`kit.rs`, `c.rs`, `c_program.rs`, changes in `manifest.rs`, `project.rs`, `bridge.rs`, `starter.rs`, `settings.rs`, `agents.rs`); `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`) | Not offered: fork-only (the loader is JavaScript as text, against upstream's "Rust only") |
-| **A viewer for a project's files** (phase F1, first slice): a project's part of the Development window offers its files and shows the one chosen, as text, with its syntax coloured. The kit describes the languages of its projects' files (what a comment, a string, a number and a keyword is); GridCraft does the colouring from that, and nothing of a kit or a project is run to show a file. Reading needs no trust, and choosing a file is by hand only. | `crates/aniefork-dev/src/highlight.rs`, changes in `kit.rs`, `project.rs`; `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`); the page in `apps/gridcraft/src/aniefork/page.rs` | Not offered; a direction of the fork's own |
+| **Development kits from package files** (phases P1 to P3): a `.gridkit` is a zip with a `kit.toml` and an optional starter, for a kit that describes its projects and runs nothing of its own; they run by the built-in kit it stands on, with that kit's limits. The person loads one with the "+" over the kits (the operating system's file dialog, then its own question) and removes one the same way; a removed kit's projects stay and say their kit is not loaded. The page also houses what Projects, the Console and Macros did in windows of GridCraft's own. | `crates/aniefork-dev/src/kitpack.rs`, `kit.rs`, `starter.rs`; `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`, `projects.rs`, `console.rs`, `macros.rs`); the page | Not offered; ADR-0001 has a staged plan for offering the first kit |
+| **A viewer for a project's files** (phase F1): a project's part of the Development window, and a project being reviewed in Projects, offer its files and show the one chosen, as text, with its syntax coloured. The kit describes the languages of its projects' files (what a comment, a string, a number and a keyword is); GridCraft does the colouring from that, and nothing of a kit or a project is run to show a file. Reading needs no trust, and choosing a file is by hand only. | `crates/aniefork-dev/src/highlight.rs`, changes in `kit.rs`, `project.rs`; `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`, `projects.rs`); the page in `apps/gridcraft/src/aniefork/page.rs` | Not offered; a direction of the fork's own |
 | **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding; Developer ▸ Macros shows it beside the macros. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs`; `crates/ui-egui/src/aniefork/macros.rs` | Not offered; a direction of the fork's own |
 | **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
@@ -447,8 +448,17 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
   **Anie Development Kit** (Python and Svelte) and the **C Development Kit**, which builds
   a project's C as WebAssembly and runs it in the project's panel. There is no way to load
   another, and the window says so.
-- **Projects** under the kit, by what they are for: **workbook code** and **libraries**. A
+- **Projects** are listed in their kit's own part, as one list, and not down the side. One
+  that is a workbook's code says so beside its name; no project is called a library (the
+  word is kept for a project that others, or a spreadsheet, can refer to: none can yet). A
   project has a part of its own; a new one is made in the kit's part.
+- **The look** (the owner's review, 2026-10-13): Development carries a toolbox, in the ribbon
+  and at the top of the window; a kit carries a shield and stands in a frame of its own. The
+  two icons are the fork's, drawn in code. What a kit is made of is a badge: its name in
+  capitals on the colour it is known by, and in the page its mark beside it. **The marks are
+  other people's** (Python's, Svelte's, the C in its hexagon; from Simple Icons, CC0): the
+  fork's one exception to upstream's rule on iconography, by the owner's decision, listed in
+  [`ATTRIBUTION-aniefork.md`](ATTRIBUTION-aniefork.md), and never to be offered upstream.
 - Both windows show it: GridCraft's own, and the page, redrawn around the list.
 
 **The C Development Kit builds a project and runs it in its panel** (phases K1 to K3,
@@ -492,8 +502,8 @@ repository (`G:\gridcraft-doom`).
   needs.
 - **Not seen**: anyone playing (no key was sent), and the owner's own GridCraft.
 
-**A project's files can be read in the Development window** (phase F1, first slice,
-2026-10-13; first in the order the owner confirmed).
+**A project's files can be read in the Development window, and where it is reviewed**
+(phase F1, 2026-10-13, in two slices; first in the order the owner confirmed).
 
 - **A project's part offers its files**, and shows the one chosen as text: each line with
   its number, and comments, quoted text, numbers, the language's own words and names each
@@ -505,7 +515,10 @@ repository (`G:\gridcraft-doom`).
 - **Only a project's own files**, only text, and only so much (256 KB, 2,000 lines).
 - **Reading needs no trust**: it is for reading a project before trusting it. Choosing a
   file is by hand only.
-- **Not built**: the viewer in Review, where trust is decided; a kit's own editor.
+- **In Review too** (Developer ▸ Projects), above the choice to trust: the person reads
+  what they are about to trust. Reading leaves the fingerprint under review as it was, and
+  a file read after the project changed says so.
+- **Not built**: a kit's own editor.
 
 **Planned, not built: a project that travels in a workbook, and builds for a platform**
 (the owner's request, 2026-10-13; ADR-0001 has the plan and what is theirs to say). The
@@ -524,6 +537,8 @@ viewer for a project's files, asked for with it, is above.
   organisation govern what its people build for themselves. A program for a platform with
   no good signature never runs on another machine than the one that built it. A
   developer's name is shown as claimed unless an organisation's server vouches for it.
+  **In a person's own GridCraft the person is in control** (decided): a project with no
+  signature is theirs to trust by its fingerprint, as today.
 - **Builds for a platform** (Windows x86-64 and the like) beside the WebAssembly build,
   and GridCraft runs the one for the platform it is on. A project can also travel as source,
   with the list of what building it needs, or as both.
@@ -611,8 +626,10 @@ own.
 - **What a project says it rebuilt is a claim.** Nothing compares a script with the
   procedure, and GridCraft can't run the macro to compare what the two give. The rebuild
   was tried once, on one small procedure.
-- **Kits: two, and no way to load another.** How one would be loaded is not decided
-  (ADR-0001 has what is known). A kit can't be turned off as a whole. The second, for C,
+- **Kits: two built in, and more from package files** (`.gridkit`, since 2026-10-13). A
+  kit from a package describes and runs nothing of its own; it can't bring languages for
+  the viewer yet, there is no button to pack one, and one with code of its own waits for
+  signing. A kit can't be turned off as a whole. The second, for C,
   is compiled in like the first: it shows two kits, and still loads none. An agent's
   `create_project` makes the first kit's starter only, and an agent can't ask for a build.
 - **Two C programs have been seen running in a docked panel**: the starter, which prints,
@@ -637,8 +654,11 @@ own.
   finds them gone: they are `create_project` and the like now.
 - **A project names its workbook by the file's name**: two workbooks of one name are the
   same to it.
-- Reviewing and trusting a project, and running its scripts, are still done in Projects,
-  not in its own part of the Development window. Its panel can be shown from either.
+- Reviewing and trusting a project, and running its scripts, are done in its own part of
+  the Development window where that is the page; in GridCraft's own window they are still
+  done in Projects. Its panel can be shown from either.
+- **The page's own code is run by no test of the repository.** A part that changes has to be
+  looked at in a copy with settings of its own.
 - **The Development window as a page is Windows only**, and a second thing to keep alike:
   what the two windows say is shared, how they are laid out is not. Its place and size are
   not remembered. To change the page: `cargo test -p gridcraft -- --ignored
@@ -690,7 +710,7 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
-| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project. When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
+| `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
 
@@ -763,6 +783,91 @@ included.
 
 Newest first.
 
+- **2026-10-13 (kits from package files, built; and three things planned):** The owner
+  approved the plan for kit packages as recommended. **Built** (P1 to P3): a `.gridkit` is a
+  zip with a `kit.toml` and an optional starter, for a kit that describes and runs nothing of
+  its own (`kitpack.rs`: read with hard limits, `install`, `remove`, `pack`); the list of
+  kits is the two built in and those in `kits/` beside the projects (`kit.rs`: `all`,
+  `named_in`, `of_in`, `check_in`); "+" over the kits loads one through the operating
+  system's file dialog and its own question, "Remove Kit" removes one the same way, and its
+  projects stay and say their kit is not loaded; a new project of a loaded kit begins from
+  its starter. `zip` joins the Development crate's dependencies (the workspace's own).
+  Seen in the isolated copy with a sample kit put in place; the two clicks that open the
+  operating system's dialogs were not made. **Pull request 990 is set aside** on the
+  owner's word after trying it ("really basic"). **Planned, in ADR-0001**: offering the work
+  upstream in stages, the Python and Svelte kit first (U0 a proposal, U1 projects that do
+  nothing yet, U2 a panel, U3 Python); a formula that calls a project, and an immediate
+  line in the Console. Upstream has no plugin system: its own documents say so.
+- **2026-10-13 (the page houses Projects, the Console and Macros; pull request 990 fetched
+  and built):** The owner on "the nice dialog": "I meant using the svelte dialog for housing
+  the development feature dialogs - the standard gridcraft dialogs are quite plain." Built:
+  a project is trusted, and its scripts run, in its own part of the page (GridCraft notes the
+  fingerprint when the part is first shown and trusts that one only; when the files change
+  it says so and offers Look Again; it still ends in the operating system's question); the
+  Python is named in its kit's part; the Console and Macros are parts of the window, in the
+  list; the ribbon's Projects, Console and Macros open the page there. GridCraft's own
+  windows stay for a shell without a web view. In `development.rs` (ten acts), `devpage.rs`
+  (their messages, `route`, `open_at`), `kits.rs` (`with_trust`, two parts), `projects.rs`
+  (`trust_says`, `poll_run`), `console.rs` and `macros.rs` (`pane`); the page's
+  `Console.svelte` and `Macros.svelte`. Seen in the isolated copy, where a fault no test
+  would find was found (a part that drew nothing: a name that clashed with a Svelte rune).
+  Not seen: the click that trusts, a script run, a console with entries, macros in a
+  workbook. **Pull request 990** was fetched as the branch `pr-990`, searched for anything
+  that runs at build time or reaches a process, the network or files, built in
+  `G:\gridcraft-pr990`, and **not run**: `run-isolated.cmd` there starts it with settings
+  of its own, for the owner to do.
+- **2026-10-13 (the kits: a filter, a summary, no link to GridCraft's own window; and a
+  plan for kits from package files):** The owner: remove the link to GridCraft's window; a
+  way to load a new Development Kit from a package file with a "+", and to remove one; a
+  full-text filter over the kits; a summary of how many kits there are and the space they
+  use. **Built**: the page's link is gone (GridCraft's own window is what a shell without a
+  web view shows); a field over the kits filters them by every word typed, looked for in
+  what a kit says of itself and of its projects (`kits.rs`: `kit_search`, `matches`; in the
+  page the typing stays in the page); "2 kits · 5 KB" over the kits, and each kit's own
+  space at the top and in its part (`space`: its projects' files, and for a kit that builds
+  what was built with what the compiler keeps; measured at most every fifteen seconds).
+  Seen in the isolated copy, the filter typed into. **Planned, not built**: a kit from a
+  package file (ADR-0001, with four points that are the owner's to say). It means the list
+  of kits stops being fixed in the code, which reaches everything that decides what a
+  project may ask.
+- **2026-10-13 (badges, with their logos):** The owner pointed at a collection of badges
+  (shields.io pictures: a name on a colour, with a logo) and asked for the like for a kit's
+  languages and UI toolkit; and of the first build, which had the names alone: "we want the
+  logos". Told that the logos are other people's marks, that upstream's rule keeps anyone
+  else's iconography out of the repository, and that getting them is a download, the owner
+  chose Simple Icons, in the fork only. Built: what a kit is made of is a badge in both
+  windows (`icons.rs`: `badge_for`, `badge`); the page draws each with its mark
+  (`Badge.svelte`, `logos.js`: three paths from Simple Icons 16.35.0, CC0, unchanged), and
+  GridCraft's own window with the name alone. `ATTRIBUTION-aniefork.md` is new: the fork's
+  list of what it holds that is not its own, and the record of the exception. Tests: the
+  marks are paths and nothing else, the built page holds each, and every badge that has a
+  colour has one. Seen in the isolated copy. **Not to be offered upstream.** Not checked:
+  each owner's terms for its mark.
+- **2026-10-13 (the Development window's look and words, first part of the owner's
+  review):** The owner, with pictures of the ribbon and the window: Development should be
+  tools or a toolbox; shields for the development kits, each in a bubble; no projects down
+  the left side; "Projects", not "Libraries", inside a kit ("We interchange Project and
+  Library which is confusing"). Built: two icons of the fork's own, drawn in code
+  (`aniefork/icons.rs`: a toolbox and a shield), with the ribbon's Development button drawn
+  by the fork so that upstream's list of icons stays untouched; the list down the side stops
+  at the kits, each in a frame with its shield and its count of projects; a kit's part lists
+  its projects as one list, and one that is a workbook's code says so beside its name; the
+  line above a part's title is a way back, place by place; in GridCraft's own window the
+  same, and a project's name there is a button drawn as a link. **A project's `kind` in what
+  agents are told is `"general"` where it was `"library"`**, and the server's instructions
+  say to call it a project. "Library" is kept for a project that others, or a spreadsheet,
+  can refer to: none can yet. The page was built again with npm (the packages already
+  there, nothing fetched). Seen in a copy with settings of its own, in both windows
+  (`target/k3-prep/seen/ux/`). **Not built: "the nice dialog"**, read as Projects, the
+  Console and Macros moving into the page; it would mean trust is given in the page, which
+  is the owner's to say (ADR-0001). Not seen: the light theme; other display scales.
+- **2026-10-13 (upstream's pull request 990, looked at):** The owner asked whether to
+  integrate it or handle it by a plugin system. It would make GridCraft run VBA (13,423
+  lines; open, unreviewed, in conflict with upstream's own `main`). Read as a diff: enabling
+  and running macros are commands an agent and the control channel reach; a macro can save a
+  file where it likes. Recommended: not into the fork now; if upstream merges it, take it
+  with that merge and govern it as a kit (trust by hand, by fingerprint, refused to agents).
+  ADR-0001 has it. Nothing built; nothing said on the pull request.
 - **2026-10-13 (merge of upstream `84acf62`):** 407 commits since the merge before, and no
   release among them (still 0.6.1). What they bring, in the main: AutoComplete for cell values
   with its switch on the Options page; a horizontal scrollbar in the sheet tab bar and an All
@@ -778,6 +883,22 @@ Newest first.
   (the viewer in Review, the Development window's new look and words) was set aside for the
   merge and put back after it. **Not in this merge**: upstream's pull request 990, which would
   make GridCraft run VBA. It is open and unreviewed; what it would mean here is in ADR-0001.
+- **2026-10-13 (who is in control: decided):** The design of signing left one thing to
+  ask: whether a project with no signature may still be trusted by its fingerprint. The
+  owner: "If GridCraft is individual, then yes - the user can control it." So a person's
+  own GridCraft is theirs to decide in, as today; an organisation's is the organisation's
+  (read from that, and from their earlier "at the organization level": set down in
+  ADR-0001 as a reading, for the owner to correct). No code.
+- **2026-10-13 (F1, second slice: the viewer in Review):** On the owner's word. A project
+  that is being reviewed in Developer ▸ Projects offers its files to read, with the same
+  viewer, above the choice to trust it. **Found by the slice's own test before it was
+  kept**: every action in that window reads the projects again, so reading a file put a
+  changed project's new fingerprint in place of the one under review, and Trust took it.
+  Reading and closing a file now leave the review as it was; a file read after the project
+  changed says so, and trusting is refused. Not looked at in the app: the Projects window
+  is GridCraft's own, where posted clicks do not land. Also that day, on the owner's word:
+  **the C-kit Doom project was put in the owner's own projects folder**, untrusted, the
+  earlier one kept aside, and a release built for it.
 - **2026-10-13 (whose word is taken for a developer: decided and designed):** The owner
   decided the four points left by the review: keys first; where an organisation has set
   GridCraft up a person trusts no developer themselves ("this would be at the organization

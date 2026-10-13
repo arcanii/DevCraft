@@ -21,3 +21,5 @@ getrandom = "0.3"
 # pages its text is stored in.
 cfb = "0.15"
 encoding_rs = "0.8"
+# A development kit's package is a zip (`kitpack.rs`): the reader the workspace already has.
+zip = { workspace = true }

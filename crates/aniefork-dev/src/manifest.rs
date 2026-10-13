@@ -118,8 +118,8 @@ pub struct Manifest {
     pub panel: Option<String>,
     /// The folder of scripts its panel may run, as a path inside the project.
     pub python: Option<String>,
-    /// The workbook it is the code of, by its file's name. `None`: it is a library, for any
-    /// workbook. It only says what the project is for: nothing is allowed or run because of it.
+    /// The workbook it is the code of, by its file's name. `None`: it is for any workbook.
+    /// It only says what the project is for: nothing is allowed or run because of it.
     pub workbook: Option<String>,
     /// The development kit it is a project of, by the kit's id ([`DEFAULT_KIT`] when it names
     /// none). Whether this build has such a kit, and what a project of it may hold, is for
@@ -315,7 +315,7 @@ scripts = "python"
         // The least a manifest can say: it asks for nothing and has no panel or scripts.
         let m = parse("id = \"x\"\nname = \"X\"\nversion = \"1\"", "x").unwrap();
         assert!(m.permissions.is_empty() && m.panel.is_none() && m.python.is_none() && m.author.is_empty());
-        assert_eq!(m.workbook, None, "a project that names no workbook is a library");
+        assert_eq!(m.workbook, None, "a project that names no workbook is for any");
         assert_eq!(m.kit, DEFAULT_KIT, "and one that names no kit is of the kit there was before there were two");
         assert_eq!(m.c, None, "and it has no C recipe");
         // A recipe is read with the rest, and a recipe that won't do makes the manifest invalid.

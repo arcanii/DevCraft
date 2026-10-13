@@ -211,6 +211,16 @@ fn start(ctx: &egui::Context) -> Result<Open, String> {
 /// shown as a page.
 pub fn keep_up(app: &mut SheetApp, ctx: &egui::Context) {
     devpage::host_is_here(ctx);
+    // A development kit's package is chosen in the operating system's own file dialog.
+    if !devpage::has_kit_picker() {
+        devpage::set_kit_picker(Box::new(|| {
+            rfd::FileDialog::new()
+                .set_title("Load a development kit")
+                .add_filter("GridCraft development kit", &["gridkit"])
+                .pick_file()
+                .and_then(|chosen| chosen.to_str().map(str::to_string))
+        }));
+    }
     // Whoever starts GridCraft can have the window open as it starts (`GRIDCRAFT_DEVELOPMENT`).
     // Opening it decides nothing.
     if AT_START.with(|first| first.replace(false)) && std::env::var_os("GRIDCRAFT_DEVELOPMENT").is_some_and(|set| !set.is_empty()) {
@@ -344,6 +354,51 @@ mod tests {
         // What the page says to GridCraft, it says through the one door.
         assert!(js.contains("window.ipc") && js.contains("gridcraftState"));
         assert!(!file("app.css").contains("url("), "the stylesheet loads nothing");
+    }
+
+    #[test]
+    fn the_page_has_a_colour_for_every_badge_gridcraft_names() {
+        // GridCraft says which badge something carries by a code; the page's stylesheet holds
+        // the colours. A code without a rule there would be drawn as nothing in particular.
+        let css = page::FILES.iter().find(|(file, _)| *file == "app.css").unwrap().1;
+        let script = page::FILES.iter().find(|(file, _)| *file == "app.js").unwrap().1;
+        let codes = devpage::badge_codes();
+        assert!(!codes.is_empty());
+        for code in codes {
+            assert!(css.contains(&format!(".b-{code}{{")), "the stylesheet has no badge {code:?}");
+            assert!(script.contains(&format!("b-{code}")), "the script knows no badge {code:?}");
+        }
+        assert!(css.contains(".b-plain") || css.contains(".tech{"), "a badge with no colour of its own is still a badge");
+    }
+
+    #[test]
+    fn the_marks_in_the_badges_are_paths_and_every_badge_with_a_colour_has_one() {
+        // The marks are other people's, from Simple Icons (the fork's exception:
+        // ATTRIBUTION-aniefork.md). What is kept of each is one path of drawing commands,
+        // which the page looks up by a code of its own.
+        let source = page::SOURCE.iter().find(|(file, _)| *file == "src/logos.js").unwrap().1;
+        let script = page::FILES.iter().find(|(file, _)| *file == "app.js").unwrap().1;
+        let codes = devpage::badge_codes();
+        let mut found = Vec::new();
+        for line in source.lines() {
+            let Some((code, rest)) = line.strip_prefix("  ").and_then(|entry| entry.split_once(": \"")) else { continue };
+            if !code.chars().all(|c| c.is_ascii_lowercase()) {
+                continue;
+            }
+            let path = rest.strip_suffix("\",").unwrap();
+            assert!(codes.contains(&code), "{code}");
+            assert!(!path.is_empty() && path.len() < 4000, "{code}");
+            assert!(path.chars().all(|c| "MmLlHhVvCcSsQqTtAaZz0123456789eE .,-".contains(c)), "{code}: not drawing commands alone");
+            assert!(script.contains(path), "the built page does not hold the mark of {code:?}: build it again");
+            found.push(code);
+        }
+        assert_eq!(found, codes, "a mark for every badge that has a colour, and no other");
+        // Whose they are and where the shapes are from is said with the page, and in the fork's list.
+        let notices = page::SOURCE.iter().find(|(file, _)| *file == "THIRD-PARTY.md").unwrap().1;
+        let listed = include_str!("../../../../ATTRIBUTION-aniefork.md");
+        for said in ["Simple Icons 16.35.0", "CC0 1.0", "Python Software Foundation", "not to be offered upstream"] {
+            assert!(notices.contains(said) && listed.contains(said), "{said}");
+        }
     }
 
     #[test]

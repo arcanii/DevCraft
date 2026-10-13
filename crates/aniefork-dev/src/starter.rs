@@ -42,9 +42,7 @@ fn workbook_line(workbook: Option<&str>) -> String {
     let Some(name) = workbook else { return String::new() };
     let quoted: String =
         name.chars().filter(|c| !c.is_control()).flat_map(|c| if matches!(c, '"' | '\\') { vec!['\\', c] } else { vec![c] }).collect();
-    format!(
-        "\n# The workbook this is the code of, by its file's name. Without this line it is a library,\n# for any workbook.\nworkbook = \"{quoted}\"\n"
-    )
+    format!("\n# The workbook this is the code of, by its file's name. Without this line it is for any\n# workbook.\nworkbook = \"{quoted}\"\n")
 }
 
 fn manifest_text(id: &str, name: &str, workbook: Option<&str>) -> String {
@@ -343,10 +341,72 @@ pub fn create(projects_dir: &Path, name: &str) -> Result<Project, String> {
     create_for(projects_dir, name, None)
 }
 
-/// The same, for a project that is the code of the workbook named `workbook` (a library when
-/// there is none). A name that can't be a workbook's is refused before anything is written.
+/// The same, for a project that is the code of the workbook named `workbook` (for any workbook
+/// when there is none). A name that can't be a workbook's is refused before anything is written.
 pub fn create_for(projects_dir: &Path, name: &str, workbook: Option<&str>) -> Result<Project, String> {
     create_in(projects_dir, &kit::ANIE, name, workbook)
+}
+
+/// Puts lines into a manifest right after the line that gives its id, where a manifest's own
+/// words stand before any of its tables. A line it already has for the same word is dropped.
+#[cfg(not(target_arch = "wasm32"))]
+fn after_id(text: &str, lines: &[String]) -> String {
+    let words: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line.trim_start_matches('\n').lines().find(|l| !l.starts_with('#') && !l.is_empty())?.split('=').next())
+        .map(str::trim)
+        .collect();
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if words.iter().any(|word| line.split('=').next().is_some_and(|said| said.trim() == *word) && line.contains('=')) {
+            continue;
+        }
+        out.push(line.to_string());
+        if line.trim_start().starts_with("id") && line.split('=').next().is_some_and(|said| said.trim() == "id") {
+            out.extend(lines.iter().map(|line| line.trim_matches('\n').to_string()));
+        }
+    }
+    out.join("\n") + "\n"
+}
+
+/// The files a new project of a kit from a package begins with: the kit's own starter, with
+/// the project's id and name written in where it says `{{id}}` and `{{name}}`; or, for a kit
+/// that brought none, the starter of the kit it stands on, naming this kit.
+#[cfg(not(target_arch = "wasm32"))]
+fn packaged_files(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&str>) -> Option<(String, Vec<(String, Vec<u8>)>)> {
+    let shown = plain(name);
+    let id = slug(&shown);
+    if shown.is_empty() || !manifest::valid_id(&id) {
+        return None;
+    }
+    let named = vec![format!("kit = \"{}\"", kit.id)];
+    let own = crate::kitpack::starter_files(projects_dir, kit);
+    let mut files: Vec<(String, Vec<u8>)> = if own.is_empty() {
+        let base = kit::named(kit.base).unwrap_or(&kit::ANIE);
+        files_for(base, name, None)?.1.into_iter().map(|(path, text)| (path.to_string(), text.into_bytes())).collect()
+    } else {
+        // Text is written with the project's own id and name; anything else is copied as it is.
+        own.into_iter()
+            .map(|(path, held)| match String::from_utf8(held) {
+                Ok(text) => (path, text.replace("{{id}}", &id).replace("{{name}}", &shown).into_bytes()),
+                Err(not_text) => (path, not_text.into_bytes()),
+            })
+            .collect()
+    };
+    // Its manifest names this kit, and the workbook it is the code of when it is one's.
+    for (path, held) in &mut files {
+        if path == manifest::FILE
+            && let Ok(text) = std::str::from_utf8(held)
+        {
+            let mut lines = named.clone();
+            let workbook = workbook_line(workbook);
+            if !workbook.is_empty() {
+                lines.push(workbook.trim_matches('\n').lines().last().unwrap_or("").to_string());
+            }
+            *held = after_id(text, &lines).into_bytes();
+        }
+    }
+    Some((id, files))
 }
 
 /// The same, for a project of `kit`: each kit has a starter of its own.
@@ -355,7 +415,17 @@ pub fn create_in(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&s
         Some(named) => manifest::workbook_name(named).map_err(|why| format!("The project can't be that workbook's code: {why}."))?,
         None => None,
     };
-    let Some((id, files)) = files_for(kit, name, workbook.as_deref()) else {
+    #[cfg(not(target_arch = "wasm32"))]
+    let made = if kit.built_in {
+        files_for(kit, name, workbook.as_deref())
+            .map(|(id, files)| (id, files.into_iter().map(|(path, text)| (path.to_string(), text.into_bytes())).collect::<Vec<_>>()))
+    } else {
+        packaged_files(projects_dir, kit, name, workbook.as_deref())
+    };
+    #[cfg(target_arch = "wasm32")]
+    let made = files_for(kit, name, workbook.as_deref())
+        .map(|(id, files)| (id, files.into_iter().map(|(path, text)| (path.to_string(), text.into_bytes())).collect::<Vec<_>>()));
+    let Some((id, files)) = made else {
         return Err("Give the project a name with at least one letter or digit.".into());
     };
     let dir = projects_dir.join(&id);
@@ -364,16 +434,22 @@ pub fn create_in(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&s
     }
     let failed = |e: std::io::Error| format!("The project could not be created: {e}");
     fs::create_dir_all(&dir).map_err(failed)?;
-    for (path, text) in files {
-        // Each of a starter's files is at the top or one folder down.
-        if let Some((folder, _)) = path.split_once('/') {
-            fs::create_dir_all(dir.join(folder)).map_err(failed)?;
+    for (path, held) in files {
+        if let Some(parent) = dir.join(&path).parent() {
+            fs::create_dir_all(parent).map_err(failed)?;
         }
-        fs::write(dir.join(path), text).map_err(failed)?;
+        fs::write(dir.join(&path), held).map_err(failed)?;
     }
     let created = project::load(&dir);
     match &created.problem {
-        Some(problem) => Err(format!("The project was created but can't be read back: {problem}")),
+        Some(problem) => {
+            // What a kit's starter made has to be a project. One that is not is taken away
+            // again: it is only what this call wrote.
+            if !kit.built_in {
+                let _ = fs::remove_dir_all(&dir);
+            }
+            Err(format!("The project was created but can't be read back: {problem}"))
+        }
         None => Ok(created),
     }
 }
@@ -438,7 +514,7 @@ mod tests {
         let m = create_for(&t.0, "Budget Macros", Some("Budget.xlsm")).unwrap();
         assert!(m.is_sound(), "{:?}", m.problem);
         assert_eq!(m.manifest.as_ref().unwrap().workbook.as_deref(), Some("Budget.xlsm"));
-        // Without a workbook, and with an empty one, it is a library like any starter.
+        // Without a workbook, and with an empty one, it is for any workbook like any starter.
         assert_eq!(create_for(&t.0, "Tools", None).unwrap().manifest.unwrap().workbook, None);
         assert_eq!(create_for(&t.0, "More Tools", Some("  ")).unwrap().manifest.unwrap().workbook, None);
         // A name with quotes in it stays a name: it adds nothing to the manifest.

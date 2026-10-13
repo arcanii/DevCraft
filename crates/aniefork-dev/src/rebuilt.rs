@@ -423,9 +423,9 @@ script = "report.py"
         let t = TempDir::new("rebuilt-claims");
         let projects = [
             project(&t, "budget", Some("Budget.xlsm"), Some(NOTE)),
-            // Another workbook's code, a library, a project without a note, one whose note is broken.
+            // Another workbook's code, one for any workbook, a project without a note, one whose note is broken.
             project(&t, "sales", Some("Sales.xlsm"), Some(NOTE)),
-            project(&t, "library", None, Some(NOTE)),
+            project(&t, "tools", None, Some(NOTE)),
             project(&t, "quiet", Some("Budget.xlsm"), None),
             project(&t, "broken", Some("Budget.xlsm"), Some("[[procedure]]\nstate = \"done\"")),
         ];

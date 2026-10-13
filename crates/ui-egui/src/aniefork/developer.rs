@@ -8,6 +8,7 @@
 use egui::{Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
+use super::icons::Glyph;
 use crate::SheetApp;
 use crate::icons::Icon;
 use crate::theme::Tokens;
@@ -47,7 +48,8 @@ pub fn ribbon(app: &mut SheetApp, ui: &mut egui::Ui) {
         app.open_dialog("agents", json!({}));
     }
     separator(ui);
-    if big_button(ui, Icon::Settings, "Development", "Your development tools, and how far an agent may help you with them", false).clicked() {
+    // Development is the toolbox: the fork's own icon (`icons.rs`), on a button like the others.
+    if super::icons::big_button(ui, Glyph::Toolbox, "Development", "Your development tools, and how far an agent may help you with them").clicked() {
         app.open_dialog(super::development::NAME, json!({}));
     }
     if big_button(ui, Icon::Folder, "Projects", "The projects you have installed, and whether you trust them", false).clicked() {

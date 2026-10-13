@@ -22,13 +22,26 @@
 //! and can't ask for `python` or `network`, so nothing of the Anie kit that can't be limited
 //! can be made to run for it.
 //!
-//! Both kits are compiled into GridCraft. There is no way to load one yet: how a kit that isn't
-//! compiled in would be loaded is not decided (ADR-0001).
+//! Both kits are compiled into GridCraft. **A further kit is loaded from a package file**
+//! ([`crate::kitpack`]; the owner's decision, 2026-10-13): it describes, and runs nothing of
+//! its own. Its projects are projects of one of the two built-in kits (its `base`), with that
+//! kit's limits; what it brings is its words and a starter. Such a kit is kept in a folder
+//! of its own beside the projects folder (`kits/<id>/kit.toml`), and found there: so which
+//! kits there are is asked for a projects folder ([`all`], [`named_in`], [`of_in`],
+//! [`check_in`]), and [`loaded`] is the two that are built in.
 //!
-//! **A project** is one of two kinds, by what its `project.toml` says: the code of one
-//! workbook, which it names, or a library, which is for any workbook. The kind only says what
-//! the project is for: nothing is allowed or run because of it. (Until 2026-10-13 a project
-//! was called a module, and its manifest `module.toml`: what was made then is still read.)
+//! **A project** is for one of two things, by what its `project.toml` says: it is the code
+//! of one workbook, which it names, or it is for any workbook. That only says what the
+//! project is for: nothing is allowed or run because of it. (Until 2026-10-13 a project was
+//! called a module, and its manifest `module.toml`: what was made then is still read.)
+//!
+//! **A project is not called a library.** The word is kept for a project that other projects,
+//! or a spreadsheet, can refer to. None can yet: nothing in a `project.toml` says so and
+//! nothing is built for it, so no window and no report uses the word (the owner, 2026-10-13:
+//! "We interchange Project and Library which is confusing").
+
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use crate::highlight::{self, Language};
 use crate::manifest::{self, Manifest, Permission};
@@ -50,6 +63,11 @@ pub struct Kit {
     pub not_yet: &'static str,
     /// It is compiled into GridCraft.
     pub built_in: bool,
+    /// The built-in kit its projects are projects of: itself, for a kit that is built in.
+    pub base: &'static str,
+    /// Its version and who made it, as a kit from a package says them. Empty for the built-in.
+    pub version: &'static str,
+    pub author: &'static str,
     /// What its projects may ask to be allowed.
     pub permissions: &'static [Permission],
     /// Its projects may have a panel (`[panel]` in the manifest).
@@ -72,6 +90,9 @@ pub const ANIE: Kit = Kit {
     project_is: "A project is a folder with a project.toml, Python scripts and a web panel.",
     not_yet: "",
     built_in: true,
+    base: manifest::DEFAULT_KIT,
+    version: "",
+    author: "",
     permissions: &Permission::ALL,
     panels: true,
     scripts: true,
@@ -97,6 +118,9 @@ pub const C: Kit = Kit {
     // What is left (an agent asking for a build) is not the person's concern.
     not_yet: "",
     built_in: true,
+    base: "c",
+    version: "",
+    author: "",
     // What a project's page can ask of the spreadsheet for the program it runs. The program
     // is WebAssembly: it reaches nothing but what that page hands it, so running it needs no
     // leave of its own, as `python` does.
@@ -116,9 +140,188 @@ pub const C: Kit = Kit {
     ],
 };
 
-/// The kits that are loaded, in the order they are listed.
+/// The kits GridCraft is built with, in the order they are listed.
 pub fn loaded() -> &'static [Kit] {
     &[ANIE, C]
+}
+
+/// The file in which a kit from a package says what it is, the most kits there can be, and
+/// the largest such a file may be.
+pub const KIT_FILE: &str = "kit.toml";
+pub const MAX_KITS: usize = 64;
+const MAX_KIT_FILE: u64 = 64 * 1024;
+
+/// What a kit from a package says of itself, in its `kit.toml`. Anything else said there is
+/// refused: a word this GridCraft does not know is not passed over.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Described {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub author: String,
+    /// What it is, in a sentence or two.
+    #[serde(default)]
+    pub description: String,
+    /// What its projects are written in: names, shown as badges.
+    #[serde(default)]
+    pub made_of: Vec<String>,
+    /// The built-in kit its projects are projects of.
+    pub base: String,
+    /// What one of its projects is, in a sentence.
+    #[serde(default)]
+    pub project_is: String,
+}
+
+/// Whether some words of a kit's can be shown: nothing in them that is not text, and not too many.
+fn words(text: &str, most: usize, what: &str, needed: bool) -> Result<(), String> {
+    if text.chars().any(char::is_control) {
+        return Err(format!("its {what} holds characters that can't be shown"));
+    }
+    if text.chars().count() > most {
+        return Err(format!("its {what} is longer than {most} characters"));
+    }
+    if needed && text.trim().is_empty() {
+        return Err(format!("it has no {what}"));
+    }
+    Ok(())
+}
+
+/// Reads what a kit says of itself, and checks that it is a kit this GridCraft can list: an id
+/// of its own, a name, and a built-in kit it stands on.
+pub fn describe(text: &str) -> Result<Described, String> {
+    let said: Described = toml::from_str(text).map_err(|e| format!("its {KIT_FILE} can't be read: {}", e.message()))?;
+    if !manifest::valid_id(&said.id) {
+        return Err(format!("its id, {:?}, is not lowercase letters, digits and hyphens", said.id.chars().take(40).collect::<String>()));
+    }
+    if named(&said.id).is_some() {
+        return Err(format!("its id, {:?}, is the name of a kit GridCraft is built with", said.id));
+    }
+    let Some(base) = named(&said.base) else {
+        return Err(format!("it stands on the kit {:?}, which GridCraft is not built with", said.base.chars().take(40).collect::<String>()));
+    };
+    debug_assert!(base.built_in);
+    words(&said.name, 60, "name", true)?;
+    words(&said.version, 30, "version", false)?;
+    words(&said.author, 80, "author", false)?;
+    words(&said.description, 400, "description", false)?;
+    words(&said.project_is, 200, "sentence on what a project is", false)?;
+    if said.made_of.len() > 6 {
+        return Err("it says it is made of more than six things".into());
+    }
+    for part in &said.made_of {
+        words(part, 24, "list of what it is made of", true)?;
+    }
+    Ok(said)
+}
+
+/// The words of a kit from a package, kept for as long as GridCraft runs: a kit is listed by
+/// reference, as the built-in ones are.
+fn keep(text: &str) -> &'static str {
+    Box::leak(text.trim().to_string().into_boxed_str())
+}
+
+/// The kit a description makes: its own words, on the built-in kit it stands on.
+fn from_described(said: &Described) -> Option<Kit> {
+    let base = named(&said.base)?;
+    let made_of: Vec<&'static str> = said.made_of.iter().map(|part| keep(part)).collect();
+    Some(Kit {
+        id: keep(&said.id),
+        name: keep(&said.name),
+        made_of: Box::leak(made_of.into_boxed_slice()),
+        says: if said.description.trim().is_empty() {
+            keep(&format!("A development kit loaded from a package. Its projects run by the {}.", base.name))
+        } else {
+            keep(&said.description)
+        },
+        project_is: if said.project_is.trim().is_empty() { base.project_is } else { keep(&said.project_is) },
+        not_yet: "",
+        built_in: false,
+        base: base.id,
+        version: keep(&said.version),
+        author: keep(&said.author),
+        ..*base
+    })
+}
+
+/// The kits read from packages so far: for which folder, from which text, and the kit. A kit
+/// is made once for each text it was read from, and kept.
+static PACKAGED: Mutex<Vec<(PathBuf, String, &'static Kit)>> = Mutex::new(Vec::new());
+
+/// Something was loaded or removed: nothing is kept that the folder no longer holds. (The
+/// kits are read from their folder each time they are asked for; this is here for whoever
+/// changes that.)
+pub fn forget() {}
+
+/// The folder kits from packages are kept in, for projects kept in `projects_dir`: beside it.
+/// `None` when that is not a projects folder of GridCraft's by its name, so that a folder a
+/// test or a tool made for itself is never given kits from beside it.
+pub fn folder_beside(projects_dir: &Path) -> Option<PathBuf> {
+    let name = projects_dir.file_name()?.to_str()?;
+    matches!(name, "projects" | "modules").then(|| projects_dir.with_file_name("kits"))
+}
+
+/// The kits loaded from packages that are kept in `kits_dir`, by id. One that can't be read as
+/// a kit is left out.
+fn packaged(kits_dir: &Path) -> Vec<&'static Kit> {
+    let Ok(entries) = std::fs::read_dir(kits_dir) else { return vec![] };
+    let mut found: Vec<&'static Kit> = Vec::new();
+    for entry in entries.flatten().take(MAX_KITS * 4) {
+        if found.len() >= MAX_KITS {
+            break;
+        }
+        let folder = entry.path();
+        let Some(id) = folder.file_name().and_then(|name| name.to_str()).map(str::to_string) else { continue };
+        if !manifest::valid_id(&id) || named(&id).is_some() {
+            continue;
+        }
+        let file = folder.join(KIT_FILE);
+        let Ok(kind) = std::fs::symlink_metadata(&file) else { continue };
+        if !kind.is_file() || kind.len() > MAX_KIT_FILE {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let mut kept = PACKAGED.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, _, kit)) = kept.iter().find(|(dir, of, kit)| dir == kits_dir && *of == text && kit.id == id) {
+            found.push(*kit);
+            continue;
+        }
+        // Its folder is named as it names itself: a kit is found by its id.
+        let Some(kit) = describe(&text).ok().filter(|said| said.id == id).and_then(|said| from_described(&said)) else { continue };
+        let kit: &'static Kit = Box::leak(Box::new(kit));
+        kept.push((kits_dir.to_path_buf(), text, kit));
+        found.push(kit);
+    }
+    found.sort_by_key(|kit| kit.id);
+    found
+}
+
+/// Every kit there is for projects kept in `projects_dir`: the ones GridCraft is built with,
+/// then the ones loaded from packages.
+pub fn all(projects_dir: &Path) -> Vec<&'static Kit> {
+    let mut kits: Vec<&'static Kit> = loaded().iter().collect();
+    if let Some(dir) = folder_beside(projects_dir) {
+        kits.extend(packaged(&dir));
+    }
+    kits
+}
+
+/// The kit with this id, among those there are for projects kept in `projects_dir`.
+pub fn named_in(projects_dir: &Path, id: &str) -> Option<&'static Kit> {
+    named(id).or_else(|| all(projects_dir).into_iter().find(|kit| kit.id == id))
+}
+
+/// The kit a project kept in `projects_dir` is listed under: the one its manifest names, or
+/// the first when it can't be placed.
+pub fn of_in(projects_dir: &Path, manifest: Option<&Manifest>) -> &'static Kit {
+    manifest.and_then(|manifest| named_in(projects_dir, &manifest.kit)).unwrap_or(&ANIE)
+}
+
+/// [`check`], for a project kept in `projects_dir`: its kit can be one loaded from a package.
+pub fn check_in(projects_dir: &Path, manifest: &Manifest) -> Result<&'static Kit, String> {
+    check_as(named_in(projects_dir, &manifest.kit), manifest)
 }
 
 /// The loaded kit with this id.
@@ -137,8 +340,12 @@ pub fn of(manifest: Option<&Manifest>) -> &'static Kit {
 /// the project holds and asks for nothing the kit doesn't know. A project that names a kit and
 /// then asks for what another kit runs is refused, not guessed at.
 pub fn check(manifest: &Manifest) -> Result<&'static Kit, String> {
-    let Some(kit) = named(&manifest.kit) else {
-        return Err(format!("it is a project of the kit {:?}, which this GridCraft doesn't have", manifest.kit));
+    check_as(named(&manifest.kit), manifest)
+}
+
+fn check_as(kit: Option<&'static Kit>, manifest: &Manifest) -> Result<&'static Kit, String> {
+    let Some(kit) = kit else {
+        return Err(format!("it is a project of the kit {:?}, which this GridCraft doesn't have: it is not loaded", manifest.kit));
     };
     if let Some(asked) = manifest.permissions.iter().find(|asked| !kit.permissions.contains(asked)) {
         return Err(format!("it asks for {:?}, which a project of the {} can't be given", asked.code(), kit.name));
@@ -160,19 +367,19 @@ pub fn check(manifest: &Manifest) -> Result<&'static Kit, String> {
 pub enum ProjectKind {
     /// The code of one workbook, which its `project.toml` names.
     WorkbookCode,
-    /// For any workbook.
-    Library,
+    /// For any workbook: it names none.
+    General,
 }
 
 impl ProjectKind {
-    pub const ALL: [ProjectKind; 2] = [ProjectKind::WorkbookCode, ProjectKind::Library];
+    pub const ALL: [ProjectKind; 2] = [ProjectKind::WorkbookCode, ProjectKind::General];
 
-    /// What a project with this manifest is. One without a manifest that could be read is
-    /// listed with the libraries.
+    /// What a project with this manifest is for. One without a manifest that could be read
+    /// names no workbook.
     pub fn of(manifest: Option<&Manifest>) -> ProjectKind {
         match manifest.and_then(|manifest| manifest.workbook.as_ref()) {
             Some(_) => ProjectKind::WorkbookCode,
-            None => ProjectKind::Library,
+            None => ProjectKind::General,
         }
     }
 
@@ -180,30 +387,15 @@ impl ProjectKind {
     pub fn code(self) -> &'static str {
         match self {
             ProjectKind::WorkbookCode => "workbook",
-            ProjectKind::Library => "library",
+            ProjectKind::General => "general",
         }
     }
 
-    /// The words people are shown: one project of the kind, and the heading over several.
+    /// The words people are shown for what a project is for.
     pub fn label(self) -> &'static str {
         match self {
             ProjectKind::WorkbookCode => "Workbook code",
-            ProjectKind::Library => "Library",
-        }
-    }
-
-    pub fn heading(self) -> &'static str {
-        match self {
-            ProjectKind::WorkbookCode => "Workbook code",
-            ProjectKind::Library => "Libraries",
-        }
-    }
-
-    /// What the kind is, in a sentence.
-    pub fn says(self) -> &'static str {
-        match self {
-            ProjectKind::WorkbookCode => "Projects that are the code of one workbook, as its macros were.",
-            ProjectKind::Library => "Projects for any workbook.",
+            ProjectKind::General => "For any workbook",
         }
     }
 }
@@ -244,7 +436,10 @@ mod tests {
         assert_eq!((of(Some(&read("kit = \"rust\""))), of(None)), (&ANIE, &ANIE));
         assert_eq!(check(&read("")), Ok(&ANIE));
         assert_eq!(check(&read("kit = \"c\"")), Ok(&C));
-        assert_eq!(check(&read("kit = \"rust\"")).unwrap_err(), "it is a project of the kit \"rust\", which this GridCraft doesn't have");
+        assert_eq!(
+            check(&read("kit = \"rust\"")).unwrap_err(),
+            "it is a project of the kit \"rust\", which this GridCraft doesn't have: it is not loaded"
+        );
     }
 
     #[test]
@@ -275,16 +470,32 @@ mod tests {
     }
 
     #[test]
-    fn a_project_is_workbook_code_when_it_names_a_workbook_and_a_library_otherwise() {
+    fn a_project_is_workbook_code_when_it_names_a_workbook_and_for_any_workbook_otherwise() {
         assert_eq!(ProjectKind::of(Some(&read("workbook = \"Budget.xlsm\""))), ProjectKind::WorkbookCode);
-        assert_eq!(ProjectKind::of(Some(&read(""))), ProjectKind::Library);
-        assert_eq!(ProjectKind::of(Some(&read("workbook = \"\""))), ProjectKind::Library, "an empty name names none");
-        assert_eq!(ProjectKind::of(None), ProjectKind::Library, "one that can't be read is listed with the libraries");
+        assert_eq!(ProjectKind::of(Some(&read(""))), ProjectKind::General);
+        assert_eq!(ProjectKind::of(Some(&read("workbook = \"\""))), ProjectKind::General, "an empty name names none");
+        assert_eq!(ProjectKind::of(None), ProjectKind::General, "one that can't be read names none");
         // A project of any kit is one or the other.
         assert_eq!(ProjectKind::of(Some(&read("kit = \"c\"\nworkbook = \"Doom.xlsx\""))), ProjectKind::WorkbookCode);
         for kind in ProjectKind::ALL {
-            assert!(!kind.code().is_empty() && !kind.label().is_empty() && !kind.heading().is_empty() && !kind.says().is_empty());
+            assert!(!kind.code().is_empty() && !kind.label().is_empty());
         }
-        assert_eq!((ProjectKind::WorkbookCode.code(), ProjectKind::Library.code()), ("workbook", "library"));
+        assert_eq!((ProjectKind::WorkbookCode.code(), ProjectKind::General.code()), ("workbook", "general"));
+    }
+
+    #[test]
+    fn no_project_is_called_a_library() {
+        // The word is kept for a project that other projects or a spreadsheet can refer to,
+        // which none can yet: nothing people or agents are told of a project's kind uses it.
+        for kind in ProjectKind::ALL {
+            for said in [kind.code(), kind.label()] {
+                assert!(!said.to_lowercase().contains("librar"), "{said}");
+            }
+        }
+        for kit in loaded() {
+            for said in [kit.name, kit.says, kit.project_is, kit.not_yet] {
+                assert!(!said.to_lowercase().contains("librar"), "{said}");
+            }
+        }
     }
 }

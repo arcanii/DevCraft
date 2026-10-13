@@ -25,4 +25,10 @@ rules.
   an `aniefork.*` id) rather than in new fields on upstream's structs.
 - **A branch meant as an upstream pull request** follows upstream's rules, its progress documents
   included. Cut it from `upstream/main`, not from the fork's `main`.
+- **Other people's marks: one exception, and only in the fork.** Upstream's rule is that the
+  repository holds nobody else's iconography. The fork's owner made one exception
+  (2026-10-13): the badges in the Development page carry the marks of Python, Svelte and C,
+  from Simple Icons. [`ATTRIBUTION-aniefork.md`](ATTRIBUTION-aniefork.md) lists them. Add
+  another only on the owner's word, list it there, and never put any of them in a branch
+  meant for upstream.
 - **Syncing with upstream:** `ROADMAP-aniefork.md` lists the steps and what can still conflict.

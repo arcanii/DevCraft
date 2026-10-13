@@ -629,7 +629,8 @@ mod host {
         let (Some(manifest), Some(fingerprint)) = (found.manifest.as_ref(), found.fingerprint.as_deref()) else {
             return Err(format!("{name} can't be read as a project."));
         };
-        if kit::of(Some(manifest)).id != kit::C.id {
+        // A project of the C kit, or of a kit that stands on it.
+        if kit::of_in(found.dir.parent().unwrap_or(&found.dir), Some(manifest)).base != kit::C.id {
             return Err(format!("{name} is not a project of the {}.", kit::C.name));
         }
         let Some(recipe) = manifest.c.as_ref() else {

@@ -60,7 +60,7 @@ struct Page {
     wanted: bool,
     /// The window is to be brought to the front.
     raise: bool,
-    /// The person chose GridCraft's own window, until GridCraft closes.
+    /// The shell could not show the page: GridCraft's own window is used, until GridCraft closes.
     builtin: bool,
     /// The window starts afresh: on the request that waits, when exactly one does.
     fresh: bool,
@@ -70,6 +70,8 @@ struct Page {
     told_at: f64,
     /// Why the last thing asked for there could not be done.
     error: String,
+    /// The part the window is to turn to: asked for from outside it (the ribbon).
+    go: Option<Pane>,
 }
 
 fn id() -> egui::Id {
@@ -97,11 +99,29 @@ pub fn host_is_here(ctx: &egui::Context) {
     }
 }
 
-/// Whether the Development window is shown as a page: the shell can, and the person hasn't
-/// chosen GridCraft's own window instead.
+/// Whether the Development window is shown as a page: the shell can, and showing it has not
+/// failed. (The page had a link to GridCraft's own window instead; the owner had it removed,
+/// 2026-10-13. GridCraft's own window is what a shell without a web view shows.)
 pub fn takes_over(ctx: &egui::Context) -> bool {
     let now = page(ctx);
     now.host && !now.builtin
+}
+
+/// The shell says how the person chooses a development kit's package file: with the
+/// operating system's own file dialog. Without it there is no way to load a kit.
+pub fn set_kit_picker(picker: Box<dyn Fn() -> Option<String>>) {
+    kits::set_picker(picker);
+}
+
+/// Whether the shell has said so already.
+pub fn has_kit_picker() -> bool {
+    kits::has_picker()
+}
+
+/// The codes of the badges the page may be told to draw in a colour of their own: for the
+/// shell's test that the page has one for each.
+pub fn badge_codes() -> Vec<&'static str> {
+    super::icons::badge_codes()
 }
 
 /// Where the page's web view keeps what it keeps: a folder of its own beside the settings,
@@ -118,6 +138,18 @@ pub fn open(ctx: &egui::Context) {
     now.fresh = true;
     now.stale = true;
     now.error.clear();
+    keep(ctx, now);
+}
+
+/// The person asked for one part of the window: it is opened there, or brought to the front
+/// and turned to it. What it was showing of a request stays as it is.
+fn open_at(ctx: &egui::Context, to: Pane) {
+    let mut now = page(ctx);
+    now.wanted = true;
+    now.raise = true;
+    now.stale = true;
+    now.error.clear();
+    now.go = Some(to);
     keep(ctx, now);
 }
 
@@ -155,10 +187,25 @@ pub fn failed(app: &mut SheetApp, ctx: &egui::Context, why: &str) {
 
 /// Hook of the fork's work of every frame: where the Development window is shown as a page,
 /// asking for GridCraft's own (from the ribbon, the bar under it, or by name) opens the page.
+///
+/// The page houses what Projects, the Console and Macros do, too: asking for one of those
+/// windows there (the ribbon's buttons do) opens the page at its part. Projects are in their
+/// kits' parts, so Projects opens the top, where the kits are.
 pub fn route(app: &mut SheetApp, ctx: &egui::Context) {
-    if app.dialog.as_ref().is_some_and(|d| d.name == development::NAME) && takes_over(ctx) {
-        app.dialog = None;
-        open(ctx);
+    if !takes_over(ctx) {
+        return;
+    }
+    let to = match app.dialog.as_ref().map(|d| d.name.as_str()) {
+        Some(name) if name == development::NAME => None,
+        Some(name) if name == projects::NAME => Some(Pane::Overview),
+        Some(name) if name == super::console::NAME => Some(Pane::Console),
+        Some(name) if name == super::macros::NAME => Some(Pane::Macros),
+        _ => return,
+    };
+    app.dialog = None;
+    match to {
+        None => open(ctx),
+        Some(to) => open_at(ctx, to),
     }
 }
 
@@ -234,7 +281,14 @@ fn review(at: &Places, asked: &Asked, state: &mut State, confirms: bool) -> Json
 /// The MCP server's part: the level, how to connect, who connected, what waits, the plans.
 fn server_part(now: &agents::Snapshot, state: &State) -> Json {
     if !now.available {
-        return json!({"kind": "server", "title": kits::SERVER, "above": [kits::TOP], "available": false, "unavailable": card::NO_AGENTS});
+        return json!({
+            "kind": "server",
+            "title": kits::SERVER,
+            "above": [kits::TOP],
+            "aboveGo": [Pane::Overview.code()],
+            "available": false,
+            "unavailable": card::NO_AGENTS,
+        });
     }
     let at = projects::places();
     let levels: Vec<Json> =
@@ -281,6 +335,7 @@ fn server_part(now: &agents::Snapshot, state: &State) -> Json {
         "kind": "server",
         "title": kits::SERVER,
         "above": [kits::TOP],
+        "aboveGo": [Pane::Overview.code()],
         "available": true,
         "intro": card::AGENTS,
         "level": now.level.code(),
@@ -319,6 +374,11 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     if std::mem::take(&mut page.fresh) {
         state = State::fresh();
     }
+    // A part asked for from outside the window: it turns there.
+    if let Some(to) = page.go.take() {
+        state.pane = to;
+        state.viewing = None;
+    }
     let now = agents::snapshot();
     // A request being looked at takes the place of the rest, while it still waits.
     let looked_at = state.looking.and_then(|id| now.waiting.iter().find(|asked| asked.id == id));
@@ -335,13 +395,25 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     {
         state.pane = Pane::first_kit();
     }
+    // The project whose part is shown is noted as it is now, the first time it is shown:
+    // what the person reads from here on is what they may trust.
+    state.review();
+    // A script run from a project's part may have finished.
+    projects::poll_run(ctx, &mut state.run);
     // The list down the side, and the one part that is shown beside it.
     let mut part = match &state.pane {
         Pane::Server => server_part(&now, &state),
+        Pane::Macros => super::macros::pane(app, &mut state.macro_module),
         other => kits::pane(app, ctx, other, &now),
     };
     // The file that is being read, in the part of the project it is a file of.
     kits::with_view(&mut part, state.viewing.as_ref());
+    // What is decided in a project's part: trusting it, and running its scripts.
+    kits::with_trust(&mut part, app, state.reviewing.as_ref(), &state.run);
+    // What checking the Python had to say, in the part of the kit it is named in.
+    if part["pythonField"].is_object() {
+        part["pythonField"]["status"] = json!(state.python_status);
+    }
     let told = json!({
         "theme": theme(ctx),
         "title": kits::TOP,
@@ -356,6 +428,11 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     keep(ctx, page);
     ctx.data_mut(|data| data.insert_temp(state_id(), state));
     Some(told.to_string())
+}
+
+/// The project a message names: an id, and no more than an id.
+fn project_id(message: &Json) -> Option<String> {
+    message.get("id").and_then(Json::as_str).filter(|id| gridcraft_aniefork_dev::manifest::valid_id(id)).map(str::to_string)
 }
 
 /// What the person clicked in the page, as the page says it. Returns whether the page is to
@@ -381,14 +458,6 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
             page.stale = true;
             keep(ctx, page);
             return true;
-        }
-        // GridCraft's own window instead, until GridCraft closes.
-        "builtin" => {
-            page.builtin = true;
-            page.wanted = false;
-            keep(ctx, page);
-            app.open_dialog(development::NAME, json!({}));
-            return false;
         }
         "level" => message.get("level").and_then(Json::as_str).and_then(Level::parse).map(Act::Level),
         "port" => message.get("port").and_then(Json::as_str).filter(|text| text.len() <= 8).map(|text| Act::Port(text.to_string())),
@@ -431,7 +500,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         "createProject" => {
             let kit = match message.get("kit") {
                 None | Some(Json::Null) => Some(&kit::ANIE),
-                Some(named) => named.as_str().filter(|id| id.len() <= 64).and_then(kit::named),
+                Some(named) => named.as_str().filter(|id| id.len() <= 64).and_then(kits::kit_named),
             };
             let name = message.get("name").and_then(Json::as_str).filter(|name| name.chars().count() <= MAX_NAME);
             kit.zip(name).map(|(kit, name)| Act::CreateProject {
@@ -456,6 +525,35 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
             project.zip(path).map(|(project, path)| Act::ViewFile { project: project.to_string(), path: path.to_string() })
         }
         "closeFile" => Some(Act::CloseFile),
+        // What Projects does, housed in a project's part: the project by its id. Which
+        // fingerprint is trusted is GridCraft's to say (the one noted when the person began
+        // to look), never the page's.
+        "trust" => project_id(&message).map(|project| Act::Trust { project, follow: message.get("follow").and_then(Json::as_bool).unwrap_or(false) }),
+        "stopTrusting" => project_id(&message).map(Act::StopTrusting),
+        "lookAgain" => project_id(&message).map(Act::LookAgain),
+        "run" => {
+            let script = message.get("script").and_then(Json::as_str).filter(|script| !script.is_empty() && script.len() <= MAX_PATH);
+            project_id(&message).zip(script).map(|(project, script)| Act::RunScript { project, script: script.to_string() })
+        }
+        "stopRun" => project_id(&message).map(Act::StopRun),
+        // The Python's name is what the person typed.
+        "checkPython" => message
+            .get("python")
+            .and_then(Json::as_str)
+            .filter(|named| named.chars().count() <= MAX_COMPILER)
+            .map(|named| Act::CheckPython(named.to_string())),
+        // The Console, and the open workbook's macros.
+        "clearConsole" => Some(Act::ClearConsole),
+        "copyConsole" => match message.get("project") {
+            None | Some(Json::Null) => Some(Act::CopyConsole(None)),
+            Some(named) => named.as_str().filter(|id| id.len() <= 64).map(|id| Act::CopyConsole(Some(id.to_string()))),
+        },
+        "readMacro" => message.get("module").and_then(Json::as_str).filter(|name| name.len() <= 255).map(|name| Act::ReadMacro(name.to_string())),
+        "copyRequest" => Some(Act::CopyRequest),
+        // A development kit, loaded from a package the person chooses in the operating
+        // system's own dialog (the page names no file), and removed: by its id.
+        "loadKit" => Some(Act::LoadKit),
+        "removeKit" => project_id(&message).map(Act::RemoveKit),
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
         // A project's panel, docked in GridCraft's window or in the browser: the project by its id.

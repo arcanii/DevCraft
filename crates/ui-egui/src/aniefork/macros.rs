@@ -40,7 +40,10 @@ const REBUILD: &str = "An agent can rebuild what these do as a project of the An
 pub(super) const REQUEST: &str = "Rebuild the macros of the workbook that is open in GridCraft as a project of the Anie Development Kit. \
 Use GridCraft's Development server: begin with development_status, then read `reference` with the topic \"macros\" and follow it. \
 Tell me what each procedure will become before you propose the plan.";
-const COPIED: &str = "The request was copied. Paste it to your agent.";
+pub(super) const COPIED: &str = "The request was copied. Paste it to your agent.";
+/// The most lines of a module the Development window's Macros part shows, and the most of one line.
+const LINES_IN_PART: usize = 2_000;
+const LINE_IN_PART: usize = 1_000;
 
 /// Which project was read: the document it belongs to, and how long it is. GridCraft never
 /// changes a project, so within one document the two tell it apart from any other.
@@ -128,6 +131,103 @@ fn plural(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
 
+/// The procedures of a module, named in a sentence; empty when it has none.
+fn procedures_say(module: &vba::Module) -> String {
+    let procedures = vba::outline(&module.source, module.kind);
+    if procedures.is_empty() {
+        return String::new();
+    }
+    let named: Vec<String> = procedures
+        .iter()
+        .take(NAMED)
+        .map(|procedure| match (&procedure.library, procedure.event) {
+            (Some(library), _) => format!("{} (in {library}, outside the workbook)", procedure.name),
+            (None, true) => format!("{} (Excel runs it by itself)", procedure.name),
+            (None, false) => procedure.name.clone(),
+        })
+        .collect();
+    let more = procedures.len().saturating_sub(named.len());
+    let more = if more > 0 { format!(", and {more} more") } else { String::new() };
+    format!("{} procedure{}: {}{more}.", procedures.len(), plural(procedures.len()), named.join(", "))
+}
+
+/// Macros as a part of the Development window: the open workbook's VBA project, its modules,
+/// and the one being read with its lines. `chosen` is the module the person chose; it is set
+/// to the first when the workbook has none of that name. Reading only: nothing here is run,
+/// and what a module holds is drawn as text.
+pub(super) fn pane(app: &SheetApp, chosen: &mut String) -> Json {
+    let mut told = json!({
+        "kind": "macros",
+        "title": "Macros",
+        "above": [kits::TOP],
+        "aboveGo": [kits::Pane::Overview.code()],
+        "intro": INTRO,
+        "note": NOTE,
+        "has": false,
+    });
+    let Some(read) = read(app) else {
+        told["says"] = json!(if app.session.active().is_some() { NONE } else { kits::NO_WORKBOOK });
+        return told;
+    };
+    let project = match read.project.as_ref() {
+        Ok(project) => project,
+        Err(why) => {
+            told["problem"] = json!(why);
+            return told;
+        }
+    };
+    if !project.modules.iter().any(|module| module.name == *chosen) {
+        *chosen = project.modules.first().map(|module| module.name.clone()).unwrap_or_default();
+    }
+    let named = if project.name.is_empty() { "A VBA project".to_string() } else { format!("{:?}", project.name) };
+    let refers = if project.references.is_empty() { String::new() } else { format!(" It refers to: {}.", project.references.join(", ")) };
+    let covered = kits::coverage(app);
+    let summary = covered.as_ref().and_then(|covered| covered.summary.as_ref().ok());
+    told["has"] = json!(true);
+    told["says"] = json!(format!("{named} in {}: {} module{}.{refers}", read.title, project.modules.len(), plural(project.modules.len())));
+    told["covered"] = json!(covered.as_ref().filter(|covered| covered.procedures > 0).map(|covered| format!(
+        "{} procedure{} in all. {}",
+        covered.procedures,
+        plural(covered.procedures),
+        kits::covered_says(covered.procedures, covered.spoken_for)
+    )));
+    told["rebuild"] = json!(REBUILD);
+    told["modules"] = json!(
+        project
+            .modules
+            .iter()
+            .map(|module| json!({"name": module.name, "kind": module.kind.label(), "chosen": module.name == *chosen}))
+            .collect::<Vec<_>>()
+    );
+    if let Some(module) = project.modules.iter().find(|module| module.name == *chosen) {
+        let of_lines = module.source.lines().count();
+        // What would not show by itself is written out: what is read is what is there.
+        let lines: Vec<String> = module
+            .source
+            .lines()
+            .take(LINES_IN_PART)
+            .map(|line| card::visible(&line.chars().take(LINE_IN_PART).collect::<String>()).into_owned())
+            .collect();
+        let rebuilt: Vec<Json> = summary
+            .map(|summary| rebuilt_lines(summary, &module.name))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(line, weighs)| json!({"text": card::visible(&line), "warn": weighs}))
+            .collect();
+        told["module"] = json!({
+            "name": module.name,
+            "says": format!("{}  ·  {}  ·  {of_lines} line{}", module.name, module.kind.label(), plural(of_lines)),
+            "problem": module.problem,
+            "cut": module.cut.then_some("It is longer than GridCraft reads: this is its beginning."),
+            "procedures": procedures_say(module),
+            "rebuilt": rebuilt,
+            "lines": lines,
+            "more": (of_lines > LINES_IN_PART).then(|| format!("Only the first {LINES_IN_PART} of its {of_lines} lines are shown.")),
+        });
+    }
+    told
+}
+
 /// What projects say became of the procedures of one module: a line for each that is spoken
 /// of, and whether it weighs (the script it names is not there).
 fn rebuilt_lines(summary: &Json, module: &str) -> Vec<(String, bool)> {
@@ -170,20 +270,9 @@ fn module_view(ui: &mut egui::Ui, module: &vba::Module, rebuilt: &[(String, bool
     if module.cut {
         ui.label(egui::RichText::new("It is longer than GridCraft reads: this is its beginning.").color(warn).strong());
     }
-    let procedures = vba::outline(&module.source, module.kind);
+    let procedures = procedures_say(module);
     if !procedures.is_empty() {
-        let named: Vec<String> = procedures
-            .iter()
-            .take(NAMED)
-            .map(|procedure| match (&procedure.library, procedure.event) {
-                (Some(library), _) => format!("{} (in {library}, outside the workbook)", procedure.name),
-                (None, true) => format!("{} (Excel runs it by itself)", procedure.name),
-                (None, false) => procedure.name.clone(),
-            })
-            .collect();
-        let more = procedures.len().saturating_sub(named.len());
-        let more = if more > 0 { format!(", and {more} more") } else { String::new() };
-        ui.label(small(format!("{} procedure{}: {}{more}.", procedures.len(), plural(procedures.len()), named.join(", "))));
+        ui.label(small(procedures));
     }
     // What a project says became of them: the project's own word.
     for (line, weighs) in rebuilt {

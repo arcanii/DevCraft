@@ -38,7 +38,11 @@ use crate::theme::Tokens;
 /// The dialog's name, as `ui.dialog {name}` takes it.
 pub const NAME: &str = "projects";
 
-const FOLLOW: &str = "Keep trusting it as its files change (only for a project you are writing yourself)";
+pub(super) const FOLLOW: &str = "Keep trusting it as its files change (only for a project you are writing yourself)";
+/// Said in a project's part when its files are no longer the ones the person began to look at.
+pub(super) const TRUST_MOVED: &str = "Its files changed while you were looking at it. Look at it again before you decide.";
+/// Said where trust can't be given because nothing can ask the person through the operating system.
+pub(super) const CANT_ASK: &str = "This copy of GridCraft can't ask your operating system to confirm, so it can't trust projects.";
 /// The most of a result shown in the dialog (characters).
 const SHOWN: usize = 6_000;
 
@@ -115,7 +119,7 @@ pub(super) fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bo
         return Err(format!("{} can't be trusted: {}.", found.name(), found.problem.as_deref().unwrap_or("it could not be read")));
     }
     let Some(confirm) = &app.services.confirm else {
-        return Err("This copy of GridCraft can't ask your operating system to confirm, so it can't trust projects.".into());
+        return Err(CANT_ASK.into());
     };
     if !confirm("Trust this project?", &question(&found, follow_changes)) {
         return Ok(format!("{} was not trusted.", found.name()));
@@ -125,7 +129,7 @@ pub(super) fn trust(app: &SheetApp, id: &str, reviewed: &str, follow_changes: bo
     Ok(format!("{} is trusted.", found.name()))
 }
 
-fn stop_trusting(id: &str) -> Result<String, String> {
+pub(super) fn stop_trusting(id: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     TrustStore::load(&at.trust).revoke(id)?;
     PythonHost::global().stop(&at.projects, id);
@@ -137,7 +141,7 @@ pub(super) fn create(name: &str) -> Result<String, String> {
 }
 
 /// Creates a starter project of `kit`: the code of the workbook named `workbook`, or (without
-/// one) a library, for any workbook.
+/// one) a project for any workbook.
 pub(super) fn create_project_in(kit: &Kit, name: &str, workbook: Option<&str>) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
@@ -157,7 +161,7 @@ pub(super) fn create_showcase() -> Result<String, String> {
 }
 
 /// Remembers which Python to use and says whether it answers.
-fn check_python(python: &str) -> Result<String, String> {
+pub(super) fn check_python(python: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
     // Only the Python is set here: what else the settings hold stays as it is.
     let mut kept = settings::load(&at.settings);
@@ -188,7 +192,7 @@ pub(super) fn selection_data(app: &mut SheetApp) -> Result<Json, String> {
 /// Starts `script` of project `id` on the selection. The trust check is the host's own, on the
 /// thread that runs it. What the script asks of the spreadsheet while it runs is carried out by
 /// this window, as a panel's calls are, with what the project was granted.
-fn start(app: &mut SheetApp, ctx: &egui::Context, id: &str, script: &str) -> Result<(), String> {
+pub(super) fn start(app: &mut SheetApp, ctx: &egui::Context, id: &str, script: &str) -> Result<(), String> {
     let at = places().ok_or(UNAVAILABLE)?;
     let data = selection_data(app)?;
     let python = settings::load(&at.settings).python;
@@ -229,19 +233,72 @@ fn finished(result: Result<Output, RunError>) -> Json {
     }
 }
 
+/// A script started from a window: when it has finished, `run` becomes what to show for it.
+/// Until then the window is drawn again in a moment.
+pub(super) fn poll_run(ctx: &egui::Context, run: &mut Json) {
+    if run["state"] != "running" {
+        return;
+    }
+    let job = ctx.data(|data| data.get_temp::<Job>(job_id()));
+    match job.and_then(|job| job.slot.lock().unwrap_or_else(PoisonError::into_inner).take()) {
+        Some(result) => {
+            let mut done = finished(result);
+            done["project"] = run["project"].clone();
+            done["script"] = run["script"].clone();
+            *run = done;
+        }
+        None => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+    }
+}
+
+/// What a project's part says of trusting it, in the window that houses that decision.
+///
+/// `pinned` is the fingerprint the project had when the person began to look at its part.
+/// Trust is offered only while the project still has it: what was read is what is trusted.
+pub(super) fn trust_says(app: &SheetApp, project: &Json, pinned: Option<&str>) -> Json {
+    let status = project["status"].as_str().unwrap_or("");
+    let now = project["fingerprint"].as_str();
+    let moved = pinned.is_some() && pinned != now;
+    let asks = app.services.confirm.is_some();
+    // Trust is there to give for a project that is not trusted as it is, and can be read.
+    let open = matches!(status, "untrusted" | "changed");
+    json!({
+        "title": "Trust",
+        "status": status,
+        "moved": if moved { json!(TRUST_MOVED) } else { Json::Null },
+        "canTrust": open && asks && !moved && pinned.is_some() && now.is_some(),
+        "cant": if open && !asks { json!(CANT_ASK) } else { Json::Null },
+        "open": open,
+        "trustLabel": if status == "changed" { "Trust It As It Is Now" } else { "Trust This Project" },
+        "follow": FOLLOW,
+        "confirms": "Your operating system will ask you to confirm, with what it will be allowed to do.",
+        "canStop": matches!(status, "trusted" | "changed"),
+    })
+}
+
 /// What the user asked for in one frame; carried out after the dialog is drawn.
 enum Action {
     Refresh,
     Review(String),
     NotNow,
-    Trust { id: String, fingerprint: String, follow: bool },
+    Trust {
+        id: String,
+        fingerprint: String,
+        follow: bool,
+    },
     StopTrusting(String),
     Create(String),
     CheckPython(String),
     OpenFolder,
     OpenPanel(String),
     DockPanel(String),
-    Run { id: String, script: String },
+    /// Read one of the files of the project that is being reviewed.
+    Read(String),
+    CloseFile,
+    Run {
+        id: String,
+        script: String,
+    },
     StopRun(String),
 }
 
@@ -273,7 +330,7 @@ fn asks(ui: &mut egui::Ui, m: &Json) {
 
 /// The scripts a trusted project may run: the `.py` files of its scripts folder, by the names a
 /// panel would use.
-fn scripts(m: &Json) -> Vec<String> {
+pub(super) fn scripts(m: &Json) -> Vec<String> {
     let may_run = m["status"] == "trusted" && m["granted"].as_array().is_some_and(|g| g.iter().any(|p| p == "python"));
     let Some(folder) = m["python"].as_str().filter(|_| may_run) else { return vec![] };
     let prefix = format!("{folder}/");
@@ -282,7 +339,17 @@ fn scripts(m: &Json) -> Vec<String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool, can_dock: bool, follow: &mut bool, action: &mut Option<Action>) {
+fn card(
+    ui: &mut egui::Ui,
+    m: &Json,
+    reviewing: bool,
+    reading: &str,
+    busy: bool,
+    can_open: bool,
+    can_dock: bool,
+    follow: &mut bool,
+    action: &mut Option<Action>,
+) {
     let id = m["id"].as_str().unwrap_or("").to_string();
     let status = m["status"].as_str().unwrap_or("");
     egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -354,15 +421,49 @@ fn card(ui: &mut egui::Ui, m: &Json, reviewing: bool, busy: bool, can_open: bool
         ui.label(egui::RichText::new("Before you trust it, this is what it asks to be allowed:").strong());
         asks(ui, m);
         let files: Vec<&str> = m["files"].as_array().map(|all| all.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
-        let shown: Vec<&str> = files.iter().copied().take(8).collect();
-        let more = files.len().saturating_sub(shown.len());
-        ui.label(format!(
-            "It contains {} file{}: {}{}",
-            files.len(),
-            if files.len() == 1 { "" } else { "s" },
-            shown.join(", "),
-            if more > 0 { format!(" and {more} more") } else { String::new() }
-        ));
+        let more = files.len().saturating_sub(REVIEWED);
+        ui.label(format!("It contains {} file{}. {READ_NOTE}", files.len(), if files.len() == 1 { "" } else { "s" }));
+        egui::ScrollArea::vertical().id_salt("review_files").max_height(72.0).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for path in files.iter().copied().take(REVIEWED) {
+                    if ui.selectable_label(reading == path, egui::RichText::new(path).monospace().small()).clicked() {
+                        *action = Some(Action::Read(path.to_string()));
+                    }
+                }
+                if more > 0 {
+                    ui.label(egui::RichText::new(format!("and {more} more")).small());
+                }
+            });
+        });
+        // The file that is being read: as text, with what the project's kit says of its language.
+        if let Some(view) = Some(reading).filter(|path| !path.is_empty()).and_then(|path| super::kits::file_view(&id, path)) {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(view["says"].as_str().unwrap_or(reading)).strong());
+                if ui.small_button("Close File").clicked() {
+                    *action = Some(Action::CloseFile);
+                }
+            });
+            // Trust is given to the fingerprint below. A file read after the project changed is
+            // not one of the files that fingerprint is of.
+            if view["fingerprint"] != m["fingerprint"] {
+                ui.label(egui::RichText::new(READ_CHANGED).color(ui.visuals().warn_fg_color).strong());
+            }
+            match view["problem"].as_str() {
+                Some(problem) => {
+                    ui.label(egui::RichText::new(problem).color(ui.visuals().warn_fg_color));
+                }
+                None => {
+                    egui::Frame::NONE.fill(ui.visuals().extreme_bg_color).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+                        egui::ScrollArea::both().id_salt("review_file").max_height(200.0).auto_shrink([false, true]).show(ui, |ui| {
+                            ui.add(egui::Label::new(super::development::code(ui, &view)).wrap_mode(egui::TextWrapMode::Extend));
+                        });
+                    });
+                }
+            }
+            if let Some(cut) = view["more"].as_str() {
+                ui.label(egui::RichText::new(cut).small());
+            }
+        }
         let fingerprint = m["fingerprint"].as_str().unwrap_or("").to_string();
         ui.label(egui::RichText::new(format!("Fingerprint {}…", fingerprint.chars().take(16).collect::<String>())).small())
             .on_hover_text("Trust is given to exactly these files. If any of them changes, the project is untrusted again until you decide again.");
@@ -405,6 +506,14 @@ fn run_area(ui: &mut egui::Ui, run: &Json, action: &mut Option<Action>) {
     });
 }
 
+/// The most of a project's files offered for reading while it is reviewed.
+const REVIEWED: usize = 240;
+/// Said where a project's files are offered for reading before it is trusted.
+pub(super) const READ_NOTE: &str = "Choose one to read it: it is shown as text, and nothing in it is run.";
+/// Said when a file is read from a project that is no longer the one being reviewed.
+pub(super) const READ_CHANGED: &str =
+    "This project changed while you were looking at it: this is the file as it is now. Review it again before trusting it.";
+
 /// What the dialog works from, kept between frames.
 ///
 /// It is the dialog's own, out of the dialog's values: anything on the control channel can
@@ -417,6 +526,8 @@ struct State {
     list: Json,
     /// The project being reviewed, if one is.
     review: String,
+    /// The file of it that is being read, if one is: its path in the project.
+    reading: String,
     follow: bool,
     new_name: String,
     python: String,
@@ -507,13 +618,15 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
         let can_open = app.services.open_url.is_some();
         let can_dock = super::dock::available(&ctx);
         let mut follow = state.follow;
-        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+        // A file that is being read needs room, and the choice under it must stay in reach.
+        let room = if state.reading.is_empty() { 320.0 } else { 460.0 };
+        egui::ScrollArea::vertical().max_height(room).show(ui, |ui| {
             if projects.is_empty() {
                 ui.label("No projects are installed. Create one below, or copy a project's folder into the folder above.");
             }
             for m in &projects {
                 let reviewing = !state.review.is_empty() && m["id"].as_str() == Some(state.review.as_str());
-                card(ui, m, reviewing, busy, can_open, can_dock, &mut follow, &mut action);
+                card(ui, m, reviewing, &state.reading, busy, can_open, can_dock, &mut follow, &mut action);
             }
         });
         // A choice about trust is the person's: a tick the control channel made doesn't count.
@@ -585,21 +698,40 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
 /// and naming the Python to run are for the person at the screen: asked for while the control
 /// channel is putting input into the window, they are refused.
 fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Action, driven: bool) -> Result<String, String> {
-    let by_hand = matches!(action, Action::Trust { .. } | Action::CheckPython(_) | Action::Run { .. } | Action::OpenPanel(_) | Action::DockPanel(_));
+    // Reading a project's file puts what the project holds on screen: the person's, too.
+    let by_hand = matches!(
+        action,
+        Action::Trust { .. } | Action::CheckPython(_) | Action::Run { .. } | Action::OpenPanel(_) | Action::DockPanel(_) | Action::Read(_)
+    );
+    // Reading a file of the project under review must leave the review as it is: what is
+    // trusted is the fingerprint the person was shown when they began, and reading must not
+    // put another in its place behind their back.
+    let keeps_the_list = matches!(action, Action::Read(_) | Action::CloseFile);
     let outcome = match action {
         _ if by_hand && driven => Err(presence::BY_HAND.to_string()),
         Action::Refresh => Ok(String::new()),
         Action::Review(id) => {
             state.review = id;
+            state.reading.clear();
             state.follow = false;
+            Ok(String::new())
+        }
+        Action::Read(path) => {
+            state.reading = path;
+            Ok(String::new())
+        }
+        Action::CloseFile => {
+            state.reading.clear();
             Ok(String::new())
         }
         Action::NotNow => {
             state.review.clear();
+            state.reading.clear();
             Ok(String::new())
         }
         Action::Trust { id, fingerprint, follow } => {
             state.review.clear();
+            state.reading.clear();
             trust(app, &id, &fingerprint, follow)
         }
         Action::StopTrusting(id) => {
@@ -634,9 +766,11 @@ fn act(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action: Actio
             Ok(String::new())
         }
     };
-    // Whatever happened, show what is on disk now, here and in the Development window.
-    state.list = list();
-    super::kits::forget();
+    // Whatever else happened, show what is on disk now, here and in the Development window.
+    if !keeps_the_list {
+        state.list = list();
+        super::kits::forget();
+    }
     outcome
 }
 
@@ -863,7 +997,7 @@ pub(crate) mod tests {
         let listed = list();
         let of = |id: &str| listed["projects"].as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
         assert_eq!((&of("budget-macros")["kind"], &of("budget-macros")["workbook"]), (&json!("workbook"), &json!("Budget.xlsm")));
-        assert_eq!((&of("tools")["kind"], &of("tools")["workbook"]), (&json!("library"), &Json::Null));
+        assert_eq!((&of("tools")["kind"], &of("tools")["workbook"]), (&json!("general"), &Json::Null));
         assert_eq!(listed["projects"].as_array().unwrap().len(), 2);
         // What it is for gives it nothing: it is untrusted, and asks for what any starter asks.
         assert_eq!((&of("budget-macros")["status"], &of("budget-macros")["granted"]), (&json!("untrusted"), &json!([])));
@@ -943,6 +1077,52 @@ pub(crate) mod tests {
         assert!(h.state().message.as_ref().is_some_and(|(_, text)| text.contains("changed while you were looking")), "{:?}", h.state().message);
         assert!(asked.questions.borrow().is_empty(), "the user is not even asked about files they didn't see");
         assert!(!s.0.join("trusted-projects.json").exists());
+    }
+
+    #[test]
+    fn a_projects_files_are_read_while_it_is_reviewed_and_before_it_is_trusted() {
+        use egui_kittest::kittest::Queryable;
+        let s = Sandbox::new("review-read");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness(app_with(Some(&asked)));
+        // Nothing of it is offered to read until it is being reviewed.
+        assert!(h.query_by_label("python/clean.py").is_none());
+        click(&mut h, "Review\u{2026}");
+        h.get_by_label_contains(READ_NOTE);
+        assert!(h.query_by_label("Close File").is_none());
+        // Putting a project's file on screen is the person's: not the control channel's.
+        drive(&mut h);
+        click(&mut h, "python/clean.py");
+        assert_eq!(h.state_mut().message.take().map(|(_, text)| text).as_deref(), Some(presence::BY_HAND));
+        assert!(h.query_by_label("Close File").is_none() && h.query_by_label_contains("def main(data):").is_none());
+        quiet(&mut h);
+        // By hand: the script, read as the kit describes Python, before anything is trusted.
+        click(&mut h, "python/clean.py");
+        h.get_by_label_contains("python/clean.py  \u{b7}  Python  \u{b7}  ");
+        h.get_by_label_contains("def main(data):");
+        assert!(h.query_by_label(READ_CHANGED).is_none());
+        // Its page takes the script's place; closing leaves the review as it was.
+        click(&mut h, "panel/index.html");
+        h.get_by_label_contains("panel/index.html  \u{b7}  HTML");
+        assert!(h.query_by_label_contains("def main(data):").is_none());
+        click(&mut h, "Close File");
+        assert!(h.query_by_label("Close File").is_none());
+        h.get_by_label("Trust this project");
+        assert_eq!(shown(&h).as_deref(), Some("untrusted"));
+        assert!(asked.questions.borrow().is_empty() && !s.0.join("trusted-projects.json").exists(), "reading trusted nothing");
+        // The project changes while it is reviewed. The file is shown as it is now, and says
+        // that it is not one of the files the fingerprint on screen is of; trusting is refused.
+        click(&mut h, "python/clean.py");
+        std::fs::write(s.0.join("projects/clean-data/python/clean.py"), "import os\n\ndef main(data):\n    return os.listdir('.')\n").unwrap();
+        h.run_steps(4);
+        h.get_by_label(READ_CHANGED);
+        h.get_by_label_contains("return os.listdir('.')");
+        click(&mut h, "Close File");
+        click(&mut h, "Trust this project");
+        assert_eq!(shown(&h).as_deref(), Some("untrusted"));
+        assert!(h.state().message.as_ref().is_some_and(|(_, text)| text.contains("changed while you were looking")), "{:?}", h.state().message);
+        assert!(asked.questions.borrow().is_empty());
     }
 
     #[test]

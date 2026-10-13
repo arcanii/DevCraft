@@ -949,11 +949,16 @@ Development                    the whole, at a glance
   is, not the page.
 - **Both windows draw the same** (`kits.rs` says it once, as `card.rs` does for a card):
   GridCraft's own, and the page, whose Svelte app was redrawn around the list.
+- **Changed on 2026-10-13, by the owner's review**: the list down the side stops at the kits,
+  a kit's projects are one list, and no project is called a library. See "The Development
+  window's look and words".
 
 **Not built, and open.**
 
 - **There is no way to load another kit.** The list has two entries now, both compiled in
   (phase K1), and the window says so.
+  (2026-10-13: the owner decided a kit is loaded from a package file. See "A development kit
+  from a package file".)
   How a kit that isn't compiled into GridCraft would be loaded is not decided. What is
   known: it can't be a library loaded into the process (the workspace forbids `unsafe`, and
   a kit's code would then be GridCraft's own); the two things of this kind GridCraft
@@ -977,6 +982,8 @@ Development                    the whole, at a glance
   those names.
 - **Reviewing, trusting and running a project** is still done in Modules: the project's
   part has the way there.
+  (2026-10-13: in the page it is done in the project's own part. See "The Development
+  window's look and words".)
 - **A project names its workbook by the file's name.** Two workbooks of one name are the
   same to it. That is enough to say what a project is for; it is not enough for anything
   that would run by itself (phase V2), which needs the decision of "modules and workbooks".
@@ -1725,7 +1732,7 @@ follows is what it changes, what must hold, and a shape to say yes or no to.
 
 | Phase | What | Waits for |
 |---|---|---|
-| F1 | The file viewer, with highlighting the kit describes; in both windows and in Review | **First slice built 2026-10-13** (its own section, below): in both windows. Review is the second |
+| F1 | The file viewer, with highlighting the kit describes; in both windows and in Review | **Built 2026-10-13**, in two slices (their own sections, below): in both windows, then in Review |
 | T1 | Targets in the recipe; a build kept for each; zig building for other systems | K2 |
 | R1 | A build for a platform runs: a process and a pipe, and a permission of its own | T1, and the owner's word on programs that can't be limited |
 | W1 | A workbook carries a project as source: the parts, the extension, the bar, review and trust | The extension; Excel asked what it keeps |
@@ -1926,6 +1933,42 @@ its numbers and colours, for a project that was not trusted at the time.
 **Not seen.** GridCraft's own window drawing a file: its test finds the file's text there,
 not its colours. A first-kit project's files in the app. The light theme.
 
+### The viewer in Review (phase F1, second slice)
+
+**Built 2026-10-13, on the owner's word ("Then on to the viewer"). Not committed until the
+owner says.**
+
+**1. A project that is being reviewed offers its files to read**, in Developer ▸ Projects,
+under what it asks to be allowed and above the choice to trust it: the same viewer, with the
+highlighting the project's kit describes. This is where it matters most: the person reads
+what they are about to trust.
+
+**2. Reading must not move what is being reviewed.** Trust is given to the fingerprint the
+person was shown when they pressed Review, and a project whose files changed since is
+refused. Every action in the Projects window reads the list of projects again, and the first
+form of this slice let reading a file do so too: a project that changed during the review
+then had its new fingerprint put in place of the reviewed one by a click on a file, and
+Trust took it. **A test written for the slice found it before it was kept.** Reading a file
+and closing it now leave the list as it was.
+
+- **A file is shown as it is on disk now.** When the project is no longer the one whose
+  fingerprint is under review, the viewer says so in words above the file ("This project
+  changed while you were looking at it …"), and trusting is still refused.
+- **Choosing a file is the person's**, as in the Development window: refused to the
+  control channel.
+- With a file open, the list of projects is given more room, so that the choice under the
+  file stays in reach.
+
+**Checked.** One test, in the window: nothing is offered until a project is reviewed; a
+file is refused to the control channel and read by hand; another takes its place; closing
+leaves the review as it was, and nothing was trusted or asked; then the project's file is
+changed on disk while it is read: the file is shown as it is now with the warning, and
+Trust is refused with "changed while you were looking at it". The gate's eight steps pass,
+1605 tests.
+
+**Not seen.** The Projects window is GridCraft's own, where posted clicks do not land: this
+slice was not looked at in the app at all. Its test finds the words, not how it looks.
+
 ### Signing, and whose word is taken for a developer (phases S1 and S2, designed)
 
 **Designed 2026-10-13 from the owner's decisions** (the six on the plan and the four after
@@ -1970,7 +2013,7 @@ carries a project) leaves the right room, and so that the owner can say no to an
 
 | | A person's own GridCraft | An organisation's GridCraft |
 |---|---|---|
-| A project, WebAssembly or scripts, no seal | Trusted by its fingerprint, as today | As the organisation's setting says: as today, or not at all |
+| A project, WebAssembly or scripts, no seal | Trusted by its fingerprint, as today: the person's to decide (decided) | As the organisation says. Where it has not said: not at all |
 | A project with a good seal from a developer on the list | Trusted without being asked again | Trusted |
 | A good seal from a developer not on the list | The person is shown who signed, and may trust the project, or the developer | Not trusted. There is no way for the person to add the developer |
 | A program for a platform, no seal or a bad one | **Never runs** (decided), but for one the person's own compiler built on this machine from a project they trust | The same |
@@ -1981,6 +2024,14 @@ carries a project) leaves the right room, and so that the owner can say no to an
   taken back. The person's list of developers is GridCraft's own, beside their list of
   projects. No command gives it, and the control channel can't.
 - **A seal never limits a program.** It says who, and that nothing changed.
+- **Who is in control** (decided 2026-10-13, when the design was put to the owner): "If
+  GridCraft is individual, then yes - the user can control it." In a person's own GridCraft
+  the person decides all of it: a project with no seal is theirs to trust by its
+  fingerprint, as today, and so is a developer. In an organisation's GridCraft the
+  organisation decides all of it, that too. (The owner spoke of the person's own GridCraft.
+  That an organisation's is the organisation's to decide in the same way, and that it
+  trusts nothing unsealed until the organisation says it may, is read from that and from
+  "this would be at the organization level": it is for the owner to say if it is wrong.)
 
 **5. An organisation's server** (S2).
 
@@ -2020,9 +2071,6 @@ carries a project) leaves the right room, and so that the owner can say no to an
 
 **8. Not decided, and not asked yet.**
 
-- Whether, in an organisation's GridCraft, a project with no seal may still be trusted by
-  its fingerprint. It is drawn above as the organisation's to set; for the control of
-  end-user computing the answer an organisation gives is likely no.
 - Where a developer's private key lives when the system has a place for secrets, and
   whether a key can be kept on a device.
 - A lost key: there is no way to carry trust from an old key to a new one but the
@@ -2030,6 +2078,453 @@ carries a project) leaves the right room, and so that the owner can say no to an
 - Counter-signing: more than one seal on a project (the developer's, and the
   organisation's own once it has reviewed it), as Apple adds its note to a developer's
   signature.
+
+### The Development window's look and words (the owner's review, 2026-10-13, first part)
+
+**What the owner asked**, with three pictures of the ribbon and the window: "let's do a
+review of the UX for development - start with better icons. Development should be tools
+(like a wrench) or tool box. Let's use the nice dialog - the gridcraft default dialogs are
+ugly. Can we use shield icons for Development kits - don't put projects (not libraries) in
+the left side). Development kits should be surrounded by a bubble to clearly distinguish
+them. Inside the Development kit it should reference Projects (not Libraries). A project can
+be a library if it can be referenced from other projects or spreadsheet. We interchange
+Project and Library which is confusing".
+
+**What follows from it. This changes the shape recorded above** ("Development kits and
+projects").
+
+- **Development is a toolbox.** Its button in the ribbon carried upstream's ring-and-dot,
+  which is upstream's picture for settings. It carries a toolbox now, and so does the top of
+  the window.
+- **A kit carries a shield and stands in a frame of its own**, in the list down the side, at
+  the top of the window and at the head of its own part.
+- **The list down the side stops at the kits.** A kit's projects are listed in the kit's own
+  part and nowhere else. The kit's row says how many it has. While a project's part is shown,
+  its kit's row is marked: it is the way back. So is each place in the line above a part's
+  title ("Development › Development Kits › C Development Kit"), which could not be clicked
+  before.
+- **One word: project.** A kit's part lists its projects as one list, under "Projects". A
+  project that is one workbook's code says so beside its name ("Code of Budget.xlsm"); one
+  that names no workbook says nothing there, and its own part says "For any workbook".
+- **"Library" is kept for something else**: a project that other projects, or a spreadsheet,
+  can refer to. None can yet. Nothing in a `project.toml` says so and nothing is built for
+  it, so until there is such a thing no window and no report uses the word of a project.
+
+**What was built.**
+
+- **Two icons of the fork's own** (`crates/ui-egui/src/aniefork/icons.rs`), drawn in code on
+  upstream's grid of sixteen, and original: a toolbox and a shield. Upstream's list of icons
+  is left as it is (a variant added there would meet every icon upstream adds); the ribbon's
+  Development button is drawn by the fork, laid out as upstream's large buttons are. The page
+  draws the same two shapes from the same points (`Icon.svelte`): shapes in the page, not
+  picture files.
+- **What both windows are told** (`kits.rs`): the list is the top, the MCP server, the
+  heading and one row for each kit (what it is made of, how many projects, whether its part
+  or one of its projects is shown). A kit's part has `projects`, one list, where it had two
+  groups; each project there says what it is for when it is a workbook's code. A part says
+  where each place above it leads.
+- **Both windows draw it**: GridCraft's own (`development.rs`) and the page (`Nav.svelte`,
+  `Kit.svelte`, `Overview.svelte`, `App.svelte`, the stylesheet). In GridCraft's own window a
+  project's name in its kit's part is a button drawn as a link: the toolkit's own link says
+  it is a label to whoever asks what it is.
+- **The words.** In the code the kind that names no workbook is `General`, shown as "For any
+  workbook". The starter's comment in `project.toml` no longer says "library".
+
+**What changes for agents.** A project's `kind`, in `developer.projects` and in the
+Development server's `list_projects`, was `"workbook"` or
+`"library"`. It is `"workbook"` or `"general"` now. The server's instructions tell an agent to
+call it a project either way. Nothing was released with the older word.
+
+**Checked.** The fork's tests for what the windows are told, for both windows' drawing and
+for the page's messages, changed with it; one new test says no kit and no kind uses the word
+library. In GridCraft's own window a test now reaches a project the way a person does:
+through its kit's part.
+
+**Seen** (2026-10-13, in a copy of GridCraft with settings of its own, after the merge of
+upstream of that day; `target/k3-prep/seen/ux/`): the toolbox on the ribbon's Development
+button; the page's list with the two kits in their frames and no project in it; the top of
+the window with the kits and their shields; a kit's part with one Projects list and "Code of
+Book1 · open" beside a project that names the open workbook; a project's part with its
+kit's row marked and "For any workbook"; the line above the title taking the window back to
+the kit; GridCraft's own window with the same list.
+
+**Not seen.** The light theme, in either window. The icons at other display scales than this
+machine's 150%. A kit with many projects.
+
+**Badges, and the marks in them (the same day).** The owner pointed at a collection of the
+badges projects carry on their front page (https://ileriayo.github.io/markdown-badges/) and
+asked for the like "for the languages / UI elements"; told they were first built without
+their logos, the owner said: "we want the logos".
+
+- **What those badges are**: pictures fetched from shields.io, each a name in capitals on a
+  colour, with its subject's logo from Simple Icons. The Development page takes nothing from
+  the network (its policy allows its own script and stylesheet and no more), so a badge here
+  is drawn by the page itself.
+- **What was built**: what a kit is made of ("Python", "Svelte", "C") is a badge, in a kit's
+  part and at the top of the window. GridCraft says the name and a code from a fixed few
+  (`icons.rs`: `badge_for`); the page has the colour for each code in its stylesheet and the
+  mark for each in `logos.js`, and draws a grey badge with the name alone for a code it does
+  not know. GridCraft's own window draws the badge with the name alone: it has nothing that
+  fills such a shape.
+- **The marks are the fork's exception to upstream's rule on assets.** Upstream's `CLAUDE.md`
+  says no other party's iconography goes in the repository, ever, and calls it the most
+  important rule there. The owner was told so and asked how they wanted the logos, and chose:
+  from Simple Icons, in the fork only. So three shapes of other people's marks are in the
+  page's source: Python's (the Python Software Foundation's), Svelte's, and the C in its
+  hexagon, each unchanged, as one path, from Simple Icons 16.35.0 (CC0 1.0).
+  `ATTRIBUTION-aniefork.md` lists them, with where they came from and their hashes, and the
+  page's own `THIRD-PARTY.md` says the same. **They must not be in a branch offered
+  upstream.**
+- **Said plainly.** CC0 covers the drawings, not the marks: those stay their owners', each
+  with its own terms. They are shown here unchanged, in one colour, to name the thing they
+  stand for, which is how such badges are used everywhere; whether that keeps to each
+  owner's terms was not checked with a lawyer or with the owners. `cargo xtask assets` does
+  not see them (it checks files, and these are text in source), so the list is kept by hand.
+- **How they were taken in**: three files fetched on the owner's word, read as text; of each
+  only the path was kept, after checking it holds drawing commands and numbers and nothing
+  else. A test checks the same of what the repository holds, that the built page holds each
+  mark, and that there is one for every badge that has a colour.
+- **Seen** (the same isolated copy, `target/k3-prep/seen/ux/`): the three badges with their
+  marks, in a kit's part and at the top of the window. **Not seen**: GridCraft's own window's
+  badges (a test finds them by name); the light theme.
+
+**The same day: no link to GridCraft's own window, a filter over the kits, and how much
+space they use.** The owner: "let's remove that link to use GridCraft's window", and "We
+should be able to FTS to filter dev kits, and we should have a summary of n dev kits and how
+much space they use".
+
+- **The page no longer offers GridCraft's own window.** The link at the foot of its list is
+  gone, and the message it sent is no longer one GridCraft knows. GridCraft's own window is
+  what a shell without a web view shows, and what opens if the page can't be shown. (This
+  changes "the user can also choose the dialog" in "The Development window as a page".)
+- **A filter over the kits.** A field over the kits in the list; a kit is shown when what it
+  says of itself and of its projects (its name, what it is made of, its sentences, its
+  projects' names, ids, descriptions and workbooks) holds every word typed. So "python"
+  finds the first kit, and a project's name finds the kit it is in. The top of the window
+  shows the same kits. In the page what is typed stays in the page: nothing is sent to
+  GridCraft for it. Both windows have it.
+- **How many, and the space they use.** Over the kits: "2 kits · 5 KB"; each kit says its
+  own, at the top of the window and in its part. A kit's space is its projects' files, and
+  for a kit that builds also what was built from them, with what the compiler keeps beside
+  it (zig's cache, which is the larger part by far). It is measured at most every fifteen
+  seconds and again after anything is done in the window; a measure looks at sixty thousand
+  files at most, and says "more than" when it had to stop.
+- **Seen** (the same isolated copy): the summary, the field, the list without the link, and
+  "blink" typed into the field leaving the one kit whose project is named so, in the list
+  and at the top. **Not seen**: GridCraft's own window's field (its test filters by it); a
+  kit with a compiler's cache of real size, and how long measuring that takes.
+
+**The page houses what Projects, the Console and Macros did in windows of GridCraft's own
+(built the same day).** Asked what "the nice dialog" meant, the owner: "I meant using the
+svelte dialog for housing the development feature dialogs - the standard gridcraft dialogs
+are quite plain."
+
+- **A project is trusted in its own part of the page.** This changes what was recorded above
+  ("Reviewing, trusting and running a project is still done in Projects"). What holds:
+  - **What is trusted is what was on screen.** GridCraft notes the project's fingerprint
+    when its part is first shown. Trust is offered only while the project still has it;
+    when its files change, the part says so and offers "Look Again", which notes it afresh.
+    The page never names a fingerprint: it sends the project's id and whether trust follows
+    its changes, and GridCraft trusts the one it noted, for the project whose part is shown
+    and no other.
+  - **It ends in the operating system's own question**, as before, with what the project
+    will be allowed to do. A no trusts nothing.
+  - The control channel can't reach the page, so nothing but a click there asks for it.
+  - Stopping the trust is a click, and asks nobody: it only tightens.
+- **A trusted project's scripts are run from its part**, on the selection, with what came
+  back and what was printed shown there as text; a run can be stopped.
+- **The Python that runs scripts is named in its kit's part**, as the C compiler is.
+- **The Console and Macros are parts of the window**, in the list beside the MCP server:
+  they are no kit's. The Console shows its entries (the latest two hundred), by project,
+  copies them, and is cleared by a click there. Macros shows the open workbook's modules
+  and the one being read, as numbered lines of text, with what projects say they rebuilt
+  of it, and copies the request for an agent.
+- **The ribbon's Projects, Console and Macros open the page** at the top, the Console and
+  Macros, where the page is. A project is reached through its kit.
+- **GridCraft's own windows stay** for a shell without a web view, and are what its own
+  Development window opens. They are not changed.
+
+**Checked.** Tests of what the page is told and of every message it can send for this: trust
+refused after the files changed, until looked at again; refused for a project that is not
+the one shown, and for a name that is no id; the operating system asked once for each yes
+and no; a change after trust shown as one; the Python kept; the Console's part, its copy
+and its clearing; the Macros part with and without macros.
+
+**Seen** (the isolated copy): the list with the Console and Macros in it; the Console's
+part, empty; a kit's part with the Python's field and no button to another window; a
+project's part with its Trust section. **Not seen**: a click on "Trust This Project" (it
+ends in the operating system's question, and nobody was there to answer it); a script run
+from the part; the Console with entries; Macros with a workbook that carries some.
+
+**A fault found by looking, which no test would have found.** The project's part drew
+nothing at first: its source took in a helper named `state` and then used the rune
+`$state`, which Svelte reads as a store named `state`. It built without a word and failed
+when shown. The page's own code is run by no test of the repository: every part that
+changes has to be looked at.
+
+### A development kit from a package file (phases P1 to P3, built)
+
+**The owner approved the plan as recommended** (2026-10-13: "1 yes"): a kit that describes
+and runs nothing of its own; a zip named `.gridkit`; a removed kit's projects stay and say
+so; no signature for such a kit.
+
+**What a package is.** A zip whose name ends in `.gridkit`, with a `kit.toml` at its root:
+
+```toml
+id = "dashboards"                 # lowercase letters, digits, hyphens; not a built-in kit's
+name = "Dashboards Kit"
+version = "0.1.0"
+author = "…"
+description = "…"                 # what it is, in a sentence or two
+made_of = ["Svelte", "Python"]    # shown as badges
+base = "anie"                     # the built-in kit its projects are projects of
+project_is = "…"                  # optional: what one of its projects is
+```
+
+and, optionally, `starter/` (the files a new project of it begins with, where `{{id}}` and
+`{{name}}` are written in), `README.md` and a `LICENSE`. Nothing else has a place in it, and
+a word in `kit.toml` that GridCraft does not know is refused, not passed over.
+
+**What was built.**
+
+- **Reading a package** (`crates/aniefork-dev/src/kitpack.rs`), bounded: 16 MB the file, 400
+  files, 4 MB each and 32 MB in all, counted as they are unpacked (an entry's own word for
+  its size is not taken); names of plain letters in folders, with nothing that could leave
+  the folder it is unpacked into; a fingerprint over every file.
+- **The list of kits is no longer fixed in the code** (`kit.rs`): it is the two GridCraft is
+  built with and those found in `kits/<id>/kit.toml` beside the projects folder. Which kits
+  there are is asked for a projects folder (`all`, `named_in`, `of_in`, `check_in`), so a
+  project is checked against the kits beside it, and tests with settings folders of their
+  own do not meet. A kit from a package takes everything that decides from its base: what a
+  project may ask, whether it has scripts, a panel, a build, and the languages of its files.
+- **Loading** ("+" over the kits): the shell opens the operating system's own file dialog
+  (the page names no file), GridCraft reads the package, and the operating system asks, in
+  words that say what it is, what it stands on, what it brings, and that nothing in it is
+  run. On a yes it is unpacked into `kits/<id>/` and the window turns to it. A kit of an id
+  that is already loaded is not written over.
+- **Removing** ("Remove Kit" in its part): asked the same way; its own folder is taken away
+  and nothing else. **Its projects stay**, and say that their kit is not loaded: they can't
+  be trusted or run until it is loaded again. The built-in kits can't be removed.
+- Both are by hand: refused to the control channel, and no agent has a tool for either.
+- **A new project of a loaded kit** begins from the kit's starter, or, for a kit that brought
+  none, from its base kit's, naming this kit. A starter that does not make a sound project
+  leaves nothing behind.
+- **Packing** (`kitpack::pack`): a kit's folder into a package, read back before it is called
+  done. For whoever writes a kit; the window has no button for it yet.
+- **What agents are told**: `development_status` lists the loaded kits too.
+- The summary over the kits counts a loaded kit's own folder in the space it uses.
+
+**Checked.** Tests of the reader (what is not a package, names that would leave the folder,
+files with no place in a kit, sizes, what a `kit.toml` must say), of loading, listing and
+removing, of a project made from a starter and from a base, of a project whose kit was
+removed and loaded again, and of the whole way through the page: no file dialog, nothing
+chosen, a file that is no package, a no and a yes from the operating system, the kit's part,
+a project made in it, removal, and that a built-in kit can't be removed.
+
+**Seen** (the isolated copy, with the sample kit of `target/k3-prep/sample-kit/` put where
+loading would put it): the "+", "3 kits", the loaded kit in the list, and its part with its
+badges, what it stands on and Remove Kit. **Not seen**: a click on "+" (it opens the
+operating system's file dialog, on the owner's screen) or on Remove Kit (its question).
+
+**Not built.** Languages for the file viewer from a package (a kit from a package reads its
+files as its base does). A button to pack a kit. A kit with code of its own (P4), which waits
+for signing. A loaded kit can't be updated in place: it is removed and loaded again.
+
+### Upstream's pull request 990: GridCraft would run VBA (looked at 2026-10-13)
+
+**What the owner asked.** "Look at https://github.com/storytold/gridcraft/pull/990. Should we
+integrate, or handle via a plugin system?"
+
+**What it is.** A pull request to upstream named "Vba macros", by Walker-00, opened on
+2026-10-13: 13,423 lines added in 72 files, in two commits, with no description. When it was
+read it had no review, no check had run on it, and GitHub reported that it conflicts with
+upstream's own `main`. It is not in the merge of upstream made the same day. Its second
+commit is another matter (lookups over shared ranges recalculate faster).
+
+It makes GridCraft run the macros a workbook carries:
+
+- **A new crate, `gridcraft-vba`**, at layer 1: a reader of the VBA project and of UserForm
+  designs, a lexer and a parser of the language, an interpreter and the language's own
+  functions. The interpreter reaches the world only through one trait, `Host`, which its
+  caller implements. It depends on `core`, `numfmt` and `thiserror`, and forbids `unsafe`.
+- **Excel's object model, in the engine** (`crates/engine/src/vba/`): `Application`,
+  `Workbooks`, `Sheets`, `Range` and the rest, as that `Host`, over the session's commands.
+- **In the UI**: a thread per workbook that runs the interpreter and hands each call to the
+  UI thread, UserForms drawn from the file's designs, controls on sheets, Alt+F8 and Alt+F11.
+- **Commands**: `developer.runMacro`, `developer.enableMacros`, `developer.macroSource`,
+  `developer.visualBasic`; on the control channel `ui.macros.enable`, `ui.macros.run`,
+  `ui.macros.state`.
+
+**What it says of safety, and what was found reading it.** Its own words: macros stay off
+until the person clicks Enable Content, and there is "no file, process, registry, COM or DLL
+access": `Shell`, `Kill`, `CreateObject` and the like are errors, a `Declare`d function
+returns 0. Read against this fork's rules:
+
+- **Enabling and running are commands.** `developer.enableMacros`, and `developer.runMacro`
+  with `enable: true`, are commands of the engine: the command line, the MCP server and the
+  control channel reach them, and the control channel has `ui.macros.enable` and
+  `ui.macros.run` besides. So an agent, or anything that holds the control channel, can turn a
+  workbook's macros on and run them with nobody at the screen. Here, running code is the
+  person's alone to do, by hand.
+- **Enable Content runs `Workbook_Open` or `Auto_Open` at once**, and is a switch on the
+  workbook as it is open: it is not a decision about what the macros are (nothing is hashed),
+  and it is not kept.
+- **A macro can write a file where it likes**: `SaveAs` with a path of its choosing goes to
+  `file.saveAs`. It can print. "No file access" has that door in it.
+- **The stop is a key**: the interpreter asks its host between statements whether to stop
+  (Esc), and calls go 400 deep at most. A macro that never ends, run without a window, has
+  nobody to press it.
+- **It takes away the notice** that says GridCraft keeps a workbook's macros and does not run
+  them. This fork's Macros window, its `developer.macros`, the agents' `list_macros` and
+  `read_macro`, and this record all say the same, and would all be untrue.
+
+**Recommended: neither, as asked. Take it only when upstream has, and then govern it as a
+kit.**
+
+- **Not into the fork now.** It is not upstream's yet. It lives wholly in upstream's files
+  (the engine, the UI's `lib.rs`, `xlsx`, the two rules files), which the fork keeps as
+  upstream has them; taken early, it would be 13,000 lines nobody has reviewed, in the files
+  where every later merge of upstream would then conflict, and it would conflict again with
+  whatever upstream finally merges. Where its code came from is not said either; upstream's
+  clean-room rule is upstream's to check.
+- **Not a second runtime behind a plugin.** An interpreter makes thousands of small calls
+  into the object model and draws forms on the UI's own thread: as a separate process (the
+  only shape a kit from outside could take here, since nothing is loaded into GridCraft's
+  process) that is slow, and it would be the fork's own copy of an object model upstream
+  would also have. And how a kit from outside is loaded is still undecided.
+- **If upstream merges it, it arrives with a merge of upstream, and the fork puts its own
+  rules on it through hooks.** The pull request already has the seam a kit needs: everything
+  a macro does goes through `Host`. So: integrate the code, and govern it by the kit model.
+  - **A third kit in the Development window**, "VBA", built in by upstream: a workbook's VBA
+    project is that kit's workbook code.
+  - **Enable Content becomes this fork's trust**: given by hand, for the fingerprint of the
+    `vbaProject.bin` the person was shown, confirmed by the operating system's own question,
+    and asked again when the project changes. Refused to the control channel and to agents:
+    a guard on the three commands, and the control channel's two methods refused where
+    `control_refuses` already stands.
+  - **What a macro may do is what it was allowed**, as for a project: reading the workbook,
+    writing to it, and (apart, and said plainly) saving a file under a name of its choosing
+    and printing.
+  - **Opening a file still runs nothing.** The pull request agrees.
+  - The fork's reader of VBA, its Macros window and the rebuilding of macros as projects stay:
+    they are the way off VBA, and they read a project without running it.
+
+**What is the owner's to say.** Whether this fork wants macros to run at all. Until now the
+direction was to read them and rebuild what they do as projects. With upstream's runtime
+there would be two ways for one workbook: run its macros as they are, trusted; or rebuild
+them. They can stand side by side.
+
+**Fetched and built, on the owner's word** ("can we download 990 and test it out?", the same
+day). The pull request's head (`9eac084`, on upstream's 0.6.1, 407 commits behind upstream's
+`main`) is a local branch, `pr-990`, checked out in a folder of its own, `G:\gridcraft-pr990`.
+Before anything was compiled its diff was searched: it adds no build script, no procedural
+macro and no package from outside (its one new crate depends on two of GridCraft's own and
+`thiserror`); it starts no process and opens no connection; it writes no file but through
+`file.save` and `file.saveAs`; it starts one thread for each workbook; it reads a few
+environment variables in its tests. Then it was built (release), which runs none of its code.
+
+**It was not run.** Starting it runs thirteen thousand lines nobody has reviewed, as the
+person at this machine: that is the owner's to do. `G:\gridcraft-pr990\run-isolated.cmd`
+starts it with a settings folder of its own beside it. To be tried on copies of workbooks:
+a macro there can save a file under any name it likes.
+
+**Not done.** Nothing of it is in the fork, and nothing was said on the pull request: a
+comment there is the owner's to ask for.
+
+**Set aside (the same day).** The owner started it and looked: "the VBA system is really
+basic, so we should ignore it for now and continue with our development kit structure."
+Nothing of it is taken. The branch `pr-990` and the folder `G:\gridcraft-pr990` are still
+there; they can be removed when the owner says.
+
+### Calling a project from the sheet, and an immediate line (to design)
+
+**What the owner asked (2026-10-13).** "From the sheet, do we have a way to call function in
+the project? Do we need to introduce a gridcraft immediate window / terminal?" And, on
+plugins: "Does gridcraft have a plugin system? It would make sense for functions to be
+tested as plugins before being incorporated into the main system."
+
+**What there is.** Upstream has no plugin system: its own `docs/gaps.md` says "no plugin or
+custom function API", and its roadmap lists one as work not begun. Its worksheet functions
+are a table compiled into the program. In the fork, a project's script runs from its panel,
+from its own part of the window (on the selection, by hand), and when an agent asks. **No
+formula can call into a project.**
+
+**A formula that calls a project** is what the owner named a library: a project a
+spreadsheet can refer to. What it would take:
+
+- **A door in the calculation.** One hook where upstream looks a function's name up: a name
+  not in its table is asked of whoever registered (the fork), low in upstream's layers, so
+  through something the engine is handed, not a crate it depends on.
+- **Two kinds of function, which are not alike.**
+  - *WebAssembly* (the C kit's, or any language's): sealed, exact, bounded in time and
+    memory. It can calculate with the sheet, like a built-in. It needs a WebAssembly runtime
+    inside GridCraft (today one runs only in a panel's web view, so nothing would calculate
+    with the panel closed, or from the command line): a dependency to choose.
+  - *Python* (the first kit's): a program of the person's that can do anything, and slow to
+    call. It can't run because a workbook was opened: opening a file runs nothing. So its
+    results are values the person asks to be worked out (a button, or a recalculation they
+    start), kept in the workbook, worked out beside the window and not in it.
+- **Trust.** Only a trusted project's functions calculate. Without it a cell keeps its last
+  value and says why.
+- **Names**: by project, as in `=BLINK.TWICE(A1)`. What a workbook shows where the project is
+  not installed: its last values.
+
+**An immediate line**: worth having, small. In the Console's part, one line where the person
+calls a function of a trusted project (with the selection, or with what they type) and reads
+what came back, and the last few lines they ran. It is running code by hand: for a project
+they trust that may run Python, and refused to the control channel. **A terminal is not
+proposed**: a shell is not GridCraft's to be.
+
+**The owner's to say**: whether WebAssembly functions come first (they are the ones that can
+calculate by themselves) or Python's (the first kit's, asked for by hand); and whether a
+WebAssembly runtime inside GridCraft is wanted.
+
+### Offering it upstream, in stages (a strategy)
+
+**What the owner asked (2026-10-13).** "We need a strategy to PR into the main for this - in
+a clear staged way. Introduce the python / svelte Development kit as the first priority
+(since it is probably the most useful)."
+
+**What stands in the way, said first.**
+
+- **Upstream's rule is Rust only**: no handwritten JavaScript. A panel needs a script that
+  gives its page the spreadsheet (`spreadsheet.js`, text inside Rust here), and Python needs
+  its own few lines. Upstream has to say yes to that before any of it is offered; nothing
+  else in the first stages breaks a rule of theirs.
+- **Upstream is for every system.** Docking a panel in the window, and the Development
+  window as a page, are Windows only here. They are not in the first stages.
+- **Some of it is the fork's alone and stays**: the Svelte page (upstream's windows are drawn
+  by its own toolkit), the marks in the badges (their rule on iconography), Doom.
+- **Their time.** The fork's #549 has waited without a review; a contributor's pull request
+  of 13,000 lines (990) sits unreviewed. Small pull requests, each whole by itself, are the
+  ones that get read.
+
+**The stages.** Each is one pull request, cut from upstream's `main` (not the fork's), with
+upstream's own names (no "aniefork"), its tests, its documents brought up to date, and
+upstream's gate passing. Each leaves GridCraft whole if the next never comes.
+
+| Stage | What it adds | What runs | Size here, with tests |
+|---|---|---|---|
+| **U0** | **No code: a proposal**, as an issue. What a project is, how trust works, the stages, and the one thing asked of their rules (a panel's script, as text). Their plugin API is on their own roadmap: this answers it | Nothing | A page |
+| **U1** | **Projects that do nothing yet**: the folder and its manifest, what a project asks to be allowed, its fingerprint, the person's trust (given by hand, confirmed by the operating system), a report command, the Developer tab (hidden until Options), the Projects window with review and a starter | Nothing: no code of a project runs | About 4,500 lines |
+| **U2** | **A panel**: a trusted project's page, served from the person's own machine to their browser, with the script that gives it the spreadsheet; reading and writing as it was allowed; told when the selection changes | A web page, in the browser | About 3,300 lines |
+| **U3** | **Python**: a trusted project's scripts, run by the person's own Python, from its panel and from Projects; the Console | The person's Python | About 2,000 lines |
+| **U4** | A project's files, read in review with their syntax coloured | Nothing | Small |
+| **U5** | A panel docked in the window, on every system upstream builds for | A web view | To be measured: needs macOS and Linux first |
+| **U6** | Agents: the Development server | An agent's requests, answered by the person | About 10,800 lines: a proposal of its own |
+| Later | Kits (the C kit, kits from packages), macros to read | | |
+
+**Before U1 can be cut**, in the fork: the names (the crate, the modules, the settings
+folder, "Anie Development Kit": the owner's to choose what upstream is offered), and the
+hooks, which become upstream's own code.
+
+**As each is merged**, the fork drops its own copy at the next merge of upstream and keeps
+only what upstream has not taken, as it did with the selection glide.
+
+**The owner's to say.** Whether U0 is posted, and in whose words: nothing is said on GitHub
+without their go-ahead. What the kit is called there. Whether U1 is cut as one pull request
+or as two (the model and its command; then the tab and the window).
+
 
 ### Backlog
 

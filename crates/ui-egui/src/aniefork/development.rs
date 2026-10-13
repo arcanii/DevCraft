@@ -32,8 +32,9 @@
 //! **The window has a list down its side and one part beside it** ([`super::kits`] says what
 //! each holds). At the top, the whole at a glance. Under it the **MCP server**, which is the
 //! Agents part described above: it stands at the top because it is not any kit's. Then the
-//! **development kits**: the one this build has is the Anie Development Kit (Python and
-//! Svelte), and under it its **projects**, by kind: the code of one workbook, and libraries.
+//! **development kits**, each set apart with its shield: the Anie Development Kit (Python and
+//! Svelte) and the C Development Kit. A kit's **projects** are listed in the kit's own part,
+//! not down the side, and each has a part of its own, reached from there.
 //! The kit's part has the way to Projects and the Developer console, the Python that runs
 //! scripts, a new project, and a showcase: a project whose panel is a Svelte app, which the
 //! window creates and, once the person has trusted it, docks beside the sheet in the system's
@@ -54,11 +55,12 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::{c, kit, manifest, settings, showcase, starter};
+use gridcraft_aniefork_dev::{c, manifest, settings, showcase, starter};
 use serde_json::{Value as Json, json};
 
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
 use super::diff::{Line, Row};
+use super::icons::{self, Glyph};
 use super::kits::{self, Pane};
 use super::{agents, presence, projects};
 use crate::SheetApp;
@@ -131,6 +133,34 @@ pub(super) enum Act {
     },
     /// Stop reading it.
     CloseFile,
+    /// Trust the project whose part is shown, as the person was shown it. Where the window
+    /// houses what Projects does: the page.
+    Trust {
+        project: String,
+        follow: bool,
+    },
+    StopTrusting(String),
+    /// Look at the project again, as it is now.
+    LookAgain(String),
+    /// Run one of a trusted project's scripts on the selection, and stop it.
+    RunScript {
+        project: String,
+        script: String,
+    },
+    StopRun(String),
+    /// Name the Python that runs projects' scripts, and ask it what it is.
+    CheckPython(String),
+    /// Forget the console's entries, and copy them (one project's, or all).
+    ClearConsole,
+    CopyConsole(Option<String>),
+    /// Read another module of the open workbook's macros.
+    ReadMacro(String),
+    /// Copy the few words that ask an agent to rebuild the macros.
+    CopyRequest,
+    /// Load a development kit from a package file the person chooses, and remove one that
+    /// was loaded. Each ends in the operating system's own question.
+    LoadKit,
+    RemoveKit(String),
 }
 
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
@@ -160,6 +190,17 @@ pub(super) struct State {
     pub(super) compiler: String,
     /// The file that is being read: the project's id, and the file's path in it.
     pub(super) viewing: Option<(String, String)>,
+    /// What is typed to filter the kits by.
+    kit_filter: String,
+    /// The project whose part is shown, as it was when the person began to look at it: its id
+    /// and its fingerprint. Trust given from its part is for that fingerprint and no other.
+    pub(super) reviewing: Option<(String, String)>,
+    /// A script that was run from a project's part, and what came of it.
+    pub(super) run: Json,
+    /// What checking the Python that was named had to say.
+    pub(super) python_status: String,
+    /// The module of the open workbook's macros that is being read.
+    pub(super) macro_module: String,
 }
 
 fn state_id() -> egui::Id {
@@ -193,6 +234,20 @@ impl State {
         }
         state.look_at(only);
         state
+    }
+
+    /// Notes the project whose part is shown, as it is now, unless it is noted already: from
+    /// here on, what the person is shown is what they may trust. Turning to another part, or
+    /// to another project, lets go of the one before.
+    pub(super) fn review(&mut self) {
+        let Pane::Project(id) = &self.pane else {
+            self.reviewing = None;
+            return;
+        };
+        if self.reviewing.as_ref().is_some_and(|(of, _)| of == id) {
+            return;
+        }
+        self.reviewing = kits::fingerprint_of(id).map(|print| (id.clone(), print));
     }
 
     /// Turns to the request `id` (or away from them all): its card starts afresh.
@@ -630,25 +685,101 @@ fn standing(ui: &egui::Ui, status: &str, label: &str) -> egui::RichText {
     }
 }
 
-/// The list down the window's side: every part that can be shown (`kits::nav` lists them).
-fn nav_part(ui: &mut egui::Ui, rows: &Json, action: &mut Option<Act>) {
+/// A development kit in the list down the side: set apart from the rest in a frame of its
+/// own, with its shield, what it is made of and how many projects it has.
+fn nav_kit(ui: &mut egui::Ui, row: &Json, action: &mut Option<Act>) {
     let t = Tokens::get(ui.ctx());
-    for row in rows.as_array().map(Vec::as_slice).unwrap_or_default() {
+    // Its part is shown, or a project of it is: either way this is where the person is.
+    let here = row["selected"] == true || row["within"] == true;
+    let frame = egui::Frame::group(ui.style())
+        .stroke(egui::Stroke::new(1.0, if here { t.accent } else { t.separator }))
+        .fill(if here { t.hover } else { egui::Color32::TRANSPARENT })
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(6, 5));
+    ui.add_space(2.0);
+    frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let (place, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+            icons::paint(ui.painter(), place, Glyph::Shield, t.accent);
+            ui.vertical(|ui| {
+                let label = said(row, "label");
+                let name = if row["selected"] == true { egui::RichText::new(label).strong() } else { egui::RichText::new(label) };
+                if ui
+                    .add(egui::Button::selectable(row["selected"] == true, name).truncate())
+                    .on_hover_text("Its projects, and what it needs to run them")
+                    .clicked()
+                    && let Some(to) = row["go"].as_str().and_then(Pane::parse)
+                {
+                    *action = Some(Act::Go(to));
+                }
+                let under = match (said(row, "hint"), said(row, "projects")) {
+                    (made_of, "") => made_of.to_string(),
+                    (made_of, projects) => format!("{made_of}  ·  {projects}"),
+                };
+                ui.add(egui::Label::new(small(under)).truncate());
+            });
+        });
+    });
+}
+
+/// The list down the window's side: every part that can be shown (`kits::nav` lists them).
+/// The kits are filtered by what is typed in `filter`.
+fn nav_part(ui: &mut egui::Ui, rows: &Json, filter: &mut String, action: &mut Option<Act>) {
+    let t = Tokens::get(ui.ctx());
+    let all = rows.as_array().map(Vec::as_slice).unwrap_or_default();
+    for row in all {
         let label = said(row, "label");
         let indent = row["depth"].as_f64().unwrap_or(0.0) as f32 * 9.0;
         match row["t"].as_str() {
+            Some("kit") if !kits::matches(said(row, "search"), filter) => {}
+            Some("kit") => nav_kit(ui, row, action),
             Some("heading") => {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.add_space(indent);
                     ui.label(egui::RichText::new(label).small().strong().color(t.text_dim));
                 });
+                // Over the kits: how many they are and the space they use, and the field
+                // they are filtered by.
+                if let Some(summary) = row["says"].as_str() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(indent);
+                        ui.label(small(summary));
+                        // The way to load another kit, from a package file.
+                        if let Some(load) = row["add"].as_str()
+                            && ui.small_button("+").on_hover_text(load).clicked()
+                        {
+                            *action = Some(Act::LoadKit);
+                        }
+                    });
+                }
+                if let Some(hint) = row["filter"].as_str() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(indent);
+                        let width = (ui.available_width() - 4.0).max(60.0);
+                        ui.add(egui::TextEdit::singleline(filter).hint_text(hint).desired_width(width))
+                            .on_hover_text("Shows the kits that say every word typed here, of themselves or of their projects");
+                    });
+                    let kits = all.iter().filter(|row| row["t"] == "kit");
+                    if !filter.trim().is_empty() && !kits.clone().any(|row| kits::matches(said(row, "search"), filter)) && kits.count() > 0 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(indent);
+                            ui.label(small(said(row, "none")));
+                        });
+                    }
+                }
             }
             Some("item") => {
                 ui.horizontal(|ui| {
                     ui.add_space(indent);
                     if let Some(mark) = row["mark"].as_str() {
                         dot(ui, mark);
+                    }
+                    // The top of the window carries the toolbox, as its button in the ribbon does.
+                    if row["icon"] == "tools" {
+                        let (place, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                        icons::paint(ui.painter(), place, Glyph::Toolbox, t.text);
                     }
                     let text = if row["depth"] == 0 { egui::RichText::new(label).strong() } else { egui::RichText::new(label) };
                     let shown = ui.add(egui::Button::selectable(row["selected"] == true, text).truncate());
@@ -717,13 +848,17 @@ fn overview_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
     });
     // The kits.
     heading(ui, said(told, "kitsTitle"));
+    ui.label(small(said(told, "kitsSummary")));
     for kit in told["kits"].as_array().map(Vec::as_slice).unwrap_or_default() {
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
+                let (place, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                icons::paint(ui.painter(), place, Glyph::Shield, t.accent);
                 ui.label(egui::RichText::new(said(kit, "name")).strong().size(14.0));
-                let made_of: Vec<&str> = kit["madeOf"].as_array().map(|all| all.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
-                ui.label(small(made_of.join(" · ")));
+                for part in kit["madeOf"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(Json::as_str) {
+                    icons::badge(ui, part);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Open Kit").on_hover_text("Its projects, and what it needs to run them").clicked()
                         && let Some(to) = kit["go"].as_str().and_then(Pane::parse)
@@ -735,7 +870,10 @@ fn overview_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
             });
             ui.label(said(kit, "says"));
             if let Some(projects) = kit["projects"].as_str() {
-                ui.label(small(projects));
+                ui.label(small(match kit["space"].as_str() {
+                    Some(space) => format!("{projects}  ·  {space}"),
+                    None => projects.to_string(),
+                }));
             }
         });
     }
@@ -766,13 +904,16 @@ fn overview_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
     });
 }
 
-/// A development kit: what it can't do yet, what it needs to run, its projects by kind, a
-/// new project, and (for the kit that has one) the showcase.
+/// A development kit: what it can't do yet, what it needs to run, its projects, a new
+/// project, and (for the kit that has one) the showcase.
 fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Option<Act>) {
     ui.horizontal(|ui| {
+        let (place, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+        icons::paint(ui.painter(), place, Glyph::Shield, Tokens::get(ui.ctx()).accent);
         ui.label(egui::RichText::new(said(told, "title")).strong().size(15.0));
-        let made_of: Vec<&str> = told["madeOf"].as_array().map(|all| all.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
-        ui.label(small(made_of.join(" · ")));
+        for part in told["madeOf"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(Json::as_str) {
+            icons::badge(ui, part);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(small(said(told, "standing"))));
     });
     ui.label(said(told, "says"));
@@ -823,45 +964,58 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
             *action = Some(Act::OpenFolder);
         }
     });
-    // Its projects, by what they are for.
+    // A kit from a package: what it stands on, and the way to remove it.
+    let package = &told["package"];
+    if package.is_object() {
+        ui.label(small(said(package, "says")));
+        ui.horizontal(|ui| {
+            if ui.button("Remove Kit").on_hover_text(said(package, "removeSays")).clicked() {
+                *action = Some(Act::RemoveKit(said(told, "id").to_string()));
+            }
+            ui.label(small(said(package, "removeSays")));
+        });
+    }
+    // The space it uses.
+    let space = &told["space"];
+    if space.is_object() {
+        ui.label(small(format!("{}: {}", said(space, "title"), said(space, "says")))).on_hover_text(said(space, "counts"));
+    }
+    // Its projects, as one list: what each is for is said beside its name.
     heading(ui, said(told, "projectsTitle"));
     ui.label(small(said(told, "projectsNote")));
-    for group in told["groups"].as_array().map(Vec::as_slice).unwrap_or_default() {
-        ui.add_space(4.0);
+    let projects = told["projects"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if projects.is_empty() {
+        ui.label(small(said(told, "projectsEmpty")));
+    }
+    for project in projects {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(said(group, "label")).strong());
-            ui.label(small(said(group, "says")));
-        });
-        let projects = group["projects"].as_array().map(Vec::as_slice).unwrap_or_default();
-        if projects.is_empty() {
-            ui.label(small(said(group, "empty")));
-        }
-        for project in projects {
-            ui.horizontal(|ui| {
-                dot(ui, said(project, "status"));
-                match project["go"].as_str().and_then(Pane::parse) {
-                    Some(to) => {
-                        if ui.link(said(project, "name")).on_hover_text("What it is for, what it asks, and what is in it").clicked() {
-                            *action = Some(Act::Go(to));
-                        }
-                    }
-                    None => {
-                        ui.label(said(project, "name"));
+            dot(ui, said(project, "status"));
+            match project["go"].as_str().and_then(Pane::parse) {
+                Some(to) => {
+                    // The way to the project's own part: a button, drawn as a link is. (A link
+                    // of the toolkit's own says it is a label to whoever asks what it is.)
+                    let name = egui::RichText::new(said(project, "name")).color(ui.visuals().hyperlink_color);
+                    let shown = ui.add(egui::Button::new(name).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if shown.on_hover_text("What it is for, what it asks, and what is in it").clicked() {
+                        *action = Some(Act::Go(to));
                     }
                 }
-                if let Some(workbook) = project["workbook"].as_str() {
-                    ui.label(small(if project["open"] == true { format!("for {workbook}, which is open") } else { format!("for {workbook}") }));
+                None => {
+                    ui.label(said(project, "name"));
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(standing(ui, said(project, "status"), said(project, "statusLabel")).small());
-                });
-            });
-            if !said(project, "says").is_empty() {
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    ui.label(small(said(project, "says")));
-                });
             }
+            if let Some(what_for) = project["for"].as_str() {
+                ui.label(small(what_for));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(standing(ui, said(project, "status"), said(project, "statusLabel")).small());
+            });
+        });
+        if !said(project, "says").is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.label(small(said(project, "says")));
+            });
         }
     }
     // A new one.
@@ -872,7 +1026,7 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         ui.add_sized(size, egui::TextEdit::singleline(&mut state.new_name).hint_text("Its name")).labelled_by(label.id);
         if ui.button("Create Project").on_hover_text("Creates a starter project. It does nothing until you trust it.").clicked() {
             // The kit is the one whose part this is: one that is loaded, or none is made.
-            if let Some(kit) = kit::named(said(told, "id")) {
+            if let Some(kit) = kits::kit_named(said(told, "id")) {
                 *action = Some(Act::CreateProject { name: state.new_name.clone(), for_workbook: state.new_for, kit: kit.id });
             }
         }
@@ -916,7 +1070,7 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
 
 /// A file's lines as they are drawn: each with its number, and each piece in the colour of
 /// what it is. Text, and only text: nothing in a file is followed.
-fn code(ui: &egui::Ui, view: &Json) -> egui::text::LayoutJob {
+pub(super) fn code(ui: &egui::Ui, view: &Json) -> egui::text::LayoutJob {
     let t = Tokens::get(ui.ctx());
     let font = egui::FontId::monospace(12.0);
     let plain = ui.visuals().text_color();
@@ -1145,6 +1299,19 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             {
                 state.pane = Pane::first_kit();
             }
+            // The Console and Macros have windows of GridCraft's own, which this one opens:
+            // it is the page that houses them as parts.
+            match state.pane {
+                Pane::Console => {
+                    state.pane = Pane::Overview;
+                    action = Some(Act::Open(super::console::NAME));
+                }
+                Pane::Macros => {
+                    state.pane = Pane::Overview;
+                    action = Some(Act::Open(super::macros::NAME));
+                }
+                _ => {}
+            }
             let rows = kits::nav(app, &state.pane, &now);
             // The server's part is drawn from how things stand; the others from what `kits` says.
             let mut told = if state.pane == Pane::Server { Json::Null } else { kits::pane(app, &ctx, &state.pane, &now) };
@@ -1154,7 +1321,10 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
             let row = ui.horizontal_top(|ui| {
                 let side = ui.vertical(|ui| {
                     ui.set_width(200.0);
-                    egui::ScrollArea::vertical().id_salt("development_parts").max_height(room).show(ui, |ui| nav_part(ui, &rows, &mut action));
+                    egui::ScrollArea::vertical()
+                        .id_salt("development_parts")
+                        .max_height(room)
+                        .show(ui, |ui| nav_part(ui, &rows, &mut state.kit_filter, &mut action));
                 });
                 ui.add_space(BETWEEN);
                 ui.vertical(|ui| {
@@ -1232,6 +1402,11 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             | Act::CreateShowcase
             | Act::CreateProject { .. }
             | Act::CloseFile
+            | Act::StopTrusting(_)
+            | Act::LookAgain(_)
+            | Act::StopRun(_)
+            | Act::ReadMacro(_)
+            | Act::CopyRequest
     );
     if !anyones && driven {
         return Err(presence::BY_HAND.to_string());
@@ -1254,8 +1429,51 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             state.viewing = None;
             Ok(String::new())
         }
+        Act::Trust { project, follow } => {
+            // What is trusted is what the person was shown: the fingerprint noted when they
+            // began to look, of the project whose part this is. `trust` checks that the
+            // project still has it, and ends in the operating system's own question.
+            let noted = state.reviewing.clone().filter(|(of, _)| *of == project && state.pane == Pane::Project(project.clone()));
+            let Some((_, fingerprint)) = noted else { return Err("Look at the project before trusting it.".into()) };
+            projects::trust(app, &project, &fingerprint, follow)
+        }
+        Act::StopTrusting(project) => {
+            super::panels::stop(ctx, &project);
+            projects::stop_trusting(&project)
+        }
+        Act::LookAgain(project) => {
+            state.viewing = None;
+            state.reviewing = kits::fingerprint_of(&project).map(|print| (project, print));
+            Ok(String::new())
+        }
+        Act::RunScript { project, script } => projects::start(app, ctx, &project, &script).map(|()| {
+            state.run = json!({"state": "running", "project": project, "script": script});
+            String::new()
+        }),
+        Act::StopRun(project) => {
+            if let Some(at) = projects::places() {
+                gridcraft_aniefork_dev::python::PythonHost::global().stop(&at.projects, &project);
+            }
+            Ok(String::new())
+        }
+        Act::CheckPython(python) => {
+            state.python_status = projects::check_python(&python).unwrap_or_else(|why| why);
+            Ok(String::new())
+        }
+        Act::ClearConsole => Ok(super::console::clear()),
+        Act::CopyConsole(project) => Ok(super::console::copy(ctx, project.as_deref())),
+        Act::ReadMacro(name) => {
+            state.macro_module = name;
+            Ok(String::new())
+        }
+        Act::CopyRequest => {
+            ctx.copy_text(super::macros::REQUEST.to_string());
+            Ok(super::macros::COPIED.into())
+        }
+        Act::LoadKit => load_kit(app, state),
+        Act::RemoveKit(id) => remove_kit(app, state, &id),
         Act::CreateProject { name, for_workbook, kit } => {
-            let kit = kit::named(kit).ok_or("There is no such development kit.")?;
+            let kit = kits::kit_named(kit).ok_or("There is no such development kit.")?;
             // The workbook it is the code of is the one that is open: nobody names another.
             let workbook = if for_workbook { app.session.active().map(|doc| doc.title.clone()) } else { None };
             let created = projects::create_project_in(kit, &name, workbook.as_deref())?;
@@ -1364,6 +1582,63 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
     }
 }
 
+/// Loads a development kit from a package file the person chooses in the operating system's
+/// own dialog, after its own question. The window turns to the kit that was loaded.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_kit(app: &mut SheetApp, state: &mut State) -> Result<String, String> {
+    use gridcraft_aniefork_dev::kitpack;
+
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+    let Some(chosen) = kits::pick_package()? else { return Ok(String::new()) };
+    let package = kitpack::read(std::path::Path::new(&chosen))?;
+    let Some(confirm) = &app.services.confirm else {
+        return Err("This copy of GridCraft can't ask your operating system to confirm, so it can't load a kit.".into());
+    };
+    if !confirm("Load this development kit?", &kitpack::question(&package)) {
+        return Ok(format!("{} was not loaded.", package.said.name));
+    }
+    std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
+    let loaded = kitpack::install(&at.projects, &package)?;
+    kits::forget();
+    state.pane = Pane::Kit(loaded.id);
+    Ok(format!("{} was loaded.", loaded.name))
+}
+
+/// Removes a development kit that was loaded from a package, after the operating system's own
+/// question. Its projects stay where they are.
+#[cfg(not(target_arch = "wasm32"))]
+fn remove_kit(app: &mut SheetApp, state: &mut State, id: &str) -> Result<String, String> {
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+    let Some(kit) = kits::kit_named(id).filter(|kit| !kit.built_in) else {
+        return Err("That is not a development kit that was loaded from a package.".into());
+    };
+    let Some(confirm) = &app.services.confirm else {
+        return Err("This copy of GridCraft can't ask your operating system to confirm, so it can't remove a kit.".into());
+    };
+    let asked = format!(
+        "Remove the development kit \"{}\"?\n\nIts own folder is taken away. Projects made with it stay where they are; they can't be trusted or run until it is loaded again.",
+        kit.name
+    );
+    if !confirm("Remove this development kit?", &asked) {
+        return Ok(format!("{} was not removed.", kit.name));
+    }
+    let name = gridcraft_aniefork_dev::kitpack::remove(&at.projects, id)?;
+    kits::forget();
+    state.pane = Pane::Overview;
+    Ok(format!("{name} was removed."))
+}
+
+/// In the browser there are no kits to load: it keeps no settings, and reads no package.
+#[cfg(target_arch = "wasm32")]
+fn load_kit(_app: &mut SheetApp, _state: &mut State) -> Result<String, String> {
+    Err(kits::NO_PICKER.into())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn remove_kit(_app: &mut SheetApp, _state: &mut State, _id: &str) -> Result<String, String> {
+    Err(projects::UNAVAILABLE.into())
+}
+
 /// Shows the panel of the project `id`: docked in the window, or in the person's browser. Both
 /// decide for themselves whether the project is trusted as it is now and has a panel.
 fn show_panel(app: &mut SheetApp, ctx: &egui::Context, id: &str, docked: bool, open: &mut bool) -> Result<String, String> {
@@ -1398,6 +1673,7 @@ mod tests {
 
     use egui::accesskit::Role;
     use egui_kittest::kittest::{NodeT, Queryable};
+    use gridcraft_aniefork_dev::kit;
     use gridcraft_aniefork_dev::python::PythonHost;
 
     use super::*;
@@ -1449,6 +1725,14 @@ mod tests {
         if h.query_by_role_and_label(Role::Button, part).is_some() {
             h.get_by_role_and_label(Role::Button, part).click();
         }
+        h.run_steps(4);
+    }
+
+    /// Turns to a project's part, the way there is: its kit's part, where its projects are
+    /// listed. The list down the side stops at the kits.
+    fn go_project(h: &mut Harness, kit: &str, project: &str) {
+        go(h, kit);
+        h.get_by_role_and_label(Role::Button, project).click();
         h.run_steps(4);
     }
 
@@ -2778,7 +3062,9 @@ mod tests {
             (&json!("Anie Development Kit"), &json!("1 project, 0 trusted"))
         );
         let listed: Vec<&str> = first["nav"].as_array().unwrap().iter().map(|row| row["label"].as_str().unwrap()).collect();
-        assert_eq!(listed, ["Development", "MCP Server", "Development Kits", "Anie Development Kit", "Libraries", "Clean Data", "C Development Kit"]);
+        // The list stops at the kits: a kit's projects are in its own part.
+        assert_eq!(listed, ["Development", "MCP Server", "Console", "Macros", "Development Kits", "Anie Development Kit", "C Development Kit"]);
+        assert_eq!((&first["nav"][0]["icon"], &first["nav"][5]["t"], &first["nav"][5]["icon"]), (&json!("tools"), &json!("kit"), &json!("shield")));
         assert_eq!(first["pane"]["kits"][1]["name"], "C Development Kit");
         assert_eq!((&first["nav"][0]["selected"], &first["nav"][1]["go"]), (&json!(true), &json!("server")));
         assert!(first["theme"]["window"].as_str().unwrap().starts_with('#'));
@@ -2891,22 +3177,25 @@ mod tests {
         assert_eq!(agents::snapshot().level, before);
         assert!(h.state().dialog.is_none());
         assert!(!s.0.join("projects/rusty").exists());
-        // Its other windows open in GridCraft's own.
-        page(&mut h, json!({"act": "open", "name": "projects"}));
-        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
-        h.state_mut().dialog = None;
+        // What were its other windows are parts of it: asking for one turns the page to it,
+        // and no window of GridCraft's own opens.
         page(&mut h, json!({"act": "open", "name": "macros"}));
-        assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::macros::NAME));
-        h.state_mut().dialog = None;
-        // The kit's part, with its projects by what they are for.
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none());
+        assert_eq!(told(&mut h)["pane"]["kind"], "macros");
+        page(&mut h, json!({"act": "open", "name": "projects"}));
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none());
+        assert_eq!(told(&mut h)["pane"]["kind"], "overview");
+        // The kit's part, with its projects.
         page(&mut h, json!({"act": "go", "to": "kit:anie"}));
         let first_kit = told(&mut h)["pane"].clone();
         assert_eq!(
             (&first_kit["kind"], &first_kit["title"], &first_kit["standing"]),
             (&json!("kit"), &json!("Anie Development Kit"), &json!("Built in  ·  loaded"))
         );
-        assert_eq!((&first_kit["groups"][0]["label"], &first_kit["groups"][0]["projects"]), (&json!("Workbook code"), &json!([])));
-        assert_eq!(first_kit["groups"][1]["projects"][0]["name"], "Clean Data");
+        assert_eq!((&first_kit["projectsTitle"], &first_kit["groups"]), (&json!("Projects"), &Json::Null));
+        assert_eq!((&first_kit["projects"][0]["name"], &first_kit["projects"][0]["for"]), (&json!("Clean Data"), &Json::Null));
         // The second kit has a part of its own. It builds and runs: there is nothing it says
         // it can't do yet.
         page(&mut h, json!({"act": "go", "to": "kit:c"}));
@@ -2992,18 +3281,277 @@ mod tests {
             (&json!("project"), &json!("budget-macros"), &json!("Workbook code"), &json!("Not trusted"))
         );
         assert_eq!(made["forSays"], json!(format!("It says it is the code of the workbook {title:?}, which is open now.")));
-        assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "project:budget-macros" && row["selected"] == true));
+        // The project is no row of the list: its kit's row says the person is within it.
+        assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:anie" && row["within"] == true && row["selected"] == false));
+        assert!(!now["nav"].as_array().unwrap().iter().any(|row| row["go"] == "project:budget-macros"));
+        assert_eq!(made["aboveGo"], json!(["overview", "overview", "kit:anie"]));
         assert_eq!(list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "budget-macros").unwrap()["status"], "untrusted");
         assert_eq!(asked.questions().len(), 1, "creating it asked nothing and trusted nothing");
         // A project that is gone gives way to its kit.
         std::fs::remove_dir_all(s.0.join("projects/budget-macros")).unwrap();
         assert_eq!(told(&mut h)["pane"]["kind"], "kit");
-        // The person can have GridCraft's own window instead, until GridCraft closes.
+        // The page no longer has a way to GridCraft's own window, and a message that asks
+        // for it is not one GridCraft knows: nothing happens.
         page(&mut h, json!({"act": "builtin"}));
+        assert!(devpage::wanted(&ctx) && devpage::takes_over(&ctx));
+        assert!(h.state().dialog.is_none());
+        // Where the shell can't show the page after all, GridCraft's own window is what opens,
+        // and it stays.
+        devpage::failed(h.state_mut(), &ctx, "no web view");
         assert!(!devpage::wanted(&ctx) && !devpage::takes_over(&ctx));
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(NAME));
         h.run_steps(3);
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(NAME), "and it stays");
+    }
+
+    #[test]
+    fn the_page_houses_what_projects_the_console_and_macros_do() {
+        use crate::aniefork::macros::tests::{carry, sample};
+
+        let s = Sandbox::new("devpage-housed");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        devpage::host_is_here(&ctx);
+        let status =
+            |id: &str| list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap()["status"].as_str().unwrap().to_string();
+        // The ribbon's buttons ask for GridCraft's own windows by name. Where the page is,
+        // each opens the page at its part, and no window of GridCraft's own.
+        for (name, part) in [(crate::aniefork::console::NAME, "console"), (crate::aniefork::macros::NAME, "macros"), (projects::NAME, "overview")] {
+            h.state_mut().open_dialog(name, json!({}));
+            h.run_steps(3);
+            assert!(h.state().dialog.is_none() && devpage::wanted(&ctx), "{name}");
+            let now = told(&mut h);
+            assert_eq!(now["pane"]["kind"], part, "{name}");
+            assert!(now["nav"].as_array().unwrap().iter().any(|row| row["go"] == part && row["selected"] == true), "{name}");
+        }
+        // A project's part: it is not trusted, and trust is there to give for what is shown.
+        page(&mut h, json!({"act": "go", "to": "project:clean-data"}));
+        let shown = told(&mut h)["pane"].clone();
+        let trust = &shown["trust"];
+        assert_eq!(
+            (&trust["status"], &trust["open"], &trust["canTrust"], &trust["moved"], &trust["canStop"]),
+            (&json!("untrusted"), &json!(true), &json!(true), &Json::Null, &json!(false))
+        );
+        assert_eq!((&trust["follow"], &shown["scripts"], &shown["run"]), (&json!(projects::FOLLOW), &json!([]), &Json::Null));
+        // Its files change while the person reads. Trust is no longer offered, and a click
+        // that asks for it all the same is refused: nothing is asked of the operating system.
+        std::fs::write(s.0.join("projects/clean-data/python/extra.py"), "def main(data):\n    return 2\n").unwrap();
+        kits::forget();
+        let moved = told(&mut h)["pane"]["trust"].clone();
+        assert_eq!((&moved["canTrust"], &moved["moved"]), (&json!(false), &json!(projects::TRUST_MOVED)));
+        page(&mut h, json!({"act": "trust", "id": "clean-data", "follow": false}));
+        assert!(told(&mut h)["error"].as_str().unwrap().contains("changed while you were looking at it"));
+        assert!(asked.questions().is_empty());
+        assert_eq!(status("clean-data"), "untrusted");
+        // Looking again shows it as it is now, and that is what a yes then trusts.
+        page(&mut h, json!({"act": "lookAgain", "id": "clean-data"}));
+        let again = told(&mut h);
+        assert_eq!((&again["error"], &again["pane"]["trust"]["canTrust"]), (&json!(""), &json!(true)));
+        // A project that is not the one shown is not trusted from here, whatever the page
+        // sends; nor is one by a name that is no id.
+        create("Other").unwrap();
+        kits::forget();
+        page(&mut h, json!({"act": "trust", "id": "other", "follow": true}));
+        assert_eq!(told(&mut h)["error"], "Look at the project before trusting it.");
+        assert!(!devpage::handle(h.state_mut(), &ctx, &json!({"act": "trust", "id": "../other"}).to_string()));
+        assert!(asked.questions().is_empty());
+        assert_eq!(status("other"), "untrusted");
+        // The operating system asks. A no leaves it untrusted; a yes trusts it, as it was shown.
+        asked.says(false);
+        page(&mut h, json!({"act": "trust", "id": "clean-data", "follow": false}));
+        assert_eq!(asked.questions().len(), 1);
+        assert!(asked.questions()[0].starts_with("Trust \"Clean Data\""));
+        assert_eq!(told(&mut h)["said"], "Clean Data was not trusted.");
+        assert_eq!(status("clean-data"), "untrusted");
+        asked.says(true);
+        page(&mut h, json!({"act": "trust", "id": "clean-data", "follow": false}));
+        let now = told(&mut h);
+        assert_eq!((&now["said"], status("clean-data").as_str()), (&json!("Clean Data is trusted."), "trusted"));
+        let trust = &now["pane"]["trust"];
+        assert_eq!(
+            (&trust["status"], &trust["open"], &trust["canTrust"], &trust["canStop"]),
+            (&json!("trusted"), &json!(false), &json!(false), &json!(true))
+        );
+        // Trusted, and allowed to run Python: its scripts are there to run.
+        assert_eq!(now["pane"]["scripts"], json!(["clean.py", "extra.py"]));
+        // A change after that is a change since it was trusted: it is looked at again first.
+        std::fs::write(s.0.join("projects/clean-data/python/extra.py"), "def main(data):\n    return 3\n").unwrap();
+        kits::forget();
+        let changed = told(&mut h)["pane"]["trust"].clone();
+        assert_eq!((&changed["status"], &changed["canTrust"], &changed["moved"]), (&json!("changed"), &json!(false), &json!(projects::TRUST_MOVED)));
+        // Stopping the trust is a click, and asks nobody.
+        page(&mut h, json!({"act": "stopTrusting", "id": "clean-data"}));
+        assert_eq!((status("clean-data").as_str(), asked.questions().len()), ("untrusted", 2));
+        // The kit's part names the Python that runs scripts; what is typed there is kept.
+        page(&mut h, json!({"act": "go", "to": "kit:anie"}));
+        assert_eq!(told(&mut h)["pane"]["pythonField"]["named"], "");
+        page(&mut h, json!({"act": "checkPython", "python": "gridcraft-no-such-python"}));
+        let kit_part = told(&mut h)["pane"].clone();
+        assert_eq!(kit_part["pythonField"]["named"], "gridcraft-no-such-python");
+        assert!(!kit_part["pythonField"]["status"].as_str().unwrap().is_empty());
+        assert_eq!(settings::load(&s.0.join("developer.json")).python, "gridcraft-no-such-python");
+        assert_eq!(told(&mut h)["pane"]["python"], "Python: gridcraft-no-such-python.");
+        page(&mut h, json!({"act": "checkPython", "python": ""}));
+        // The Console's part: what it holds, and that it is cleared by a click there.
+        page(&mut h, json!({"act": "go", "to": "console"}));
+        let console = told(&mut h)["pane"].clone();
+        assert_eq!((&console["kind"], &console["title"], &console["aboveGo"]), (&json!("console"), &json!("Console"), &json!(["overview"])));
+        assert!(console["entries"].is_array() && console["projects"].is_array());
+        page(&mut h, json!({"act": "clearConsole"}));
+        assert_eq!(told(&mut h)["said"], "The console was cleared.");
+        // The Macros part: nothing to read in a workbook that carries none; then its modules,
+        // and the one that is read, as lines of text.
+        page(&mut h, json!({"act": "go", "to": "macros"}));
+        let none = told(&mut h)["pane"].clone();
+        assert_eq!((&none["kind"], &none["has"], &none["says"]), (&json!("macros"), &json!(false), &json!("This workbook has no macros.")));
+        carry(h.state_mut(), sample());
+        let some = told(&mut h)["pane"].clone();
+        assert_eq!(some["has"], true);
+        let modules: Vec<&str> = some["modules"].as_array().unwrap().iter().map(|module| module["name"].as_str().unwrap()).collect();
+        assert!(modules.contains(&"Totals") && modules.len() == 2, "{modules:?}");
+        assert_eq!(some["modules"][0]["chosen"], true, "the first is read until another is chosen");
+        page(&mut h, json!({"act": "readMacro", "module": "Totals"}));
+        let read = told(&mut h)["pane"]["module"].clone();
+        assert_eq!(read["name"], "Totals");
+        assert!(read["says"].as_str().unwrap().starts_with("Totals  ·  "));
+        assert!(read["lines"].as_array().unwrap().iter().any(|line| line == "Public Sub AddUp()"));
+        assert!(read["procedures"].as_str().unwrap().contains("AddUp"));
+        // A module the workbook has none of is not read: the first is.
+        page(&mut h, json!({"act": "readMacro", "module": "Nowhere"}));
+        assert_eq!(told(&mut h)["pane"]["module"]["name"], modules[0]);
+        // The few words for an agent are copied; they hold nothing of the macros.
+        page(&mut h, json!({"act": "copyRequest"}));
+        assert_eq!(told(&mut h)["said"], "The request was copied. Paste it to your agent.");
+    }
+
+    #[test]
+    fn a_development_kit_is_loaded_from_a_package_by_hand_and_removed() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use gridcraft_aniefork_dev::kitpack;
+
+        let s = Sandbox::new("devpage-kits");
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(NAME, json!({}));
+        h.run_steps(3);
+        let heading = |told: &Json| told["nav"].as_array().unwrap().iter().find(|row| row["t"] == "heading").unwrap().clone();
+        let kits_of = |told: &Json| {
+            told["nav"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["t"] == "kit")
+                .map(|row| row["label"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        // Where the shell can't show a file dialog there is no way to load a kit, and asking says so.
+        let before = told(&mut h);
+        assert_eq!((&heading(&before)["add"], kits_of(&before).len()), (&Json::Null, 2));
+        page(&mut h, json!({"act": "loadKit"}));
+        assert_eq!(told(&mut h)["error"], kits::NO_PICKER);
+        // A kit, as whoever writes one keeps it, packed into a package.
+        let making = s.0.join("making");
+        std::fs::create_dir_all(making.join("starter/panel")).unwrap();
+        std::fs::write(
+            making.join("kit.toml"),
+            "id = \"dashboards\"\nname = \"Dashboards Kit\"\nversion = \"0.2.0\"\nauthor = \"Ana\"\ndescription = \"Panels that chart what is selected.\"\nmade_of = [\"Svelte\", \"Charts\"]\nbase = \"anie\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            making.join("starter/project.toml"),
+            "id = \"{{id}}\"\nname = \"{{name}}\"\nversion = \"0.1.0\"\nkit = \"dashboards\"\npermissions = [\"read\"]\n\n[panel]\nentry = \"panel/index.html\"\n",
+        )
+        .unwrap();
+        std::fs::write(making.join("starter/panel/index.html"), "<h1>{{name}}</h1>").unwrap();
+        let file = s.0.join("dashboards.gridkit");
+        kitpack::pack(&making, &file).unwrap();
+        // The shell's file dialog, stood in for: it gives what the person chose.
+        let chosen: Rc<RefCell<Option<String>>> = Rc::default();
+        let gives = chosen.clone();
+        devpage::set_kit_picker(Box::new(move || gives.borrow().clone()));
+        assert_eq!(heading(&told(&mut h))["add"], kits::LOAD_KIT);
+        // Nothing chosen: nothing happens, and nothing is asked.
+        page(&mut h, json!({"act": "loadKit"}));
+        let nothing = told(&mut h);
+        assert_eq!((&nothing["said"], &nothing["error"], asked.questions().len()), (&json!(""), &json!(""), 0));
+        // A file that is no package is refused before anything is asked.
+        std::fs::write(s.0.join("not.gridkit"), "not a zip").unwrap();
+        *chosen.borrow_mut() = Some(s.0.join("not.gridkit").display().to_string());
+        page(&mut h, json!({"act": "loadKit"}));
+        assert!(told(&mut h)["error"].as_str().unwrap().contains("not a kit package"));
+        assert!(asked.questions().is_empty());
+        // The package: the operating system asks, saying what it is. A no loads nothing.
+        *chosen.borrow_mut() = Some(file.display().to_string());
+        asked.says(false);
+        page(&mut h, json!({"act": "loadKit"}));
+        assert_eq!(told(&mut h)["said"], "Dashboards Kit was not loaded.");
+        assert!(asked.questions()[0].starts_with("Load the development kit \"Dashboards Kit\" 0.2.0, by Ana?"));
+        assert!(asked.questions()[0].contains("Nothing in it is run."));
+        assert!(!s.0.join("kits/dashboards").exists());
+        // A yes loads it: it is unpacked beside the projects, listed, and the window turns to it.
+        asked.says(true);
+        page(&mut h, json!({"act": "loadKit"}));
+        let loaded = told(&mut h);
+        assert_eq!(loaded["said"], "Dashboards Kit was loaded.");
+        assert!(s.0.join("kits/dashboards/kit.toml").is_file());
+        assert_eq!(kits_of(&loaded), ["Anie Development Kit", "C Development Kit", "Dashboards Kit"]);
+        assert!(heading(&loaded)["says"].as_str().unwrap().starts_with("3 kits  ·  "));
+        let part = &loaded["pane"];
+        assert_eq!(
+            (&part["kind"], &part["id"], &part["title"], &part["standing"]),
+            (&json!("kit"), &json!("dashboards"), &json!("Dashboards Kit"), &json!("Loaded from a package"))
+        );
+        assert_eq!(part["badges"], json!([{"label": "Svelte", "code": "svelte"}, {"label": "Charts", "code": "plain"}]));
+        assert_eq!(
+            (&part["package"]["version"], &part["package"]["author"], &part["package"]["base"], &part["package"]["baseGo"]),
+            (&json!("0.2.0"), &json!("Ana"), &json!("Anie Development Kit"), &json!("kit:anie"))
+        );
+        assert_eq!(part["says"], "Panels that chart what is selected.");
+        // It stands on the first kit: its projects have scripts, so the Python is named here
+        // too. The showcase is the first kit's own.
+        assert!(part["pythonField"].is_object() && part["showcase"].is_null() && part["compiler"].is_null());
+        // Loading and removing are by hand: asked for by what drives the window, they are refused.
+        let mut state = State::default();
+        let mut open = true;
+        for act in [Act::LoadKit, Act::RemoveKit("dashboards".into())] {
+            assert_eq!(super::act(h.state_mut(), &ctx, &mut state, act, true, &mut open), Err(presence::BY_HAND.to_string()));
+        }
+        // A project of it is made in its part, from its starter, and is a project of that kit.
+        page(&mut h, json!({"act": "createProject", "name": "Sales Board", "kit": "dashboards"}));
+        let made = told(&mut h);
+        assert_eq!(made["said"], "Sales Board was created. It is not trusted yet.");
+        assert_eq!(
+            (&made["pane"]["kind"], &made["pane"]["id"], &made["pane"]["kit"], &made["pane"]["kitGo"]),
+            (&json!("project"), &json!("sales-board"), &json!("Dashboards Kit"), &json!("kit:dashboards"))
+        );
+        assert_eq!(std::fs::read_to_string(s.0.join("projects/sales-board/panel/index.html")).unwrap(), "<h1>Sales Board</h1>");
+        // Removing asks too. A no keeps it; a yes takes its folder away and leaves its project,
+        // which says its kit is not loaded and can't be used.
+        let before = asked.questions().len();
+        asked.says(false);
+        page(&mut h, json!({"act": "removeKit", "id": "dashboards"}));
+        assert_eq!(told(&mut h)["said"], "Dashboards Kit was not removed.");
+        assert!(asked.questions()[before].starts_with("Remove the development kit \"Dashboards Kit\"?"));
+        asked.says(true);
+        page(&mut h, json!({"act": "removeKit", "id": "dashboards"}));
+        let removed = told(&mut h);
+        assert_eq!((&removed["said"], &removed["pane"]["kind"]), (&json!("Dashboards Kit was removed."), &json!("overview")));
+        assert_eq!(kits_of(&removed).len(), 2);
+        assert!(!s.0.join("kits/dashboards").exists() && s.0.join("projects/sales-board/project.toml").is_file());
+        let orphan = list()["projects"].as_array().unwrap().iter().find(|m| m["id"] == "sales-board").unwrap().clone();
+        assert_eq!(orphan["status"], "problem");
+        assert!(orphan["problem"].as_str().unwrap().contains("it is not loaded"), "{}", orphan["problem"]);
+        // The kits GridCraft is built with can't be removed, and nothing is asked for them.
+        let asked_so_far = asked.questions().len();
+        page(&mut h, json!({"act": "removeKit", "id": "anie"}));
+        assert_eq!(told(&mut h)["error"], "That is not a development kit that was loaded from a package.");
+        assert_eq!(asked.questions().len(), asked_so_far);
     }
 
     #[test]
@@ -3048,7 +3596,8 @@ mod tests {
         open_top(&mut h);
         h.get_by_label(card::INTRO);
         h.get_by_label("Not serving: agent access is off.");
-        h.get_by_label("1 project, 0 trusted");
+        // Each kit's projects, and the space it uses.
+        h.get_by_label_contains("1 project, 0 trusted  ·  ");
         h.get_by_label(kits::KITS_NOTE);
         h.get_by_label("It carries no macros.");
         assert!(h.query_by_role_and_label(Role::RadioButton, "Full control").is_none(), "the levels are in the server's own part");
@@ -3060,13 +3609,38 @@ mod tests {
         click(&mut h, "Open MCP Server");
         h.get_by_role_and_label(Role::RadioButton, "Full control");
         assert!(h.query_by_label(card::INTRO).is_none());
-        // The kit's part: what it needs to run, the way to its other windows, its projects by kind.
+        // The list down the side stops at the kits: no project is a row of it.
+        assert!(h.query_by_role_and_label(Role::Button, "Clean Data").is_none());
+        // Over the kits it says how many they are and the space they use, and they are
+        // filtered by what is typed there: by what a kit says of itself, or of its projects.
+        h.get_by_label_contains("2 kits  ·  ");
+        let filter = |h: &mut Harness, typed: &str| {
+            let mut kept: State = h.ctx.data(|d| d.get_temp(state_id())).unwrap();
+            kept.kit_filter = typed.into();
+            h.ctx.data_mut(|d| d.insert_temp(state_id(), kept));
+            h.run_steps(2);
+            (
+                h.query_by_role_and_label(Role::Button, "Anie Development Kit").is_some(),
+                h.query_by_role_and_label(Role::Button, "C Development Kit").is_some(),
+                h.query_by_label(kits::FILTER_NONE).is_some(),
+            )
+        };
+        assert_eq!(filter(&mut h, "python"), (true, false, false));
+        assert_eq!(filter(&mut h, "clean data"), (true, false, false), "a project's name finds its kit");
+        assert_eq!(filter(&mut h, "webassembly"), (false, true, false));
+        assert_eq!(filter(&mut h, "nothing says this"), (false, false, true));
+        assert_eq!(filter(&mut h, ""), (true, true, false));
+        // The kit's part: what it needs to run, the way to its other windows, its projects.
         go(&mut h, "Anie Development Kit");
-        h.get_by_label("Python · Svelte");
+        // What it is made of, as badges: each is read as its name.
+        h.get_by_label("Python");
+        h.get_by_label("Svelte");
+        h.get_by_label("Python · Svelte  ·  1 project");
         h.get_by_label("1 project, 0 trusted");
         h.get_by_label_contains("Python: found automatically.");
         h.get_by_label(&kits::projects_note(&kit::ANIE));
-        h.get_by_label("None yet.");
+        h.get_by_role_and_label(Role::Button, "Clean Data");
+        assert!(h.query_by_label_contains("Librar").is_none() && h.query_by_label_contains("librar").is_none(), "a project is called a project");
         click(&mut h, "Projects…");
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(projects::NAME));
         open_top(&mut h);
@@ -3075,8 +3649,8 @@ mod tests {
         assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some(crate::aniefork::console::NAME));
         // A project has a part of its own: what it is for, where it stands, what it asks.
         open_top(&mut h);
-        go(&mut h, "Clean Data");
-        h.get_by_label("Anie Development Kit  ·  Library");
+        go_project(&mut h, "Anie Development Kit", "Clean Data");
+        h.get_by_label("Anie Development Kit  ·  For any workbook");
         h.get_by_label("It is for any workbook.");
         h.get_by_label("It asks to be allowed to:");
         h.get_by_label("Not trusted");
@@ -3120,7 +3694,7 @@ mod tests {
             (blink.manifest.as_ref().map(|m| m.kit.as_str()), blink.files.as_slice()),
             (Some("c"), ["panel/index.html".to_string(), "project.toml".to_string(), "src/main.c".to_string()].as_slice())
         );
-        h.get_by_label("C Development Kit  ·  Library");
+        h.get_by_label("C Development Kit  ·  For any workbook");
         h.get_by_label("Blink was created. It is not trusted yet.");
         h.get_by_label("•  Show its panel and run its program there, and nothing more.");
         // Its panel is said, with no way to show it: it is not trusted.
@@ -3183,7 +3757,7 @@ mod tests {
         assert!(message(&mut h).is_some_and(|why| why.contains("gridcraft-no-such-compiler did not answer as zig does")));
         assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "gridcraft-no-such-compiler");
         // The project's part: its recipe, and a build that waits for the person's trust.
-        go(&mut h, "Blink");
+        go_project(&mut h, "C Development Kit", "Blink");
         h.get_by_label("It builds 1 C file into one WebAssembly program: src/main.c.");
         h.get_by_label("Not built yet.");
         h.get_by_label(kits::BUILD_NEEDS_TRUST);
@@ -3217,7 +3791,7 @@ mod tests {
         click(&mut h, "Check Compiler");
         h.get_by_label_contains("answers. It builds your C projects.");
         assert_eq!(settings::load(&s.0.join("developer.json")).compiler, named);
-        go(&mut h, "Blink");
+        go_project(&mut h, "C Development Kit", "Blink");
         press(&mut h, "Build");
         wait_for(&mut h, "Built: program.wasm");
         h.get_by_label_contains("from 1 C file, in ");
@@ -3234,7 +3808,7 @@ mod tests {
         let mut h = harness(app_with(None));
         projects::create_project_in(&kit::C, "Blink", None).unwrap();
         open_top(&mut h);
-        go(&mut h, "Blink");
+        go_project(&mut h, "C Development Kit", "Blink");
         h.get_by_label(kits::FILES_NOTE);
         assert!(h.query_by_label("Close File").is_none());
         // What a project holds is shown to the person at the screen: the control channel,
@@ -3259,7 +3833,7 @@ mod tests {
         click(&mut h, "src/main.c");
         h.get_by_label("Close File");
         go(&mut h, "C Development Kit");
-        go(&mut h, "Blink");
+        go_project(&mut h, "C Development Kit", "Blink");
         assert!(h.query_by_label("Close File").is_none());
         // Reading a file trusts nothing and changes nothing.
         assert_eq!(list()["projects"][0]["status"], "untrusted");
@@ -3338,7 +3912,7 @@ mod tests {
         let mut h = harness(app);
         projects::create_project_in(&kit::C, "Blink", None).unwrap();
         open_top(&mut h);
-        go(&mut h, "Blink");
+        go_project(&mut h, "C Development Kit", "Blink");
         // Not trusted: its panel is said, and there is no way to show it.
         h.get_by_label(kits::PANEL_UNBUILT);
         h.get_by_label(kits::PANEL_NEEDS_TRUST);
@@ -3383,7 +3957,7 @@ mod tests {
         std::fs::write(kept.join("program.wasm"), "\0asm\u{1}\0\0\0").unwrap();
         assert_eq!(fetch(&docked.address, "program.wasm"), (200, "\0asm\u{1}\0\0\0".to_string()));
         open_top(&mut h);
-        go(&mut h, "Blink");
+        go_project(&mut h, "C Development Kit", "Blink");
         h.get_by_label(kits::PANEL_RUNS);
         h.get_by_label("It is docked in the window.");
         assert_eq!(list()["projects"][0]["status"], "trusted", "showing its panel changed nothing of the project");
