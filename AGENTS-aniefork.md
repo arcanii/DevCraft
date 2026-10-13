@@ -30,5 +30,15 @@ rules.
   (2026-10-13): the badges in the Development page carry the marks of Python, Svelte and C,
   from Simple Icons. [`ATTRIBUTION-aniefork.md`](ATTRIBUTION-aniefork.md) lists them. Add
   another only on the owner's word, list it there, and never put any of them in a branch
-  meant for upstream.
+  meant for upstream. **A second (2026-10-14): one picture of Doom running**, in the fork's
+  README, as the C kit's demonstration: the shareware version, its data unmodified, said
+  beside the picture to be id Software's and not the fork's. Doom's code and its game data
+  stay out of the repository as before.
+- **The fork's front page is `.github/README.md`, and it is about DevCraft.** GitHub shows a
+  README in `.github/` before the one at the root, so upstream's `README.md` stays as upstream
+  has it and never conflicts. **DevCraft** is the owner's name (2026-10-14) for what the fork
+  specialises in: its development kits (PythonCraft is the first; the C Development Kit the
+  second). The README's pictures are in `docs/images-aniefork/`, each with a row in
+  `ATTRIBUTION-aniefork.md`, which `cargo xtask assets` reads here beside upstream's table.
+  Say in it only what was seen working, and say what was not.
 - **Syncing with upstream:** `ROADMAP-aniefork.md` lists the steps and what can still conflict.

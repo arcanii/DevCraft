@@ -2658,6 +2658,76 @@ later one, before anything was pushed or said on GitHub. What it left, and what 
 
 **The stages above are kept as the way to do it, if the owner says to.**
 
+### DevCraft: what the fork is for, and its own README (2026-10-14)
+
+**What the owner decided.** "Ok - on our fork, let's look to make a focused README.md
+showcasing the Development Kit. Our fork can specialize in it, and we call it \"DevCraft\"."
+Then: "Let's get some screenshots showcasing DevCraft (Python + Svelte) and Doom", and "Doom
+is the C DevKit".
+
+- **DevCraft is the name of what the fork specialises in**: its development kits, as a
+  whole. PythonCraft is the first kit and the C Development Kit the second, whose
+  demonstration is Doom. (Read so from the owner's words; nothing in the program is named
+  DevCraft yet, and whether a window should be is theirs to say.)
+- **The README is `.github/README.md`.** GitHub shows a README there before the one at the
+  root. So the fork's front page is its own, and upstream's `README.md` is untouched and
+  can't conflict at a merge, which is the fork's rule for upstream's files. Someone who
+  opens the folder sees upstream's README first; the fork's is linked from nowhere in it.
+  If the owner would sooner have the root file be the fork's, it is one move, and a
+  conflict to settle by hand whenever upstream changes theirs.
+- **It says only what was seen**, and what was not: built and run on Windows 11 only; what
+  is Windows only; what is not built. An agent's full control is said as it is: the README
+  first said no agent could trust a project, which the Development server's own words
+  contradict, and was corrected before anyone read it.
+- **Its pictures** were made in the isolated copy (the Svelte Showcase made there and
+  trusted in that copy's own file; the Doom project taken from the earlier trial's copy).
+  Four are in `docs/images-aniefork/`, each with a row in `ATTRIBUTION-aniefork.md`, and
+  the asset check reads that table in the fork (a hook in `xtask/src/assets.rs`). The
+  pictures of the kit's own part are left out: they show the path of the folder they were
+  made in.
+- **Doom's picture is in, on the owner's word**: "We are allowed to show Doom running since
+  it is the unmodified shareware version - we want to be clear on this : it is not our
+  Doom, but it is running in a C DevelopmentKit in GridCraft." It is the fork's second
+  exception to the rule on other parties' images (the first was three marks), listed in
+  `ATTRIBUTION-aniefork.md`. The README says beside the picture that Doom is id Software's,
+  that what ran is the shareware version with its data unmodified, and that neither its
+  code nor its data is in the repository. **Checked before it was said**: the `doom1.wad`
+  that ran is 4,196,020 bytes with the SHA-1 published for version 1.9 of the shareware.
+  What is not id's own program: the engine is doomgeneric, a port of the released source,
+  with one file of glue; the README says that too, so that "unmodified" is claimed of the
+  data and of nothing else.
+- **Upstream's marks, looked at on the owner's word.** Upstream's brand licence
+  (`docs/brand/LICENSE-brand.txt`): "If you distribute or publish a modified version of
+  GridCraft, or any work derived from it, you must remove the ArtCraft Marks from it (or
+  replace them with your own) and must not call it ArtCraft or present it as an ArtCraft
+  product. You may say, in plain text, that your work is based on GridCraft by the
+  ArtCraft team. A fork kept only to propose changes back to this repository may keep the
+  marks unchanged." The marks are "the ArtCraft name, wordmark and mark". The fork is
+  public, and since 2026-10-14 it is no longer kept only to propose changes back. Where
+  the marks are in it:
+  - **the eight image files in `docs/brand/`**, used by one thing: the logo at the top of
+    upstream's `README.md`;
+  - **upstream's `README.md`** itself: the logo, "By the ArtCraft team", the other Crafting
+    Apps;
+  - **in the program**: the About window says "Part of ArtCraft." and links to
+    getartcraft.com and "Join the ArtCraft Discord" (`crates/ui-egui/src/dialogs.rs`); the
+    Help menu on macOS has the same two links (`apps/gridcraft/src/native_menu.rs`); one
+    translation of the Discord line;
+  - in words only, which the licence allows: `AGENTS.md`, `CLAUDE.md`, `ATTRIBUTION.md`,
+    and the fork's README, which says GridCraft is the ArtCraft team's work and that the
+    fork is not theirs.
+  The fork's README is the one GitHub shows (GitHub's own page on READMEs: the `.github`
+  directory is looked in first), which hides upstream's from the front page but does not
+  remove a mark. **What removing them would take**, each for the owner to say: the fork's
+  README moved to the root in place of upstream's (a conflict to settle at any merge in
+  which upstream changed theirs); the eight image files deleted (upstream seldom changes
+  them); and a hook that words the About window and the Help menu for the fork ("Based on
+  GridCraft by the ArtCraft team", and no invitation to their Discord for a program that
+  is not theirs). The sister forks have the same files.
+
+**Not seen**: the README as GitHub draws it, with its pictures. That needs a push, which is
+the owner's.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

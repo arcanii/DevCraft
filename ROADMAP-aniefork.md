@@ -710,6 +710,7 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
+| `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
@@ -783,6 +784,24 @@ included.
 
 Newest first.
 
+- **2026-10-14 (DevCraft: the fork's own README, and its pictures):** The owner: "on our
+  fork, let's look to make a focused README.md showcasing the Development Kit. Our fork can
+  specialize in it, and we call it \"DevCraft\"", and "Let's get some screenshots showcasing
+  DevCraft (Python + Svelte) and Doom", "Doom is the C DevKit". **The README is
+  `.github/README.md`**: GitHub shows it before the one at the root, so upstream's `README.md`
+  stays as it is and never conflicts. It says what DevCraft is, the kits, how to try it, and
+  what was not seen or is not built. Four pictures, made in the isolated copy, are in
+  `docs/images-aniefork/` with rows in `ATTRIBUTION-aniefork.md`; **one new hook**
+  (`xtask/src/assets.rs`: the asset check reads the fork's table too). Doom was pictured as
+  well (docked, writing its sheet). Asked, the owner: "We are allowed to show Doom running
+  since it is the unmodified shareware version - we want to be clear on this : it is not our
+  Doom, but it is running in a C DevelopmentKit in GridCraft." **So that picture is in, as a
+  second exception** (`ATTRIBUTION-aniefork.md`), and the README says beside it whose Doom
+  is; the data that ran was checked to be the shareware's, unmodified. Doom's code and data
+  stay out. Upstream was looked at for a merge the same day: nothing new (`84acf62`).
+  **Upstream's marks**: its brand licence says a published, modified version "must remove
+  the ArtCraft Marks from it"; where they are in the fork was looked up and put to the
+  owner (ADR-0001, "DevCraft").
 - **2026-10-14 (the first kit is named PythonCraft; it is to be offered upstream now):**
   The owner: "Let's name our first DevKit : PythonCraft - which is the Python / Svelte UI,
   and showcase this in the PR." The kit is PythonCraft wherever it is named, and its id is

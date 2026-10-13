@@ -47,6 +47,8 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
     let files: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter(|l| root.join(l).exists()).map(str::to_owned).collect();
     let md = std::fs::read_to_string(root.join("ATTRIBUTION.md")).map_err(|e| format!("ATTRIBUTION.md: {e}"))?;
+    // The fork's own assets are listed in its own table, beside upstream's (aniefork).
+    let md = md + &std::fs::read_to_string(root.join("ATTRIBUTION-aniefork.md")).unwrap_or_default();
     let miss = missing(&files, &md);
     if miss.is_empty() {
         println!("assets: all {} asset files attributed in ATTRIBUTION.md", files.iter().filter(|f| is_asset(f)).count());
