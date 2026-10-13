@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-13, upstream `fc45b7f` (GridCraft 0.6.1: 6 commits since the merge before) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 14 changes upstream lacks (below) |
+| Fork carries | 15 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -39,6 +39,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
 | **Development kits and projects: the shape of the Development window** (the owner's design): the window has a list down its side: Development, the MCP server, the development kits, and under the Anie Development Kit its projects, as workbook code or libraries. Each has a part of its own, and a new project is made in the kit's part. Both windows show it: GridCraft's own, and the page. | `crates/ui-egui/src/aniefork/kits.rs`, changes in `development.rs`, `devpage.rs`, `projects.rs`, `card.rs`; the page in `apps/gridcraft/src/aniefork/page.rs`; the kits are listed in `crates/aniefork-dev/src/kit.rs` | Not offered; a direction of the fork's own |
 | **The C Development Kit** (phases K1 to K3): a second kit beside the first, compiled in. A project names its kit (`kit = "c"`), holds C sources and a panel, and says what is built in a recipe that is a list, never a command. The person's own zig builds it as one WebAssembly program, by hand, for a project they trust, from the project's files and the compiler's and nothing else; the program is kept beside the settings under the fingerprint of the files it was built from. The project's panel runs it: GridCraft serves the program built from the files as they are trusted then, and a loader that hands it a clock, a place to print and files in memory, and no more. What git keeps in a project (`.git`) is left out of it. | `crates/aniefork-dev/src/` (`kit.rs`, `c.rs`, `c_program.rs`, changes in `manifest.rs`, `project.rs`, `bridge.rs`, `starter.rs`, `settings.rs`, `agents.rs`); `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`) | Not offered: fork-only (the loader is JavaScript as text, against upstream's "Rust only") |
+| **A viewer for a project's files** (phase F1, first slice): a project's part of the Development window offers its files and shows the one chosen, as text, with its syntax coloured. The kit describes the languages of its projects' files (what a comment, a string, a number and a keyword is); GridCraft does the colouring from that, and nothing of a kit or a project is run to show a file. Reading needs no trust, and choosing a file is by hand only. | `crates/aniefork-dev/src/highlight.rs`, changes in `kit.rs`, `project.rs`; `crates/ui-egui/src/aniefork/` (`kits.rs`, `development.rs`, `devpage.rs`); the page in `apps/gridcraft/src/aniefork/page.rs` | Not offered; a direction of the fork's own |
 | **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding; Developer ▸ Macros shows it beside the macros. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs`; `crates/ui-egui/src/aniefork/macros.rs` | Not offered; a direction of the fork's own |
 | **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
@@ -474,8 +475,66 @@ rebuilding what a workbook's macros do as a project (2026-10-12).
   changed project given no program until it is trusted and built again; and the panel
   saying why in GridCraft's words.
 
-**Planned, not built: Doom, and source control** (the owner's request and decisions,
-2026-10-13; ADR-0001 has the plan).
+**Doom, built by the kit and docked, has been seen** (phase D1, 2026-10-13, on the owner's
+word; in copies of GridCraft with settings of their own). The project is outside this
+repository (`G:\gridcraft-doom`).
+
+- **Built by the kit** (81 C files, 386 KB, under seven seconds) **and docked beside the
+  sheet**, playing its demo.
+- **Its sheet fills**: 23 variables four times a second, cells worked out from them, two
+  charts over the last minute.
+- **The game's memory is in the cells** (the owner's addition): for twelve places the game
+  says only where each is, the page reads the four bytes there out of the program's memory,
+  and a formula in the sheet works the number out. Health reads 86 by both roads and on
+  the game's status bar.
+- **Found: a minute of Doom empties the undo list** (a hundred steps, four writes a
+  second). Plain writes show the linkage; live values that are not edits (L1) are what it
+  needs.
+- **Not seen**: anyone playing (no key was sent), and the owner's own GridCraft.
+
+**A project's files can be read in the Development window** (phase F1, first slice,
+2026-10-13; first in the order the owner confirmed).
+
+- **A project's part offers its files**, and shows the one chosen as text: each line with
+  its number, and comments, quoted text, numbers, the language's own words and names each
+  in a colour. In both windows.
+- **The kit describes the languages** of its projects' files; GridCraft colours from that
+  description. Nothing a kit or a project brings is run to show a file, and no highlighter
+  is copied in. The first kit reads Python, HTML, JavaScript, CSS, TOML, JSON and Markdown;
+  the C kit reads C in Python's place.
+- **Only a project's own files**, only text, and only so much (256 KB, 2,000 lines).
+- **Reading needs no trust**: it is for reading a project before trusting it. Choosing a
+  file is by hand only.
+- **Not built**: the viewer in Review, where trust is decided; a kit's own editor.
+
+**Planned, not built: a project that travels in a workbook, and builds for a platform**
+(the owner's request, 2026-10-13; ADR-0001 has the plan and what is theirs to say). The
+viewer for a project's files, asked for with it, is above.
+
+- **A workbook carries a project**: its files, what describes it, and what was built of
+  it, in a workbook with an extension of its own, `.xlscraft` (decided, "for now"). A
+  trusted one runs from the workbook's own copy (decided).
+- **A program for a platform is signed by its developer** (decided), and runs only when
+  the person, or their organisation, trusts who signed. Such a program need not show a
+  picture in the window (decided).
+- **Whose word is taken for a developer** (decided 2026-10-13, designed in ADR-0001, not
+  built: S1, S2): a developer is a key of their own, not a certificate. In a person's own
+  GridCraft they may agree to trust a developer. **In an organisation's GridCraft only the
+  organisation's list counts**, and a person can't add to it: that is what lets an
+  organisation govern what its people build for themselves. A program for a platform with
+  no good signature never runs on another machine than the one that built it. A
+  developer's name is shown as claimed unless an organisation's server vouches for it.
+- **Builds for a platform** (Windows x86-64 and the like) beside the WebAssembly build,
+  and GridCraft runs the one for the platform it is on. A project can also travel as source,
+  with the list of what building it needs, or as both.
+- **What must hold**: opening a workbook runs nothing; a carried project is trusted like
+  any other; a program built elsewhere can't be checked against its source, and one for a
+  platform can't be limited, so both are said plainly when trust is asked.
+- **A kit's own editor**, where it brings one in place of the viewer (E1): waits on how
+  kits are loaded.
+
+**Planned, not built: source control** (the owner's request and decisions, 2026-10-13;
+ADR-0001 has the plan). Doom, planned with it, is above.
 
 - **A C Development Kit**, beside the Anie kit (listed since K1; it builds since K2's first
   slice, and runs what it built since K3: above): C built **as WebAssembly** by a compiler the person names (as the Python is), and
@@ -556,9 +615,10 @@ own.
   (ADR-0001 has what is known). A kit can't be turned off as a whole. The second, for C,
   is compiled in like the first: it shows two kits, and still loads none. An agent's
   `create_project` makes the first kit's starter only, and an agent can't ask for a build.
-- **Only the C starter has been seen running in a docked panel**: a program that prints.
-  One that uses files or its arguments, and Doom, have run under the loader in Node and a
-  browser, not yet in GridCraft's window.
+- **Two C programs have been seen running in a docked panel**: the starter, which prints,
+  and Doom, which is handed a file and stepped by its page. Nobody has played Doom there:
+  the keys are untried. Each write to the sheet is a step of undo, and the undo list holds
+  a hundred.
 - **A C program is made on the page's own thread, in one step**, which browsers limit by
   size (a few megabytes in Chromium, as far as is known: not tried); the kit keeps programs
   up to 64 MB. One that never returns from `main` holds its page.
@@ -697,6 +757,64 @@ included.
 
 Newest first.
 
+- **2026-10-13 (whose word is taken for a developer: decided and designed):** The owner
+  decided the four points left by the review: keys first; where an organisation has set
+  GridCraft up a person trusts no developer themselves ("this would be at the organization
+  level. This would help control EUC"); an unsigned program for a platform has no way to
+  run on another machine; a developer's name is never shown as checked without a server
+  behind it. ADR-0001 has the design these make, in four slices (S1a keys and seals, S1b
+  a person's list of developers, S2a an organisation's setting, S2b its server), what the
+  phases built before it must leave room for, and four things not asked yet. Nothing of
+  it is built.
+- **2026-10-13 (F1, first slice: a viewer for a project's files):** First in the order
+  the owner confirmed. **A kit describes the languages of its projects' files** (what a
+  comment, a string, a number and a keyword is, and the shape of a file's lines), and
+  **GridCraft colours a file from that description**, in one pass of its own: nothing a
+  kit or a project brings is run to show a file, and no highlighter is copied in. **A
+  project's part of the Development window offers its files and shows the one chosen**,
+  in both windows (the page built again with the packages already there). Only the
+  project's own files, only text, at most 256 KB and 2,000 lines. Reading needs no trust;
+  choosing a file is by hand only, since the control channel is kept out of the projects
+  folder. Seen in an isolated copy: the page showing the C starter's source, coloured.
+  Not seen: GridCraft's own window drawing one (tests only); the light theme. Not built:
+  the viewer in Review. Gate: eight steps, 1604 tests.
+- **2026-10-13 (the plan's six points decided; prior art on trusting a developer
+  reviewed):** The owner decided: the extension is `.xlscraft` for now; **a program for a
+  platform is signed by its developer**, with an organisation's server that GridCraft can
+  ask, and for a person the agreement to trust the developer who signed (the trust system
+  to be built later); such a program need not show a picture in the window; a carried
+  project runs from the workbook's own copy; the order as recommended, the file viewer
+  first. On their word, prior art was reviewed and set down in ADR-0001 with its sources:
+  snap and its store for organisations, Flatpak, AppImage, Office's signed macros and
+  trusted publishers, Windows and macOS signing, Android's keys, Sigstore and TUF, VS
+  Code. What it comes to: a signature says who and that nothing changed, never that a
+  program is safe; one nobody checks protects nothing; a person's trust begins at first
+  meeting and holds the developer to one key, an organisation's begins with a list it
+  keeps; trusting a developer is far wider than trusting a project. A shape for GridCraft
+  and four points for the owner follow it there. Two phases added (S1 signing and a
+  person's trust in a developer, S2 the organisation's server); R1 and W2 wait for S1.
+  No code was written.
+- **2026-10-13 (planned: a project in a workbook, builds for a platform, a file viewer):**
+  The owner asked for a project that can be compiled for a platform and stored in the
+  spreadsheet with its files and what describes it (perhaps under a new extension), run
+  only on the platform it was built for, or left as source with the list of what building
+  it needs, or both; and for a viewer of a project's files with syntax highlighting from
+  the kit, and a kit's own editor. Recorded as proposed in ADR-0001: what it changes in
+  what was decided (a workbook carrying a project was open; "no file format of GridCraft's
+  own"; programs of their own were put aside), what must hold (opening runs nothing; trust
+  by exact contents; what was built elsewhere can't be checked against its source; a
+  platform's program can't be limited), a shape, seven phases, and six points for the
+  owner. No code was written.
+- **2026-10-13 (D1: Doom, built by the kit and docked):** On the owner's word. In copies
+  of GridCraft with settings of their own, the project outside this repository: **Doom
+  built by the kit (81 files, 386 KB, under seven seconds) ran in its panel docked beside
+  the sheet**, the first time it was seen there, and its sheet filled. Added at the owner's
+  wish, in the Doom project: **a table of the game's memory**, where the game says only
+  where twelve of its variables lie, the page reads the bytes there, and the sheet's own
+  formula works the number out (health 86, as the game's status bar said). Found: the undo
+  list keeps a hundred steps, so 25 seconds of Doom empties it of what the person did
+  before. Not seen: anyone playing; the owner's own GridCraft. Nothing of GridCraft's code
+  changed.
 - **2026-10-13 (K3: the C kit runs what it built):** The next task the owner named. **A C
   project has a panel**, and GridCraft serves two things beside its page that are not the
   project's files: `program.wasm`, the program built from the project's files as they are

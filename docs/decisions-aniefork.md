@@ -289,6 +289,10 @@ contents by the user. Directions to weigh when this is taken up:
 - **Signed modules**, so that trust can be given to a publisher rather than one fingerprint at a
   time.
 
+**Taken up on 2026-10-13**: the owner asked for a workbook that carries a project, with what
+was built of it for each platform. The plan, and what it has to hold to, is in "A project that
+travels in a workbook, builds for a platform, and a viewer for its files", below.
+
 ### Consequences
 
 - The fork gains its first non-Rust runtime code: `spreadsheet.js`, the small client a panel loads.
@@ -1230,7 +1234,7 @@ is built, with what must hold whatever the design:
 | K1 | Kits as two: `kit = "…"` in `project.toml`, the Anie kit behind the line unchanged, the C kit listed; a project's `.git` left out of it | **Built 2026-10-13** (below) |
 | K2 | The C kit builds, to WebAssembly: the compiler found or named (zig first), the recipe as a list in `project.toml`, what is built kept under the fingerprint of its sources; then a build as an agent's request | **First slice built 2026-10-13** (below): the person builds. An agent's request is the second |
 | K3 | The C kit runs what it built in the project's panel: a C project may have a panel, and the kit serves beside its page what the program asks of a system | **Built 2026-10-13** (below), and seen: the starter, built by the kit, running in its panel docked beside the sheet |
-| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built by the kit, docked beside the sheet; the table of its variables written four times a second, with formulas and charts over it; then the "GridCraft Doom" repository | K3. (Tried by hand in a panel, 2026-10-13) |
+| D1 | Doom, as the demonstration: `doomgeneric` cloned by hand, built by the kit, docked beside the sheet; the table of its variables written four times a second, with formulas and charts over it; then the "GridCraft Doom" repository | **Seen 2026-10-13** (below): built by the kit, docked, the sheet filling, with a table of the game's memory. The repository waits for the owner's word |
 | P1 | Files a project changes itself | D1 shows what it needs |
 | G1 | Source control, local: repositories among the projects, changes, a commit | |
 | G2 | Clone from an address; fetch and pull | G1 |
@@ -1569,6 +1573,463 @@ which prints.
 - The program is read whole from disk for each request, and a browser keeps no copy.
 - A C project can't ask for `network`, so its page loads and calls nothing but the bridge.
   Whether one should be able to is not decided.
+
+### Doom, built by the kit and docked (phase D1)
+
+**2026-10-13, on the owner's word:** "Doom built by the kit and docked - go ahead", and "we
+want to also expose some elements from the game memory into the spreadsheet so we can show
+it is connected."
+
+**Nothing of it is in this repository.** The project is `G:\gridcraft-doom` (0.3.0 now): a
+C-kit project with `doomgeneric`'s Doom, one file of glue, a panel, and the shareware data.
+It was run in copies of GridCraft with settings of their own, the project trusted there by
+that folder's own file; the pictures of it are kept outside the repository too.
+
+**1. Seen: Doom, built by the kit, running in a panel docked in GridCraft.** 81 C files, 386
+KB, under seven seconds. Docked as GridCraft started, it loaded the data (4 MB, handed to
+the program as a file kept in memory), started, and played its recorded demos by itself;
+the Developer console had its page's line "DOOM Shareware started." It is the program K3
+serves: built from the project's files as they were trusted, and run by GridCraft's loader.
+
+**2. The sheet.** "Link to a sheet named Doom", pressed in the docked panel, made the sheet
+and started the writing: the 23 variables, the cells worked out from them, the last minute
+second by second, and two charts over it, as the page was written to do before the kit could
+run it.
+
+**3. The game's memory in the cells** (the owner's addition). The table of variables is the
+game's own code reading its variables and writing them out. Beside that there is now a
+second road, which shows the linkage itself:
+
+- **The game says only where.** One function more in the glue gives, for twelve places (the
+  game's clock and the level's, health, armour, two kinds of ammunition, kills, the red
+  flash of being hurt, where the player stands, how fast, which way), a name, the address,
+  and how the four bytes there are read. It hands over no value.
+- **The page reads the bytes itself**, out of the program's memory (`program.bytes`), and
+  writes them as they lie: `0x0102D848`, `56 00 00 00`.
+- **The sheet works the number out**, with a formula of its own (`MID` to turn the bytes
+  round, `HEX2DEC`, and the sign): 86. The same 86 was in the table of variables and on the
+  game's status bar. Doom's fractions (65536 to the unit) and its angles are worked out so
+  too.
+- The player's body is a thing the game makes anew: its address was another in another run
+  (`0x0149CDB4`, then `0x014AC7CC`), and the cells followed.
+
+**What it found.**
+
+- **A minute of Doom empties the undo list.** Every write is a step of undo, four a second,
+  and the list keeps a hundred: 25 seconds after linking, everything the person did before is
+  gone from it. Plain writes show the linkage and are not how it can stay: this is the case
+  for live values that are not edits (L1).
+- A window's title changes when its workbook is edited, which a script that finds a window
+  by its title has to allow for.
+
+**Not seen.** Nobody played: no key was sent to the game, so the keys are untried in the
+docked panel. There is no sound. It was not run in the owner's own GridCraft, whose projects
+folder holds the earlier form of it (a project of the first kit): putting this one there, and
+trusting, building and docking it, are the owner's. In the first run the sheet was linked by
+a click that was not this session's (the window is on the owner's screen); in a second run
+nothing was written for 40 seconds, until the click posted here.
+
+**Next for it.** The other direction (a cell that changes the game) needs `read` and the
+event that says the workbook changed, and the loader lets a page write into the program's
+memory as it reads it. The "GridCraft Doom" repository, on the owner's word; Freedoom's data
+is what it could carry.
+
+### A project that travels in a workbook, builds for a platform, and a viewer for its files (planned)
+
+**What the owner asked (2026-10-13).** "For developers we want them to be able to compile a
+module for a platform, example: G:\gridcraft-doom\ can be compiled for Windows x86-64, the
+binary, files and meta data stored inside the spreadsheet (we may need to make a new
+extension: xlscraft for example) ... the embedded program will only run when it detects the
+gridcraft is running on the supported platform. This operates like snap to some degree, but
+it can work on Windows, MacOS, Linux. The developer can also choose to leave the module as
+code, and it should contain all the dependencies list required to build it. Of course the
+developer could compile for platforms and also leave the source code available (for a
+platform that the developer hasn't built for). We should provide a file viewer with syntax
+highlighting provided by the development kit. The development kit could opt to provide their
+own file editor."
+
+**Nothing of this is built, and nothing here is decided but what the owner said.** What
+follows is what it changes, what must hold, and a shape to say yes or no to.
+
+**1. What it changes in what was decided.**
+
+- **A workbook carries a project.** That was left open ("Open: modules and workbooks",
+  above). It is the second of the directions listed there, with more in the package: the
+  project's files, what describes it, and what was built of it.
+- **A file format of GridCraft's own.** On the same day the macros' phases were taken "with
+  no file format of GridCraft's own". A new extension reopens that.
+- **Programs of their own.** K3 runs C as WebAssembly, and "a program of its own is put
+  aside, not ruled out". A build for Windows x86-64 is a program of its own. K3 stands; this
+  brings the other back onto the plan.
+
+**2. What has to hold, whatever the design.**
+
+- **Opening a workbook runs nothing.** Not when the platform is the right one either. A
+  project a workbook carries is found, listed and inert, like one that arrives any other way.
+- **Trust is the person's, and is given to exact contents.** A carried project is trusted
+  as any other is: by its fingerprint, the one that was on screen.
+- **What was built elsewhere can't be checked against its source.** K2's guard ("built
+  from its own files and the compiler's") holds for what the person's own compiler builds
+  on their machine. A build that arrives in a workbook was made by whoever made the
+  workbook. So it is trusted as itself, its bytes in the fingerprint, and the window has to
+  say so: that nobody here can tell it is what the source beside it would build.
+- **What a build can do depends on what it is.** A WebAssembly build is held to what the
+  project was granted. A build for a platform can't be limited at all, as a Python script
+  can't. So it is a thing a project asks to be allowed, worded as `python` is, and shown as
+  the one that cannot be limited.
+
+**3. A shape.**
+
+- **Targets.** A recipe says what it is built for: `wasm`, which is today's (one build that
+  runs wherever GridCraft does and is held to its grants: the "works on Windows, macOS and
+  Linux" already there), and platforms (`windows-x86_64`, `macos-aarch64`, `linux-x86_64`
+  and so on). zig builds for every one of them from any one machine, so a developer on
+  Windows can build all of them. (Its build of `doomgeneric` for Windows was tried on
+  2026-10-13; builds for another system than the one it runs on were not.)
+- **What runs.** For a project the person trusts, GridCraft takes the build for the platform
+  it is running on; without one, the `wasm` build; without that, and with the source and a
+  compiler, it offers to build; otherwise it says there is nothing for this platform, and
+  runs nothing.
+- **How a program for a platform runs.** As a script does: a process of its own that talks
+  to GridCraft over a pipe, each call checked against what was granted. It has no panel to
+  draw in. Doom docked beside the sheet stays the WebAssembly build: a window of another
+  program can't be docked the way a page can.
+- **In the workbook.** A workbook is a package of parts. A project is parts of its own in
+  it: its files, the builds by target, and a list of them with their hashes. **A workbook
+  that carries a project says so in its name**, as Excel's `.xlsm` says a workbook carries
+  macros: an extension of its own (`.xlscraft` is the owner's example), the same package
+  otherwise. Saved as `.xlsx`, the project is left out, and GridCraft says so first. What
+  Excel does with such a file when it opens and saves it is to be asked of Excel, as was
+  done for macros (it keeps a custom XML part; binary parts were not asked about).
+- **Opening one.** A bar says the workbook carries a project and where it stands, as for
+  macros. Review shows it as Projects does. Trusted, it runs from the workbook's own copy,
+  checked against the fingerprint each time; "take a copy into my projects" makes it a
+  project to work on.
+- **Left as code.** A project can travel as source alone. It then says what building it
+  needs (`[requires]`: the kit and its version, the compiler and its version; for the first
+  kit the Python and the packages, which is phase 2c's ground). Built on the person's
+  machine by their own compiler, it is under K2's guard, and the person can read what runs:
+  this is the stronger form, and the one to prefer where a compiler can be expected.
+- **A viewer for a project's files.** In a project's part of the Development window, and in
+  Review, where it serves the decision to trust: each file as text, with its syntax
+  coloured. **The kit says how its files are read**: for each kind of file, what a comment,
+  a string, a number and a keyword is. That is a description GridCraft's own drawing uses,
+  never code that runs, and it is written here: no highlighter is copied in. A file is
+  drawn as text and nothing in it is followed.
+- **A kit's own editor.** A kit may bring one in place of the viewer. For the kits compiled
+  in, that is a part of GridCraft; for a kit that is loaded, it waits on how kits are
+  loaded, which is not decided. A change made in any editor ends the project's trust as any
+  change does.
+
+**4. Phases.**
+
+| Phase | What | Waits for |
+|---|---|---|
+| F1 | The file viewer, with highlighting the kit describes; in both windows and in Review | **First slice built 2026-10-13** (its own section, below): in both windows. Review is the second |
+| T1 | Targets in the recipe; a build kept for each; zig building for other systems | K2 |
+| R1 | A build for a platform runs: a process and a pipe, and a permission of its own | T1, and the owner's word on programs that can't be limited |
+| W1 | A workbook carries a project as source: the parts, the extension, the bar, review and trust | The extension; Excel asked what it keeps |
+| W2 | Carried builds, taken by platform; trust in what was built elsewhere | W1, T1 |
+| Q1 | `[requires]`: what building a project needs | Phase 2c, for Python |
+| E1 | A kit's own editor | How kits are loaded |
+| S1 | A developer signs a project; GridCraft checks the signature; a person agrees to trust the developer who signed | The design, after the review of prior art (below) |
+| S2 | An organisation's server that GridCraft asks whom to trust | S1 |
+
+R1 and W2 wait for S1 now: a program for a platform runs only signed (decided, below).
+
+**5. What the owner decided (2026-10-13)**, on the six points put to them:
+
+1. **The extension is `.xlscraft`**, "for now".
+2. **A program for a platform is signed by its developer.** "Native binaries should be
+   signed by the developer (for example corporate IT) so the user will know it can be
+   trusted. We'll have to build in the trust system later. Ideally there should be an
+   enterprise server that gridcraft can connect to and verify. For individuals, it really
+   should be to agree to trust the developer who signed it."
+3. **A program for a platform need not show a picture** in GridCraft's window: "It doesn't
+   have to, this is more of an option." So a process and a pipe is enough for R1.
+4. **A trusted, carried project runs from the workbook's own copy.**
+5. **Publishers and signatures: "Let's review prior art eg snap."** Reviewed in the next
+   section.
+6. **The order as recommended**: F1, the file viewer, first.
+
+**Still the owner's to say**, after the review: the points at the end of the next section.
+
+### Trusting the developer who signed: prior art (reviewed 2026-10-13)
+
+**Asked for by the owner**: "Let's review prior art eg snap." What follows is what eight
+systems do about the same question (a program arrives from someone else: whose word is
+taken for it, and what can it then do), read from their own documentation where it could be
+found, and what GridCraft could take from each. The sources are at the end. Nothing here is
+built or decided.
+
+**1. What each one does.**
+
+| System | What is signed, by whom | Where the trust starts | What limits the program |
+|---|---|---|---|
+| **snap** | The store signs statements ("assertions") that chain together: an account, the account's key, a declaration of the snap (its id, name, publisher), and a revision that names the hash of the exact file. | The store's own key, known to the installer. The store vouches for who the publisher is, and marks the verified ones. | **Separately from the signature**: a snap is confined by default and reaches more only through named interfaces. One that asks to be unconfined ("classic") is reviewed by people first, its publisher vetted, and the leave can be taken back. |
+| **snap, for an organisation** | The same. | An organisation runs its own store or proxy: its devices are registered with it, it decides which revisions they get, and it can run cut off from the internet. | The same. |
+| **Flatpak** | Every commit of a repository, and its summary, by the repository's key. | The person adds a repository with its key, once. Trust is in a source, not in a file. | A sandbox, with portals. |
+| **AppImage** | A signature can be put inside the file. It is optional, and running the file does not check it: a separate tool does. | Nowhere, unless someone checks. | Nothing. |
+| **Office macros** | The VBA project, by its developer's certificate. | A list of trusted publishers: certificates in Windows' own store, which an administrator can hand out by policy. The policy can run signed macros only, and only from listed publishers, and can stop people adding publishers themselves. | Nothing: a macro that runs can do anything. Since 2022 a macro in a file that came from the internet is blocked with no button to enable it. |
+| **Windows programs** | The file, by a certificate a certificate authority issued, with a timestamp. | The authorities Windows trusts. That shows who and that nothing changed; whether to warn is decided separately, by reputation. | Nothing. |
+| **macOS programs** | The program, by a developer's certificate Apple issued; and Apple's own note that it scanned this exact build ("notarization"), which can be stapled to it. | Apple. The system checks at first launch, asking Apple when no note is attached. | The sandbox, for those that opt in. |
+| **Android** | The package, by a key the developer made themselves. | **The first install**: whatever key signed the app then is the only key that may update it. A store can hold the key for the developer. | A sandbox and permissions. |
+| **Sigstore, TUF** | A signature tied to who signed (an identity an organisation's sign-in vouches for) in place of a key kept for years, with every signature written to a public log. TUF: several keys, a number of which must agree, the most important kept offline. | An identity provider and the log's root. | Not their subject. |
+| **VS Code** | The marketplace signs each extension; the editor checks at install, and asks before installing from a publisher not yet trusted. A folder of code is untrusted until the person says otherwise, and runs nothing till then. | The marketplace, and the person's own list of publishers and of folders. | Nothing for extensions; for folders, "restricted mode". |
+
+**2. What they teach.**
+
+- **A signature says who, and that nothing changed. It never says safe.** Every one of
+  these systems that takes safety seriously has a second thing beside the signature: a
+  sandbox (snap, Flatpak, Android), a scan (Apple), people who review (snap's unconfined
+  ones). GridCraft has its second thing for WebAssembly, which is held to what was
+  granted, and none for a program for a platform. So the owner's rule fits what the others
+  found: the unconfined kind is the exception, and it is the kind that must be signed.
+- **A signature nobody checks protects nothing** (AppImage). The check has to be
+  GridCraft's own, made every time before a program runs, and a program for a platform
+  with no signature, or a broken one, must have no button that runs it anyway. Office had
+  such a button ("Enable content"), people learned to press it, and in 2022 it was taken
+  away for files that came from the internet.
+- **Two ways to start trust, and they suit the two cases the owner named.**
+  - *For a person*: trust on first meeting, then hold the developer to the same key
+    (Android; SSH does the same). "Agree to trust the developer who signed it" is this. It
+    needs the developer shown honestly: the name is only what the key's owner wrote, and
+    the key's own fingerprint is the one thing that can't be made up.
+  - *For an organisation*: a list of whose signatures count, handed out and kept by the
+    organisation, which people can't add to (Office's trusted publishers under policy; an
+    organisation's own snap store). "An enterprise server that GridCraft can connect to and
+    verify" is this.
+- **Trusting a developer is much wider than trusting a project.** It covers everything
+  they sign from then on. Office's own documentation warns of exactly that, and that its
+  list is shared with the rest of Windows. GridCraft's list should be its own, say how
+  wide a yes is, and let a person trust one project without trusting its developer.
+- **Keys get lost and stolen.** Android: a lost key means no more updates. The newer
+  systems answer with keys that live for minutes and an identity behind them (Sigstore),
+  with several keys of which some must agree (TUF), and with a way to say "no longer"
+  that reaches every machine (snap's store can take a leave back). An organisation's
+  server is where this belongs: it can say today that a key is no longer good.
+- **A badge is not a check.** "Verified" on a publisher means a store looked at something
+  once (for VS Code, that they own a web address). Researchers have shown such badges
+  staying on things that changed. Whatever GridCraft shows of a developer should say what
+  was checked, by whom, and no more.
+- **Being cut off has to work** (snap's offline store; Apple's attached note). A workbook
+  is opened on aeroplanes. What the server said is kept, with a date after which it must
+  be asked again.
+
+**3. A shape for GridCraft**, to say yes or no to.
+
+- **What is signed** is the project exactly as it is carried: the list of its files and of
+  what was built of it, each with its hash, which is what the fingerprint is taken over
+  already. One signature over that, kept beside it in the workbook. So a signature and the
+  person's own trust speak of the same thing, and one changed byte ends both.
+- **A developer** is a key. With it travels the name they give themselves. GridCraft shows
+  the name as theirs to claim, the key's fingerprint as the fact, and whoever vouches for
+  the pair, when someone does.
+- **A person** who opens a workbook that carries a signed project is shown who signed it,
+  and can do one of three things, each confirmed by the operating system as trust is today:
+  nothing; trust this project (as now, by its fingerprint); or trust this developer, which
+  is said to cover whatever that key signs until it is taken back. GridCraft keeps its own
+  list of developers a person trusts, beside the list of projects.
+- **An organisation** sets GridCraft up, by a setting a person can't change, with its
+  server's address and its key. The server says whose keys are the organisation's
+  developers', and which no longer are; what it says is signed with the organisation's
+  key, kept with its date, and good offline until that date passes. The organisation can
+  also say that nothing else runs.
+- **A program for a platform runs only if** its project is signed, the signature is good,
+  and the signer is trusted in one of those two ways. Without that it has no button. The
+  one exception is the person's own: a program their own compiler built on their machine
+  from a project they trust, as K2 builds.
+- **A WebAssembly build** needs no signature to be trusted as a project is today: it is
+  held to what was granted. A signature on it still says who made it.
+- **What a yes never does**: limit the program. The words at the moment of trust have to
+  say that a program for a platform can do whatever the person can.
+
+**4. What the owner decided (2026-10-13)**, on the four points put to them after the review:
+
+1. **Keys first.** A developer signs with a key of their own. Certificates that an
+   authority issues are for later, if an organisation asks.
+2. **Where an organisation has set GridCraft up, a person does not trust a developer
+   themselves**: "No - this would be at the organization level. This would help control
+   EUC." (EUC: end-user computing, what people in an organisation build for themselves
+   outside its IT.) Only the organisation's list counts there.
+3. **An unsigned program for a platform has no way to run** on a machine other than the one
+   that built it. "None."
+4. **A developer's name is never shown as checked** without a server behind it. "No."
+
+The design these make is in "Signing, and whose word is taken for a developer", below.
+
+**Sources** (read 2026-10-13).
+
+- snap: Canonical, [Where eagles snap: snap security overview](https://canonical.com/blog/where-eagles-snap-snap-security-overview); Ubuntu Core's reference on the [account-key](https://documentation.ubuntu.com/core/reference/assertions/account-key/) and [snap-declaration](https://documentation.ubuntu.com/core/reference/assertions/snap-declaration/) assertions; [Reviewing classic confinement snaps](https://snapcraft.io/docs/reference/administration/reviewing-classic-confinement-snaps/); the [Enterprise Store documentation](https://documentation.ubuntu.com/enterprise-store). The order in which the installer walks the chain is put together here from those pages: none of them sets it out in one place.
+- Flatpak: the [flatpak build-sign](https://man7.org/linux/man-pages/man1/flatpak-build-sign.1.html) manual. AppImage: [Signing AppImages](https://docs.appimage.org/packaging-guide/optional/signatures.html).
+- Office: Microsoft, [Macros from the internet are blocked by default in Office](https://learn.microsoft.com/en-us/microsoft-365-apps/security/internet-macros-blocked) and [Trusted publishers for Office files](https://learn.microsoft.com/deployoffice/security/trusted-publisher); the Australian Signals Directorate's [Microsoft Office macro hardening](https://blueprint.asd.gov.au/design/endpoints/windows/security/microsoft-office-macro-hardening/).
+- Windows: Microsoft, [Code signing options](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options). macOS: Apple, [Apple Platform Security](https://support.apple.com/guide/security/sec3ad8e6e53); how a build is refused after the fact was not found in what was read.
+- Android: [Sign your app](https://developer.android.com/studio/publish/app-signing).
+- Sigstore: [signing overview](https://docs.sigstore.dev/cosign/signing/overview/). TUF: [the specification](https://theupdateframework.io/specification).
+- VS Code: [Extension runtime security](https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security); OX Security, [Can you trust that verified symbol?](https://www.ox.security/blog/can-you-trust-that-verified-symbol-exploiting-ide-extensions-is-easier-than-it-should-be/)
+- Said from what is generally known, not from these pages: that Flatpak, macOS and Android
+  confine programs, and that SSH holds a server to the key it first showed.
+
+### A viewer for a project's files (phase F1, first slice)
+
+**Built 2026-10-13, first in the order the owner confirmed. Not committed until the owner
+says.**
+
+**1. A kit describes the languages its projects are written in** (`Kit.languages`,
+`highlight::Language`). For each: the endings of the files it is for, what begins a comment,
+how quoted text begins and ends, the words the language keeps for itself, whether it has
+numbers, and the shape of its lines (a program; tags; keys and sections; prose with
+headings). **A description is data.** Nothing a kit or a project brings is run to show a
+file. The first kit describes Python, HTML (Svelte with it), JavaScript, CSS, TOML, JSON and
+Markdown. The C kit describes C and the same others, for the page that runs the program,
+and not Python: a `.py` in a C project is shown plain.
+
+**2. GridCraft does the colouring itself** (`highlight::spans`, `highlight::show`): one pass
+over the text that finds comments, quoted text, numbers, the language's own words, and what
+the shape gives weight to (a tag, a key, a section, a heading). It is a plain reading, not a
+parser: it can be wrong about what a line means and still shows the text as it is. It was
+written here, and no highlighter or grammar is copied in. It reads any text at all, once
+through: tested with quotes and comments that never close, other scripts, control
+characters, and long runs of openings.
+
+**3. A project's part of the Development window offers its files and shows the one that is
+chosen**, in both windows: each line with its number, each piece in the colour of what it
+is.
+
+- **Only the project's own files**: the ones in its list, which is what was fingerprinted.
+  Nothing of what git keeps there, and nothing outside it, by any spelling. Only text, and
+  only so much: 256 KB, 2,000 lines, 1,000 characters to a line, and it says when it left
+  something out. What is shown is the file as it is on disk now.
+- **It needs no trust.** A project that is not trusted, or has changed, is read the same:
+  reading before trusting is what the viewer is for.
+- **Choosing a file to read is the person's.** It is refused while the control channel is
+  putting input into the window. The channel is kept out of the projects folder already,
+  and a file put on screen could be read off a picture of the window.
+- **A file is drawn as text.** GridCraft's own window lays it out as text. The page is told
+  the lines in pieces, each with a word for what it is, and draws each piece as text in a
+  class from a fixed set. Nothing in a file is followed, loaded or run.
+- Going to another part of the window closes the file.
+
+**Not built.** The viewer in Review (Projects), where trust is decided: the second slice. A
+kit's own editor (E1). Finding a word in a file. More than five kinds of piece: a page's
+own script and styles are read as markup, and C's preprocessor lines as C.
+
+**Checked.** Tests: each language against a sample; any text read without loss (what is
+shown is the text again, piece by piece); the limits; a kit's languages and that an ending
+is read as one language; only a project's own files read out, and only so much; the
+window's file list and the file as it is told, changed files, files that are no text or too
+long; reading a file by hand and refused to the control channel, in GridCraft's own window;
+the page's two messages, and what is not one. The gate's eight steps pass, 1604 tests, with
+a zig named. **In the app** (an isolated copy): the page drew the C starter's source with
+its numbers and colours, for a project that was not trusted at the time.
+
+**Not seen.** GridCraft's own window drawing a file: its test finds the file's text there,
+not its colours. A first-kit project's files in the app. The light theme.
+
+### Signing, and whose word is taken for a developer (phases S1 and S2, designed)
+
+**Designed 2026-10-13 from the owner's decisions** (the six on the plan and the four after
+the review of prior art). **Nothing of it is built**: "We'll have to build in the trust
+system later." It is set down so that what is built before it (targets, a workbook that
+carries a project) leaves the right room, and so that the owner can say no to any of it.
+
+**1. The two ways GridCraft can stand.**
+
+- **A person's own GridCraft.** They trust a project by its fingerprint, as today. They may
+  also agree to trust a developer: then what that developer signs is trusted.
+- **An organisation's GridCraft**: set up by the organisation, by a setting the person at
+  the screen can't change. There **only the organisation says whose signatures count**. A
+  person there trusts no developer themselves (decided). This is what lets an organisation
+  govern what its people build and pass round: the control of end-user computing the owner
+  named.
+
+**2. A developer is a key** (decided: keys first).
+
+- An Ed25519 key pair, made in GridCraft or brought to it. The private half stays with the
+  developer: beside their settings, readable by their account alone, never in a project, a
+  workbook, a request or a picture, like the Development server's token.
+- **Who a key is** is its fingerprint: a hash of the public half, shown in short groups.
+  That is the fact. The name that travels with it is what its owner wrote.
+- **A name is shown as claimed**, in those words, **unless an organisation's server vouches
+  for the pair** (decided). There is no badge without a server behind it.
+
+**3. What is signed is the project, exactly as it is.**
+
+- A **seal**: the project's id; its fingerprint, which already covers every file; for a
+  project that carries builds, each build's target and hash; the signer's public key and
+  the name they give; when they say they signed. The signature is over those, written out
+  in one fixed way.
+- So a seal and a person's own trust speak of the same thing. One changed byte ends both.
+- **Where a seal is kept.** In a workbook, in a part of its own beside the project's. In a
+  project's folder, in one file that is left out of the fingerprint, as what git keeps is,
+  and for the same reason (it could not sign itself). Unlike what git keeps, it is read:
+  but only to be checked against the key, and a seal that does not check is as good as
+  none. Nothing in it is ever shown as true before it has checked.
+
+**4. When a seal counts.**
+
+| | A person's own GridCraft | An organisation's GridCraft |
+|---|---|---|
+| A project, WebAssembly or scripts, no seal | Trusted by its fingerprint, as today | As the organisation's setting says: as today, or not at all |
+| A project with a good seal from a developer on the list | Trusted without being asked again | Trusted |
+| A good seal from a developer not on the list | The person is shown who signed, and may trust the project, or the developer | Not trusted. There is no way for the person to add the developer |
+| A program for a platform, no seal or a bad one | **Never runs** (decided), but for one the person's own compiler built on this machine from a project they trust | The same |
+| A program for a platform, good seal, developer on the list | Runs, having said in so many words that it can do whatever the person can | The same |
+
+- **Agreeing to trust a developer** is confirmed by the operating system, as trusting a
+  project is, and says how wide it is: everything that key signs, from now on, until it is
+  taken back. The person's list of developers is GridCraft's own, beside their list of
+  projects. No command gives it, and the control channel can't.
+- **A seal never limits a program.** It says who, and that nothing changed.
+
+**5. An organisation's server** (S2).
+
+- **The setting**: the server's address and the organisation's own public key, in a place
+  only an administrator writes (to be chosen for each system: where machine-wide policy
+  lives). With it set, GridCraft is the organisation's: the person's own list of developers
+  is not consulted, and can't be added to.
+- **What the server says**: the developers whose keys are the organisation's, each with the
+  name the organisation gives them (which is then shown as vouched for, by the
+  organisation); the keys that are no longer good; whether a project with no seal may be
+  trusted at all; and until when this is good. All of it signed with the organisation's
+  key. GridCraft takes nothing from the server that does not check against that key, so
+  the server need not be trusted for more than being reachable.
+- **Cut off**, GridCraft goes by what it was last told, until that passes its date. After
+  it, what needed the list does not run, and says why.
+- **A key taken back** stops counting when GridCraft next hears of it: for what it signed
+  before as well.
+- It asks the server for the list. It does not tell the server which workbooks a person
+  opens.
+
+**6. What it needs from what is built first.**
+
+- **W1** (a workbook carries a project): a part for the seal, and the parts list such that
+  the fingerprint is taken the same way in a workbook as in a folder.
+- **T1** (targets): each build's hash, by target, in a list the seal can cover.
+- **K2's store**: a program built on this machine is known as such by where it is kept, not
+  by anything the project says.
+
+**7. In slices.**
+
+| Slice | What | Waits for |
+|---|---|---|
+| S1a | Keys and seals: make a key, sign a project, check a seal; a project's part says who sealed it, the name as claimed. Nothing yet depends on a seal | A signature library chosen, and its licence checked |
+| S1b | A person's list of developers: agreeing to trust one, taking it back, and a sealed project trusted by it | S1a |
+| S2a | An organisation's setting and a list read from a file: the rules of an organisation's GridCraft, without a server | S1b |
+| S2b | The server: asking it, checking what it says, keeping it till its date, keys taken back | S2a |
+
+**8. Not decided, and not asked yet.**
+
+- Whether, in an organisation's GridCraft, a project with no seal may still be trusted by
+  its fingerprint. It is drawn above as the organisation's to set; for the control of
+  end-user computing the answer an organisation gives is likely no.
+- Where a developer's private key lives when the system has a place for secrets, and
+  whether a key can be kept on a device.
+- A lost key: there is no way to carry trust from an old key to a new one but the
+  organisation's list, or each person's yes again.
+- Counter-signing: more than one seal on a project (the developer's, and the
+  organisation's own once it has reviewed it), as Apple adds its note to a developer's
+  signature.
 
 ### Backlog
 
