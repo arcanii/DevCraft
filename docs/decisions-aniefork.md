@@ -2433,8 +2433,9 @@ comment there is the owner's to ask for.
 
 **Set aside (the same day).** The owner started it and looked: "the VBA system is really
 basic, so we should ignore it for now and continue with our development kit structure."
-Nothing of it is taken. The branch `pr-990` and the folder `G:\gridcraft-pr990` are still
-there; they can be removed when the owner says.
+Nothing of it is taken. On 2026-10-14 the owner said to remove the branch `pr-990` and the
+folder `G:\gridcraft-pr990`; deleting them is left to the owner's own hand, with the command
+for it.
 
 ### Calling a project from the sheet, and an immediate line (to design)
 
@@ -2479,6 +2480,66 @@ proposed**: a shell is not GridCraft's to be.
 calculate by themselves) or Python's (the first kit's, asked for by hand); and whether a
 WebAssembly runtime inside GridCraft is wanted.
 
+### The immediate line, and how a kit is called by name (built 2026-10-14)
+
+**What the owner decided (2026-10-14).** On the immediate window: "yes - we need this." On
+functions a sheet can call: "Sheet functions should be a generic way to access into the
+development kit - we'll have to use namespaces."
+
+**So a call into a kit is named one way, wherever it is made from**, and the immediate line
+is the first place it can be made from:
+
+```text
+project.function              the function, handed the cells that are selected
+project.function(A1:C9)       handed those cells of the sheet that is shown
+project.function("text")      handed a value: text, a number, a list, an object
+kit.project.function(…)       the same, saying which kit the project is of
+```
+
+- A project is named by its id. **An underscore there stands for a hyphen too**, because a
+  formula could not hold a hyphen in a name: `clean_data` is `clean-data`.
+- A function is one of the project's scripts, by its file's name without the ending: today
+  that is all a project has to call (the script's `main`). When a kit offers other things
+  to call (a function inside a script, a function a WebAssembly program exports), they are
+  named the same way, under the same project.
+- The kit's name is optional while a project's id says which project is meant, which it
+  always does today: every project is in one folder.
+
+**What was built.** In the Console's part of the page, a line: what is typed there is read
+as a call (`aniefork/immediate.rs`), the project and its function are found, and the script
+is run beside the window with what the call hands it. What came back and what it printed are
+shown under the line as text, the run can be stopped, and the last twenty lines are kept to
+run again. The part names what can be called now.
+
+- **Typing a call is running code by hand.** Only for a project the person trusts as it is
+  and that may run its scripts; the trust is checked again by what runs it. Refused while
+  the control channel is putting input into the window; no agent has a tool for it.
+- One script runs at a time, from here or from a project's part.
+- GridCraft's own Console window does not have the line: the page does.
+
+**Checked.** Tests of reading a line (the namespaces, what is handed, what is no call), of
+a name standing for an id, and through the page: nothing callable before trust; a line that
+is no call, a project there is none of, one not trusted, one named under another kit, a
+function it has not, each saying why; refused to what drives the window; a call that starts
+the script and ends; the line kept; the same run shown in the project's own part.
+
+**Seen** (the isolated copy, with a project trusted in that copy's own file):
+`clean-data.count(A1:B3)` typed into the line, run by this machine's Python, and "3" come
+back for three rows of the sheet.
+
+**Not built: a formula that calls a project.** The names are settled above; the rest of
+what it takes is in the section before this one, and two things of it were put to the
+owner: whether a function that is a person's Python may be worked out without being asked
+(it can't run because a workbook was opened), and whether GridCraft gets a WebAssembly
+runtime of its own. **The owner's answer (2026-10-14): "We can defer these to a second
+phase."** So the first phase is what is built: a project is called by hand, from the
+immediate line and from its own part. Neither point is decided, and a formula that calls a
+project is not started until they are taken up again. **Upstream has an open series of pull requests, "Python in cells"**
+(#469, #477, #482 and more, by another contributor, none merged when looked at): Python
+written into a cell, run in worker processes of its own. It is not the same thing as a
+formula that calls a project's function, and if upstream takes it the two will have to sit
+side by side. Only its titles and one description were read.
+
 ### Offering it upstream, in stages (a strategy)
 
 **What the owner asked (2026-10-13).** "We need a strategy to PR into the main for this - in
@@ -2521,9 +2582,21 @@ hooks, which become upstream's own code.
 **As each is merged**, the fork drops its own copy at the next merge of upstream and keeps
 only what upstream has not taken, as it did with the selection glide.
 
-**The owner's to say.** Whether U0 is posted, and in whose words: nothing is said on GitHub
-without their go-ahead. What the kit is called there. Whether U1 is cut as one pull request
-or as two (the model and its command; then the tab and the window).
+**Changed by the owner (2026-10-14): no proposal first, and not yet.** "Is a U0 needed? We
+should merge it with real functionality - we need to test this feature more before adding."
+Asked whether upstream has pull requests that are only proposals: it has none that were
+found, and no discussions board; people bring working code, often large and in series, and
+the few issues that only suggest something mostly go unanswered. So:
+
+- **U0 is dropped.**
+- **Nothing is offered until it has been used more here.**
+- **The first offer carries something that works**: U1 to U3 together are the first kit
+  (projects, a panel, Python). Whether that is one pull request or a series that is opened
+  together, as others do upstream, is to be settled when it is cut. It is then some ten
+  thousand lines, and upstream's rule on JavaScript is met in the pull request itself, not
+  before it: that risk is taken knowingly.
+
+**Still the owner's to say, when the time comes**: what the kit is called there.
 
 
 ### Backlog

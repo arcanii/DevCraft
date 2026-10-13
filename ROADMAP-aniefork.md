@@ -783,6 +783,22 @@ included.
 
 Newest first.
 
+- **2026-10-14 (the immediate line; how a kit is called by name; no proposal upstream):**
+  The owner's answers: commit (done: the review and the kit packages are one commit);
+  no proposal upstream, and nothing offered until it has been used more ("We should merge it
+  with real functionality"); "Sheet functions should be a generic way to access into the
+  development kit - we'll have to use namespaces"; "Immediate window, yes - we need this";
+  remove the trial of pull request 990. **Built**: the immediate line, in the Console's part
+  of the page. A line is a call, `project.function(…)` or `kit.project.function(…)`, handed
+  the selection, a range or a value; an underscore in a project's name stands for a hyphen;
+  a function is one of the project's scripts. It runs for a project the person trusts and
+  that may run its scripts, by hand only (`aniefork/immediate.rs`; `kits::resolve`,
+  `callable`; `projects::start_with`). Seen in the isolated copy: `clean-data.count(A1:B3)`
+  gave 3. The same names are what a formula will call by; that is not built. Upstream has
+  an open series, "Python in cells", which a formula calling a project would sit beside.
+  **Committed on the owner's word the same day.** Asked the two points a formula turns on
+  (may a person's Python be worked out without being asked; a WebAssembly runtime inside
+  GridCraft), the owner said: "We can defer these to a second phase." Neither is decided.
 - **2026-10-13 (kits from package files, built; and three things planned):** The owner
   approved the plan for kit packages as recommended. **Built** (P1 to P3): a `.gridkit` is a
   zip with a `kit.toml` and an optional starter, for a kit that describes and runs nothing of

@@ -161,6 +161,8 @@ pub(super) enum Act {
     /// was loaded. Each ends in the operating system's own question.
     LoadKit,
     RemoveKit(String),
+    /// Run a line typed into the immediate line: one call into a project (`immediate.rs`).
+    Immediate(String),
 }
 
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
@@ -201,6 +203,8 @@ pub(super) struct State {
     pub(super) python_status: String,
     /// The module of the open workbook's macros that is being read.
     pub(super) macro_module: String,
+    /// The lines run from the immediate line, the latest last.
+    pub(super) immediate: Vec<String>,
 }
 
 fn state_id() -> egui::Id {
@@ -1469,6 +1473,23 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
         Act::CopyRequest => {
             ctx.copy_text(super::macros::REQUEST.to_string());
             Ok(super::macros::COPIED.into())
+        }
+        Act::Immediate(line) => {
+            // Typing a call is running code by hand: it got here only as the person's own.
+            let call = super::immediate::parse(&line)?;
+            let (project, script) = kits::resolve(&call)?;
+            if state.run["state"] == "running" {
+                return Err("A script is still running: stop it, or wait for it.".into());
+            }
+            let data = match &call.with {
+                super::immediate::With::Selection => projects::selection_data(app)?,
+                super::immediate::With::Range(range) => projects::range_data(app, range)?,
+                super::immediate::With::Value(value) => value.clone(),
+            };
+            projects::start_with(ctx, &project, &script, data)?;
+            super::immediate::remember(&mut state.immediate, &line);
+            state.run = json!({"state": "running", "project": project, "script": script, "line": line.trim(), "immediate": true});
+            Ok(String::new())
         }
         Act::LoadKit => load_kit(app, state),
         Act::RemoveKit(id) => remove_kit(app, state, &id),
@@ -3552,6 +3573,81 @@ mod tests {
         page(&mut h, json!({"act": "removeKit", "id": "anie"}));
         assert_eq!(told(&mut h)["error"], "That is not a development kit that was loaded from a package.");
         assert_eq!(asked.questions().len(), asked_so_far);
+    }
+
+    #[test]
+    fn the_immediate_line_calls_a_trusted_projects_function_by_hand() {
+        let s = Sandbox::new("devpage-immediate");
+        create("Clean Data").unwrap();
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(crate::aniefork::console::NAME, json!({}));
+        h.run_steps(3);
+        // The Console's part has the line. Nothing can be called yet: the project is not trusted.
+        let first = told(&mut h)["pane"]["immediate"].clone();
+        assert_eq!(
+            (&first["title"], &first["names"], &first["run"], &first["hint"], &first["earlier"]),
+            (&json!("Immediate"), &json!([]), &Json::Null, &json!("project.function(A1:C9)"), &json!([]))
+        );
+        // What is no call, a project there is none of, one that is not trusted, one named
+        // under another kit: each says why, and nothing runs.
+        for (line, why) in [
+            ("clean", "A call is named project.function"),
+            ("nowhere.clean", "There is no project named nowhere."),
+            ("clean-data.clean", "is not trusted as it is now"),
+            ("c.clean-data.clean", "is not a project of a kit named c"),
+        ] {
+            page(&mut h, json!({"act": "immediate", "line": line}));
+            let now = told(&mut h);
+            assert!(now["error"].as_str().unwrap().contains(why), "{line}: {}", now["error"]);
+            assert_eq!((&now["pane"]["immediate"]["run"], &now["pane"]["immediate"]["earlier"]), (&Json::Null, &json!([])), "{line}");
+        }
+        // Trusted, its script is a function to call, and is named in the part.
+        let print = gridcraft_aniefork_dev::project::load(&s.0.join("projects/clean-data")).fingerprint.unwrap();
+        trust(h.state(), "clean-data", &print, false).unwrap();
+        kits::forget();
+        assert_eq!(told(&mut h)["pane"]["immediate"]["names"], json!(["clean-data.clean"]));
+        page(&mut h, json!({"act": "immediate", "line": "clean-data.wash"}));
+        assert!(told(&mut h)["error"].as_str().unwrap().contains("has no function named wash. It has: clean."));
+        // Asked for by what drives the window, a call is refused: typing one is running code by hand.
+        let mut state = State::default();
+        let mut open = true;
+        assert_eq!(
+            super::act(h.state_mut(), &ctx, &mut state, Act::Immediate("clean-data.clean".into()), true, &mut open),
+            Err(presence::BY_HAND.to_string())
+        );
+        // A call starts the script, handed what the line says: the project named with an
+        // underscore for its hyphen, and under its kit. The line is kept, to be run again.
+        page(&mut h, json!({"act": "immediate", "line": " anie.clean_data.clean([[1, 2], [3, 4]]) "}));
+        let ran = told(&mut h);
+        assert_eq!(ran["error"], "");
+        let run = &ran["pane"]["immediate"]["run"];
+        assert_eq!(
+            (&run["project"], &run["script"], &run["line"], &run["immediate"]),
+            (&json!("clean-data"), &json!("clean.py"), &json!("anie.clean_data.clean([[1, 2], [3, 4]])"), &json!(true))
+        );
+        assert!(matches!(run["state"].as_str(), Some("running" | "done")), "{run}");
+        assert_eq!(ran["pane"]["immediate"]["earlier"], json!(["anie.clean_data.clean([[1, 2], [3, 4]])"]));
+        // It ends, one way or the other (this machine may have no Python), and says how.
+        page(&mut h, json!({"act": "stopRun", "id": "clean-data"}));
+        let mut ended = Json::Null;
+        for _ in 0..90 {
+            ended = told(&mut h)["pane"]["immediate"]["run"].clone();
+            if ended["state"] == "done" {
+                break;
+            }
+        }
+        assert_eq!(
+            (&ended["state"], &ended["line"], &ended["immediate"]),
+            (&json!("done"), &json!("anie.clean_data.clean([[1, 2], [3, 4]])"), &json!(true)),
+            "{ended}"
+        );
+        assert!(ended["ok"].is_boolean() && ended["text"].is_string());
+        // The project's own part shows the same run: it is that project's.
+        page(&mut h, json!({"act": "go", "to": "project:clean-data"}));
+        assert_eq!(told(&mut h)["pane"]["run"]["script"], "clean.py");
     }
 
     #[test]

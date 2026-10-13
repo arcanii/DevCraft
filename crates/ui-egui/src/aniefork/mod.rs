@@ -13,6 +13,7 @@ pub mod devpage;
 pub mod diff;
 pub mod dock;
 mod icons;
+mod immediate;
 mod kits;
 pub mod macros;
 pub mod options;

@@ -1084,6 +1084,48 @@ pub(super) fn with_view(told: &mut Json, viewing: Option<&(String, String)>) {
     }
 }
 
+/// What can be called from the immediate line now: each script of each project the person
+/// trusts and that may run its scripts, named as a call names it.
+pub(super) fn callable() -> Vec<String> {
+    let Some(found) = found() else { return vec![] };
+    found
+        .projects
+        .iter()
+        .flat_map(|project| {
+            let id = text(project, "id").to_string();
+            projects::scripts(project).into_iter().map(move |script| format!("{id}.{}", super::immediate::function_of(&script)))
+        })
+        .take(60)
+        .collect()
+}
+
+/// The project a call names, and the script that is the function it names: for a project the
+/// person trusts and that may run its scripts. Otherwise why not, in words for the person.
+pub(super) fn resolve(call: &super::immediate::Call) -> Result<(String, String), String> {
+    let found = found().ok_or(projects::UNAVAILABLE)?;
+    let Some(project) = found.projects.iter().find(|project| super::immediate::names(&call.project, text(project, "id"))) else {
+        return Err(format!("There is no project named {}.", call.project));
+    };
+    let (id, name) = (text(project, "id"), text(project, "name"));
+    if let Some(kit) = &call.kit
+        && !super::immediate::names(kit, text(project, "kit"))
+    {
+        return Err(format!("{name} is not a project of a kit named {kit}: it is of the {}.", kit_of(project).name));
+    }
+    if project["status"] != "trusted" {
+        return Err(format!("{name} is not trusted as it is now, so nothing of it can be called."));
+    }
+    let scripts = projects::scripts(project);
+    if scripts.is_empty() {
+        return Err(format!("{name} has nothing to call: it may not run scripts, or has none."));
+    }
+    let Some(script) = scripts.iter().find(|script| super::immediate::function_of(script) == call.function || **script == call.function) else {
+        let have: Vec<&str> = scripts.iter().map(|script| super::immediate::function_of(script)).collect();
+        return Err(format!("{name} has no function named {}. It has: {}.", call.function, have.join(", ")));
+    };
+    Ok((id.to_string(), script.clone()))
+}
+
 /// A project's fingerprint as it is on disk now. `None` when there is no such project, or it
 /// can't be read.
 pub(super) fn fingerprint_of(id: &str) -> Option<String> {

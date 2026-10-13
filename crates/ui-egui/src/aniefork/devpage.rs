@@ -410,6 +410,10 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     kits::with_view(&mut part, state.viewing.as_ref());
     // What is decided in a project's part: trusting it, and running its scripts.
     kits::with_trust(&mut part, app, state.reviewing.as_ref(), &state.run);
+    // The immediate line, in the Console's part: what can be called, and what came of the last call.
+    if part["kind"] == "console" {
+        part["immediate"] = super::immediate::says(kits::callable(), &state.run, &state.immediate);
+    }
     // What checking the Python had to say, in the part of the kit it is named in.
     if part["pythonField"].is_object() {
         part["pythonField"]["status"] = json!(state.python_status);
@@ -550,6 +554,12 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         },
         "readMacro" => message.get("module").and_then(Json::as_str).filter(|name| name.len() <= 255).map(|name| Act::ReadMacro(name.to_string())),
         "copyRequest" => Some(Act::CopyRequest),
+        // A call typed into the immediate line: the line is what the person typed.
+        "immediate" => message
+            .get("line")
+            .and_then(Json::as_str)
+            .filter(|line| line.chars().count() <= super::immediate::MAX_LINE)
+            .map(|line| Act::Immediate(line.to_string())),
         // A development kit, loaded from a package the person chooses in the operating
         // system's own dialog (the page names no file), and removed: by its id.
         "loadKit" => Some(Act::LoadKit),

@@ -193,8 +193,22 @@ pub(super) fn selection_data(app: &mut SheetApp) -> Result<Json, String> {
 /// thread that runs it. What the script asks of the spreadsheet while it runs is carried out by
 /// this window, as a panel's calls are, with what the project was granted.
 pub(super) fn start(app: &mut SheetApp, ctx: &egui::Context, id: &str, script: &str) -> Result<(), String> {
-    let at = places().ok_or(UNAVAILABLE)?;
     let data = selection_data(app)?;
+    start_with(ctx, id, script, data)
+}
+
+/// Cells of the sheet that is shown, as the data a script is handed: `{range, sheet, rows}`.
+pub(super) fn range_data(app: &mut SheetApp, range: &str) -> Result<Json, String> {
+    if app.session.active().is_none() {
+        return Err("There is no workbook open.".into());
+    }
+    let read = app.session.run("sheet.read", json!({"range": range})).map_err(|e| crate::clean_error(&e))?;
+    Ok(json!({"range": read["range"], "sheet": read["sheet"], "rows": read["values"]}))
+}
+
+/// Starts `script` of project `id`, handed `data`. As [`start`], which hands it the selection.
+pub(super) fn start_with(ctx: &egui::Context, id: &str, script: &str, data: Json) -> Result<(), String> {
+    let at = places().ok_or(UNAVAILABLE)?;
     let python = settings::load(&at.settings).python;
     let job = Job { slot: Arc::new(Mutex::new(None)) };
     let calls = super::panels::script_calls(ctx, &at, id);
@@ -243,8 +257,10 @@ pub(super) fn poll_run(ctx: &egui::Context, run: &mut Json) {
     match job.and_then(|job| job.slot.lock().unwrap_or_else(PoisonError::into_inner).take()) {
         Some(result) => {
             let mut done = finished(result);
-            done["project"] = run["project"].clone();
-            done["script"] = run["script"].clone();
+            // Whose run it was, and where it was asked for from, stays said.
+            for key in ["project", "script", "line", "immediate"] {
+                done[key] = run[key].clone();
+            }
             *run = done;
         }
         None => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
