@@ -2757,6 +2757,74 @@ links, and none of upstream's three lines. **Not seen**: the README at the root 
 draws it (that needs a push, which is the owner's); the Help menu on macOS, which was never
 compiled here.
 
+### Quake, built by the C kit: the second challenge (2026-10-14)
+
+**What the owner asked.** "Can we test Quake in the C Development Kit - this is challenge 2",
+and yes to the two downloads it took and to where it lives.
+
+**It is not in this repository, and never will be**, as Doom is not: Quake's code is under
+the GPL and its game data is id Software's. The project is `G:\gridcraft-quake` (its own
+README says what it is and what is in it).
+
+**What was taken, and from where.** quakegeneric (github.com/erysdren/quakegeneric, commit
+`13052102`, GPL-2 or later): id Software's WinQuake source made portable, as doomgeneric is
+for Doom. And the game data, `pak0.pak` of the shareware version 1.06, out of the shareware
+release as the Internet Archive holds it (`msdos_Quake106_shareware`): 18,689,235 bytes, MD5
+`5906e5998fc3d896ddaf5e6a62e03abb`, which is the checksum remembered for it. Only the data
+file and the licence's text were taken out of that archive; none of its programs was unpacked
+or run.
+
+**What happened.**
+
+- **The kit built it without a change to the kit**: 69 files, 2.4 MB of WebAssembly, in about
+  nine seconds.
+- **Two things in Quake's code met the kit's rule that a project names its files and a few
+  settings, and never the compiler's command line:**
+  - *The date and time of the build*, which Quake prints in two places: the kit's compiler
+    refuses them (a build must come out the same each time). Two lines changed.
+  - *`setjmp` and `longjmp`*. The compiler has them for WebAssembly only with an option, and
+    a project can't ask for one. Quake jumps out of a frame on an error, and also, with
+    nothing wrong, each time a demo ends. The project carries its own `setjmp.h`, found
+    before the compiler's (the recipe's folders are searched first), in which a jump stops
+    the program; and the one jump that is no error is taken out of Quake's code (two places).
+- **The first run played a whole demo and then stopped** on the next one's Loading plaque:
+  "memory access out of bounds". Found outside the window, with the kit's loader in Node and
+  a line added to a copy of it to say where: without the jump, Quake read on in the demo
+  past its end, and a demo lies inside the pak, so what it read was the next file, taken as
+  a message of a nonsense length, which overran a buffer. The demo that ended is now closed
+  at the place the jump was. (A first guess, the stack running into the program's data, was
+  wrong: the kit's programs have 16 MiB of stack, laid first, where running out stops the
+  program at once.)
+
+**Seen.** In the isolated copy: Quake docked beside the sheet, playing its three demos one
+after another (the Necropolis, the Grisly Grotto, the Door To Chthon), and "Link to a sheet
+named Quake" making the sheet: 21 variables four times a second, nine places of the game's
+memory with the bytes there and the number a formula works out of them, and two charts. In
+Node, with the kit's loader: the three demos round for seven minutes of the game's time; and
+a new game begun through the game's own menu with keys (Esc, Enter, Enter), in which walking
+forward moved the player, turning right turned them, and firing used shells. So the server's
+side of Quake, its own little language included, runs too, not only a recording.
+
+**Not seen.** Anyone playing by hand in the docked panel: the keys were handed over in Node,
+through the same function the page calls. **Not there**: sound, a mouse, a saved game kept
+from one run to the next.
+
+**What the kit learned from it.**
+
+- **A jump out of a frame is common in old C, and the kit has none.** The compiler's option
+  for it needs WebAssembly's exceptions, which the web view has. A named setting in the
+  recipe for it would be the kit's to add (never a flag of the project's choosing), and
+  would spare a project the two changes above. Not built: the owner's to ask for.
+- **A program that stops is stopped for good.** Quake would go back to its console after an
+  error; here the page says what happened and that is the end. With a jump there would be
+  less to stop for.
+- **The loader in Node was the way to find the fault**: what the page's part of the window
+  shows of a stopped program is one line. A copy of the loader that says where was made in
+  scratch; whether the loader should say so itself, to a developer, is a thing to decide.
+- **The shareware licence of Quake names screenshots**: no commercial use of the game "or
+  any portion thereof, such as a screen display or a screenshot". No picture of Quake is in
+  the repository. One goes in only on the owner's word, as Doom's did.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

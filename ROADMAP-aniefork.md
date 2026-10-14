@@ -791,6 +791,18 @@ included.
 
 Newest first.
 
+- **2026-10-14 (Quake, built by the C kit: the second challenge):** The owner: "Can we test
+  Quake in the C Development Kit - this is challenge 2", and yes to its two downloads.
+  quakegeneric (the port; GPL) and the shareware game data, unmodified and checked, are in a
+  project of their own, `G:\gridcraft-quake`, **outside this repository**, like Doom's.
+  **The kit built it without a change to the kit** (69 files, 2.4 MB, nine seconds), and it
+  runs docked: its three demos one after another, and a sheet of its variables, its memory
+  and two charts. A new game through its own menu, walking and firing, was seen in Node with
+  the kit's loader; nobody has played it by hand in the panel. What Quake's code needed:
+  its own `setjmp.h` and three small changes (the kit's compiler has no `setjmp` for
+  WebAssembly without an option, and refuses the date of the build). What the kit learned
+  is in ADR-0001 ("Quake"): a named setting for jumps is the first thing it lacks. **No
+  file of the repository's program changed**; no picture of Quake is in it.
 - **2026-10-14 (upstream's marks leave the fork; the README moves to the root):** Shown what
   upstream's brand licence asks of a published, modified version and where the marks were,
   the owner: "Yes - let's do it - we need to do it anyways from their rules. We reference
