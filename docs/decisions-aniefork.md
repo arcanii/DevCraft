@@ -3188,6 +3188,22 @@ above. Agents are not yet told that a C program may draw (neither in G1 nor here
 goes into the owner's real projects folder, as Quake did, and whether a picture of it goes in the
 README.
 
+### What Windows calls the program: DevCraft (2026-10-14)
+
+**What the owner decided.** They asked whether the process, which Task Manager listed as
+GridCraft, should be DevCraft. Offered the version information alone (recommended) or renaming
+the program: "Go with recommended".
+
+- **The version information of `gridcraft.exe`** (`apps/gridcraft/build.rs`, a hook in an
+  upstream file): `ProductName` "DevCraft", `FileDescription` "DevCraft (GridCraft with
+  development kits)". That is what Task Manager and the file's properties show. Seen: Windows
+  describes the running isolated copy so.
+- **Not changed**: the program's file (`gridcraft.exe`), its settings folder
+  (`%APPDATA%\GridCraft`), the window's title, the version information's `CompanyName`
+  (upstream's company), and upstream's files for installers in `packaging/`. Renaming the file
+  would move the person's settings, their trusted projects and what was built, and would
+  conflict at every merge of upstream.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

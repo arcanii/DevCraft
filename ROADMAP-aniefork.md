@@ -712,6 +712,7 @@ still there:
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
 | `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
 | `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
+| `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft with development kits)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -791,6 +792,11 @@ included.
 
 Newest first.
 
+- **2026-10-14 (What Windows calls the program):** On the owner's word ("Go with
+  recommended"): the version information of `gridcraft.exe` names it DevCraft ("DevCraft
+  (GridCraft with development kits)"), which is what Task Manager shows. A hook in
+  `apps/gridcraft/build.rs`. The file, its settings folder and the window's title keep
+  GridCraft.
 - **2026-10-14 (OpenGL for a C program, stages G2 and G3):** On the owner's word. The kit's
   OpenGL ES grows to 78 calls (the depth range, reading the picture back, the stencil, the
   colour mask, the polygon offset and others), and the loader reads a picture as the program's

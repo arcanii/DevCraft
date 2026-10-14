@@ -13,9 +13,11 @@ fn main() {
         return;
     }
     let mut res = winresource::WindowsResource::new();
+    // The fork's name, and what it is based on, where Windows names the program: Task Manager
+    // and the file's properties (aniefork). Upstream's: "GridCraft", "GridCraft spreadsheet".
     res.set_icon("../../assets/app-icon/gridcraft.ico")
-        .set("ProductName", "GridCraft")
-        .set("FileDescription", "GridCraft spreadsheet")
+        .set("ProductName", "DevCraft")
+        .set("FileDescription", "DevCraft (GridCraft with development kits)")
         .set("CompanyName", "Learning Machines LLC")
         .set("LegalCopyright", "Copyright (c) the GridCraft authors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "gridcraft.exe")
