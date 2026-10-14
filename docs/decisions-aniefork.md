@@ -3116,6 +3116,78 @@ not use.
 with a program that uses textures and depth; G3, a Quake that draws with it, which needs a
 Quake written for OpenGL ES 2 or a layer of C that turns the old calls into the new.
 
+### OpenGL for a C program, stages G2 and G3: the kit's part grown, and GLQuake drawn with it (built 2026-10-14)
+
+**What the owner decided.** "Let's do OpenGL first then networking"; and, asked whether
+GLQuake's renderer could be downloaded from id Software's release: "then download the quake gl
+components needed".
+
+**G2: the kit's part grown to what a game needs** (`c::GL_HEADER`, and the loader in
+`c_program.rs`): 78 calls, where there were 60. Added: the depth range (`glDepthRangef`),
+reading the picture back (`glReadPixels`), `glColorMask`, `glPolygonOffset`, `glLineWidth`,
+`glBlendFuncSeparate`, `glBlendEquation`, the stencil (`glStencilFunc`, `glStencilOp`,
+`glStencilMask`, `glClearStencil`), `glFinish`, `glFlush`, `glGetIntegerv`, `glTexParameterf`,
+`glUniform1fv`, `glUniform2fv` and `glVertexAttrib4f`; and the numbers they take (the
+comparisons, the blend factors and equations, the stencil's operations, `GL_ALPHA`,
+`GL_LUMINANCE_ALPHA`, the two mipmap filters left out before, and a few more).
+
+- **A picture handed over is read at the size it is**: with the rows begun where the program's
+  `glPixelStorei` says, and alpha and luminance-and-alpha pictures at one and two bytes a dot.
+  Before, every row was taken as tight and an alpha picture as four bytes a dot, which reads
+  past the picture. A picture read back is written into the program's memory the same way.
+- **`glGetIntegerv` answers what WebGL 2 answers**, and names a thing of the page's (a buffer, a
+  texture) by the number the program knows it by.
+
+It lets nothing more out: every call still draws on, or reads from, the one canvas the page
+named.
+
+**G3: GLQuake, a project outside the repository** (`G:\gridcraft-glquake`; its README says what
+it is). From id Software's release (github.com/id-Software/Quake, commit `bf4ac424`, its
+`WinQuake` folder): the files GLQuake's own build compiles, with the parts that talk to a
+machine taken as id Software's "null" ones, downloaded on the owner's word and each checked
+against the git object id the release's own tree gives for it (123 files). The project keeps
+87: the 47 C files built and the 40 headers they read.
+
+- **OpenGL 1, made of the kit's OpenGL ES 3** (`gl/gl1.c`, written for the project and under its
+  licence). A shape given a corner at a time is turned into triangles as the corners come, each
+  put through the modelview matrix there; the triangles are gathered and drawn many at a time,
+  what was gathered being drawn whenever something that changes how it is drawn changes; one
+  shader does the fixed recipe (the texture environment for each kind of texture, the alpha
+  test); a table holds the program's names for its textures beside OpenGL ES's. **It is the
+  project's, not the kit's**: what one program needed. Whether the kit should offer OpenGL 1
+  itself (`<GL/gl.h>`), for other games of the time, is the owner's to say.
+- **What the kit's compiler refused, and what was changed for it**: five places of id
+  Software's code, each marked. The date and time of the build, twice; two variables that two
+  files each define (the compilers of 1996 made one of each); and one line at the end of
+  `quakedef.h` that reads a header of the project's declaring what GLQuake calls before
+  anything declares it. The recipe says `define = ["GLQUAKE"]` and `setjmp = true`.
+- **What a canvas is not**: a card of 1997 kept the picture before last, and a canvas begins each
+  picture empty. GLQuake drew its status bar again only on two or three pictures, and drew
+  each picture into half of a depth buffer it never cleared (the "z trick"). The project's glue
+  asks for the status bar on each picture and turns the z trick off.
+
+**Seen.** In a browser (the browser pane), with the loader and the program served as the bridge
+serves them: the demos playing, the console and the menu over the faded game, E1M1, E1M4 and
+E1M5 started from the console, the sky's two layers of cloud, models, particles, the status bar,
+and the canvas following the panel's size. About 37 draws a picture, and a step of the game with
+its picture about a tenth of a millisecond (0.8 ms at the worst) on this computer. Then **docked
+in the isolated copy, built by the kit** (48 sources, about three seconds, 2.4 MB): playing its
+demos, and linked to a sheet, which filled with its variables, the bytes of its memory, the
+formulas worked out of them and the two charts.
+
+**Checked.** With the compiler: a program that holds every call the header declares is built,
+and asks for each by its exact name. The loader answers exactly the calls the header declares
+(as before).
+
+**Not seen**: water (no picture of it was caught); GLQuake played by hand (no click is posted to
+a game's picture in the isolated copy: it could take the machine's real pointer); the stencil,
+the colour mask, the polygon offset and the other calls GLQuake does not make, beyond the test
+above. Agents are not yet told that a C program may draw (neither in G1 nor here).
+
+**Next, if the owner says**: networking, stage N2, which is the owner's order. Whether GLQuake
+goes into the owner's real projects folder, as Quake did, and whether a picture of it goes in the
+README.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

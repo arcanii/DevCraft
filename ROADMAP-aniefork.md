@@ -791,6 +791,13 @@ included.
 
 Newest first.
 
+- **2026-10-14 (OpenGL for a C program, stages G2 and G3):** On the owner's word. The kit's
+  OpenGL ES grows to 78 calls (the depth range, reading the picture back, the stencil, the
+  colour mask, the polygon offset and others), and the loader reads a picture as the program's
+  row alignment says. **GLQuake**, built from id Software's release with an OpenGL 1 of its own
+  made of the kit's OpenGL ES 3, is a project outside the repository (`G:\gridcraft-glquake`).
+  Seen in a browser, and docked in the isolated copy, built by the kit, filling its sheet. No
+  hook in an upstream file changed for it.
 - **2026-10-14 (OpenGL for a C program, stage G1):** On the owner's word. A C project's page
   names a canvas (`CProgram.load({ canvas })`) and the loader answers the program's OpenGL
   calls with that canvas's WebGL 2: 60 calls of OpenGL ES 3, enough for shaders,

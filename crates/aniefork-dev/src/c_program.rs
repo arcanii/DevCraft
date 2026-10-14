@@ -37,6 +37,7 @@ pub const LOADER: &str = r#"// GridCraft's loader for a C project's program. Gri
 //     files: { "data.bin": bytes },          // optional: files the program can open
 //     args: ["program", "-flag"],            // optional: what main() is handed
 //     print: (line) => console.log(line),    // optional: where what it prints goes
+//     canvas,                                // optional: a canvas it draws on with OpenGL ES
 //   });
 //   program.run();                           // a program with a main: runs it to its end
 //   program.exports.step();                  // or call the functions it exports
@@ -334,11 +335,24 @@ const CProgram = (() => {
         if (id) made[kind][id] = null;
       }
     };
-    /** The dots of a picture handed over as bytes: so many bytes a dot. */
-    const glDots = (at, width, height, format, type) => {
-      if (!at || type !== 0x1401) return null;
-      const each = { 0x1908: 4, 0x1907: 3, 0x1909: 1 }[format] || 4;
-      return new Uint8Array(memory.buffer, at, width * height * each);
+    /** Where each row of a picture begins, as the program said with glPixelStorei: a multiple of so many bytes. */
+    const glAlign = { unpack: 4, pack: 4 };
+    /** How many bytes a picture of so many dots takes: so many a dot, each row but the last made up to the alignment. */
+    const glBytes = (width, height, format, align) => {
+      const each = { 0x1908: 4, 0x1907: 3, 0x190a: 2, 0x1909: 1, 0x1906: 1 }[format] || 4;
+      const row = width * each;
+      return width > 0 && height > 0 ? Math.ceil(row / align) * align * (height - 1) + row : 0;
+    };
+    /** The dots of a picture handed over as bytes. */
+    const glDots = (at, width, height, format, type) =>
+      at && type === 0x1401 ? new Uint8Array(memory.buffer, at, glBytes(width, height, format, glAlign.unpack)) : null;
+    /** The number OpenGL names a thing of the page's by (a buffer, a texture), or 0. */
+    const glNumber = (object) => {
+      for (const kind of Object.keys(made)) {
+        const id = made[kind].indexOf(object);
+        if (id > 0) return id;
+      }
+      return 0;
     };
     const graphics = drawing && {
       glViewport: (x, y, width, height) => drawing.viewport(x, y, width, height),
@@ -353,7 +367,31 @@ const CProgram = (() => {
       glCullFace: (mode) => drawing.cullFace(mode),
       glFrontFace: (mode) => drawing.frontFace(mode),
       glBlendFunc: (from, to) => drawing.blendFunc(from, to),
-      glPixelStorei: (name, value) => drawing.pixelStorei(name, value),
+      glBlendFuncSeparate: (from, to, fromAlpha, toAlpha) => drawing.blendFuncSeparate(from, to, fromAlpha, toAlpha),
+      glBlendEquation: (how) => drawing.blendEquation(how),
+      glDepthRangef: (near, far) => drawing.depthRange(near, far),
+      glColorMask: (red, green, blue, alpha) => drawing.colorMask(!!red, !!green, !!blue, !!alpha),
+      glPolygonOffset: (factor, units) => drawing.polygonOffset(factor, units),
+      glLineWidth: (width) => drawing.lineWidth(width),
+      glStencilFunc: (how, reference, mask) => drawing.stencilFunc(how, reference, mask),
+      glStencilOp: (failed, depthFailed, passed) => drawing.stencilOp(failed, depthFailed, passed),
+      glStencilMask: (mask) => drawing.stencilMask(mask),
+      glClearStencil: (value) => drawing.clearStencil(value),
+      glPixelStorei(name, value) {
+        if (name === 0x0cf5) glAlign.unpack = value;
+        if (name === 0x0d05) glAlign.pack = value;
+        drawing.pixelStorei(name, value);
+      },
+      glReadPixels(x, y, width, height, format, type, at) {
+        if (at && type === 0x1401) drawing.readPixels(x, y, width, height, format, type, new Uint8Array(memory.buffer, at, glBytes(width, height, format, glAlign.pack)));
+      },
+      glGetIntegerv(name, at) {
+        const value = drawing.getParameter(name);
+        const values = value && typeof value === "object" ? ("length" in value ? Array.from(value, Number) : [glNumber(value)]) : [Number(value) || 0];
+        values.forEach((each, i) => view().setInt32(at + i * 4, each | 0, true));
+      },
+      glFinish: () => drawing.finish(),
+      glFlush: () => drawing.flush(),
       glGetError: () => drawing.getError(),
 
       glCreateShader: (type) => keep("shader", drawing.createShader(type)),
@@ -409,6 +447,8 @@ const CProgram = (() => {
       glUniform4f: (place, a, b, c, d) => drawing.uniform4f(made.place[place] || null, a, b, c, d),
       glUniform3fv: (place, count, at) => drawing.uniform3fv(made.place[place] || null, glFloats(at, count * 3)),
       glUniform4fv: (place, count, at) => drawing.uniform4fv(made.place[place] || null, glFloats(at, count * 4)),
+      glUniform1fv: (place, count, at) => drawing.uniform1fv(made.place[place] || null, glFloats(at, count)),
+      glUniform2fv: (place, count, at) => drawing.uniform2fv(made.place[place] || null, glFloats(at, count * 2)),
       glUniformMatrix3fv: (place, count, turned, at) => drawing.uniformMatrix3fv(made.place[place] || null, !!turned, glFloats(at, count * 9)),
       glUniformMatrix4fv: (place, count, turned, at) => drawing.uniformMatrix4fv(made.place[place] || null, !!turned, glFloats(at, count * 16)),
 
@@ -426,6 +466,7 @@ const CProgram = (() => {
       glEnableVertexAttribArray: (index) => drawing.enableVertexAttribArray(index),
       glDisableVertexAttribArray: (index) => drawing.disableVertexAttribArray(index),
       glVertexAttribPointer: (index, size, type, normal, stride, offset) => drawing.vertexAttribPointer(index, size, type, !!normal, stride, offset),
+      glVertexAttrib4f: (index, x, y, z, w) => drawing.vertexAttrib4f(index, x, y, z, w),
       glDrawArrays: (mode, first, count) => drawing.drawArrays(mode, first, count),
       glDrawElements: (mode, count, type, offset) => drawing.drawElements(mode, count, type, offset),
 
@@ -439,6 +480,7 @@ const CProgram = (() => {
         if (dots) drawing.texSubImage2D(target, level, x, y, width, height, format, type, dots);
       },
       glTexParameteri: (target, name, value) => drawing.texParameteri(target, name, value),
+      glTexParameterf: (target, name, value) => drawing.texParameterf(target, name, value),
       glGenerateMipmap: (target) => drawing.generateMipmap(target),
       glDeleteTextures: glGone("texture", (held) => drawing.deleteTexture(held)),
     };

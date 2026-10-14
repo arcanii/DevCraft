@@ -201,20 +201,50 @@ typedef long GLsizeiptr;
 #define GL_TRIANGLE_STRIP 0x0005
 #define GL_TRIANGLE_FAN 0x0006
 
+#define GL_NEVER 0x0200
 #define GL_LESS 0x0201
+#define GL_EQUAL 0x0202
 #define GL_LEQUAL 0x0203
+#define GL_GREATER 0x0204
+#define GL_NOTEQUAL 0x0205
+#define GL_GEQUAL 0x0206
 #define GL_ALWAYS 0x0207
+#define GL_SRC_COLOR 0x0300
+#define GL_ONE_MINUS_SRC_COLOR 0x0301
 #define GL_SRC_ALPHA 0x0302
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_DST_ALPHA 0x0304
+#define GL_ONE_MINUS_DST_ALPHA 0x0305
+#define GL_DST_COLOR 0x0306
+#define GL_ONE_MINUS_DST_COLOR 0x0307
+#define GL_FUNC_ADD 0x8006
+#define GL_MIN 0x8007
+#define GL_MAX 0x8008
+#define GL_FUNC_SUBTRACT 0x800A
+#define GL_FUNC_REVERSE_SUBTRACT 0x800B
 #define GL_FRONT 0x0404
 #define GL_BACK 0x0405
+#define GL_FRONT_AND_BACK 0x0408
 #define GL_CW 0x0900
 #define GL_CCW 0x0901
 #define GL_CULL_FACE 0x0B44
 #define GL_DEPTH_TEST 0x0B71
+#define GL_STENCIL_TEST 0x0B90
+#define GL_VIEWPORT 0x0BA2
 #define GL_BLEND 0x0BE2
 #define GL_SCISSOR_TEST 0x0C11
 #define GL_UNPACK_ALIGNMENT 0x0CF5
+#define GL_PACK_ALIGNMENT 0x0D05
+#define GL_MAX_TEXTURE_SIZE 0x0D33
+#define GL_POLYGON_OFFSET_FILL 0x8037
+
+#define GL_KEEP 0x1E00
+#define GL_REPLACE 0x1E01
+#define GL_INCR 0x1E02
+#define GL_DECR 0x1E03
+#define GL_INVERT 0x150A
+#define GL_INCR_WRAP 0x8507
+#define GL_DECR_WRAP 0x8508
 
 #define GL_BYTE 0x1400
 #define GL_UNSIGNED_BYTE 0x1401
@@ -224,9 +254,11 @@ typedef long GLsizeiptr;
 #define GL_UNSIGNED_INT 0x1405
 #define GL_FLOAT 0x1406
 
+#define GL_ALPHA 0x1906
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
 #define GL_LUMINANCE 0x1909
+#define GL_LUMINANCE_ALPHA 0x190A
 #define GL_RGB8 0x8051
 #define GL_RGBA8 0x8058
 
@@ -234,6 +266,8 @@ typedef long GLsizeiptr;
 #define GL_NEAREST 0x2600
 #define GL_LINEAR 0x2601
 #define GL_NEAREST_MIPMAP_NEAREST 0x2700
+#define GL_LINEAR_MIPMAP_NEAREST 0x2701
+#define GL_NEAREST_MIPMAP_LINEAR 0x2702
 #define GL_LINEAR_MIPMAP_LINEAR 0x2703
 #define GL_TEXTURE_MAG_FILTER 0x2800
 #define GL_TEXTURE_MIN_FILTER 0x2801
@@ -241,6 +275,7 @@ typedef long GLsizeiptr;
 #define GL_TEXTURE_WRAP_T 0x2803
 #define GL_REPEAT 0x2901
 #define GL_CLAMP_TO_EDGE 0x812F
+#define GL_MIRRORED_REPEAT 0x8370
 #define GL_TEXTURE0 0x84C0
 
 #define GL_ARRAY_BUFFER 0x8892
@@ -271,7 +306,22 @@ GRIDCRAFT_GL(glDepthMask) void glDepthMask(GLboolean flag);
 GRIDCRAFT_GL(glCullFace) void glCullFace(GLenum mode);
 GRIDCRAFT_GL(glFrontFace) void glFrontFace(GLenum mode);
 GRIDCRAFT_GL(glBlendFunc) void glBlendFunc(GLenum sfactor, GLenum dfactor);
+GRIDCRAFT_GL(glBlendFuncSeparate) void glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
+GRIDCRAFT_GL(glBlendEquation) void glBlendEquation(GLenum mode);
+GRIDCRAFT_GL(glDepthRangef) void glDepthRangef(GLfloat n, GLfloat f);
+GRIDCRAFT_GL(glColorMask) void glColorMask(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
+GRIDCRAFT_GL(glPolygonOffset) void glPolygonOffset(GLfloat factor, GLfloat units);
+GRIDCRAFT_GL(glLineWidth) void glLineWidth(GLfloat width);
+GRIDCRAFT_GL(glStencilFunc) void glStencilFunc(GLenum func, GLint ref, GLuint mask);
+GRIDCRAFT_GL(glStencilOp) void glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
+GRIDCRAFT_GL(glStencilMask) void glStencilMask(GLuint mask);
+GRIDCRAFT_GL(glClearStencil) void glClearStencil(GLint s);
 GRIDCRAFT_GL(glPixelStorei) void glPixelStorei(GLenum pname, GLint param);
+/* The picture read back: red, green, blue and alpha, a byte each. */
+GRIDCRAFT_GL(glReadPixels) void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);
+GRIDCRAFT_GL(glGetIntegerv) void glGetIntegerv(GLenum pname, GLint *data);
+GRIDCRAFT_GL(glFinish) void glFinish(void);
+GRIDCRAFT_GL(glFlush) void glFlush(void);
 GRIDCRAFT_GL(glGetError) GLenum glGetError(void);
 
 /* Shaders, and the programs made of them. */
@@ -300,6 +350,8 @@ GRIDCRAFT_GL(glUniform3f) void glUniform3f(GLint location, GLfloat v0, GLfloat v
 GRIDCRAFT_GL(glUniform4f) void glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
 GRIDCRAFT_GL(glUniform3fv) void glUniform3fv(GLint location, GLsizei count, const GLfloat *value);
 GRIDCRAFT_GL(glUniform4fv) void glUniform4fv(GLint location, GLsizei count, const GLfloat *value);
+GRIDCRAFT_GL(glUniform1fv) void glUniform1fv(GLint location, GLsizei count, const GLfloat *value);
+GRIDCRAFT_GL(glUniform2fv) void glUniform2fv(GLint location, GLsizei count, const GLfloat *value);
 GRIDCRAFT_GL(glUniformMatrix3fv) void glUniformMatrix3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 GRIDCRAFT_GL(glUniformMatrix4fv) void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 
@@ -315,6 +367,7 @@ GRIDCRAFT_GL(glDeleteVertexArrays) void glDeleteVertexArrays(GLsizei n, const GL
 GRIDCRAFT_GL(glEnableVertexAttribArray) void glEnableVertexAttribArray(GLuint index);
 GRIDCRAFT_GL(glDisableVertexAttribArray) void glDisableVertexAttribArray(GLuint index);
 GRIDCRAFT_GL(glVertexAttribPointer) void glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);
+GRIDCRAFT_GL(glVertexAttrib4f) void glVertexAttrib4f(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
 GRIDCRAFT_GL(glDrawArrays) void glDrawArrays(GLenum mode, GLint first, GLsizei count);
 GRIDCRAFT_GL(glDrawElements) void glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices);
 
@@ -325,6 +378,7 @@ GRIDCRAFT_GL(glActiveTexture) void glActiveTexture(GLenum texture);
 GRIDCRAFT_GL(glTexImage2D) void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);
 GRIDCRAFT_GL(glTexSubImage2D) void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
 GRIDCRAFT_GL(glTexParameteri) void glTexParameteri(GLenum target, GLenum pname, GLint param);
+GRIDCRAFT_GL(glTexParameterf) void glTexParameterf(GLenum target, GLenum pname, GLfloat param);
 GRIDCRAFT_GL(glGenerateMipmap) void glGenerateMipmap(GLenum target);
 GRIDCRAFT_GL(glDeleteTextures) void glDeleteTextures(GLsizei n, const GLuint *textures);
 
@@ -1259,6 +1313,36 @@ mod host {
             t.write("projects/own/project.toml", &manifest.replace("\n[c]\n", "\n[c]\ninclude = [\"src\"]\n"));
             trust(&at, "own");
             build(&at, "own", &zig).unwrap();
+        }
+
+        #[test]
+        fn every_call_the_kits_header_declares_is_one_a_program_asks_for_by_its_own_name() {
+            let Some(zig) = zig() else { return };
+            let t = TempDir::new("c-every-call");
+            let at = places(&t);
+            starter::create_in(&at.projects, &kit::C, "Every", None).unwrap();
+            let declared: Vec<&str> = GL_HEADER.lines().filter_map(|line| line.strip_prefix("GRIDCRAFT_GL(")?.split(')').next()).collect();
+            // What a game of the nineties draws with is there as well: the depth range, reading the picture back.
+            assert!(declared.len() > 70 && declared.contains(&"glDepthRangef") && declared.contains(&"glReadPixels"), "{}", declared.len());
+            // A program that holds each of them, and reads them where the compiler can't see, so
+            // that none is left out and each is asked for.
+            let mut source = String::from("#include <GLES3/gl3.h>\nstatic const void *const calls[] = {\n");
+            for name in &declared {
+                source.push_str(&format!("    (const void *) {name},\n"));
+            }
+            source.push_str(
+                "};\nint main(void) {\n    const void *const *volatile at = calls;\n    unsigned held = 0;\n    \
+                 for (unsigned i = 0; i < sizeof calls / sizeof calls[0]; i++)\n        held += at[i] != 0;\n    return held == 0;\n}\n",
+            );
+            t.write("projects/every/src/main.c", &source);
+            trust(&at, "every");
+            let built = build(&at, "every", &zig).unwrap();
+            // Each is asked for by its name, exactly: a name in a WebAssembly program is its length, then its letters.
+            let program = fs::read(&built.program).unwrap();
+            for name in &declared {
+                let asked: Vec<u8> = std::iter::once(name.len() as u8).chain(name.bytes()).collect();
+                assert!(program.windows(asked.len()).any(|part| part == asked.as_slice()), "{name} is declared and not asked for");
+            }
         }
 
         #[test]
