@@ -961,8 +961,8 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
     told
 }
 
-/// Said of a network that is turned on or off, while this GridCraft carries nothing yet.
-pub(super) const NETWORK_NOT_YET: &str = "This GridCraft keeps your decision and carries nothing yet: sending and receiving come in a later version.";
+/// What a network that is on does, said under it.
+pub(super) const NETWORK_CARRIED: &str = "While it is on, GridCraft carries its program's packets to these addresses and takes in what comes back from them. A packet to anywhere else is not sent, and the Developer console says so.";
 const NETWORK_IS_ON: &str = "Send and receive over the network, through GridCraft, to the addresses it names. You turned this on";
 const NETWORK_READS: &str = "It may see what is in your open workbooks: with the network on, it could send that to these addresses.";
 const NETWORK_LOCAL: &str = "One of these is on your own machine or network: it could reach what is behind your router.";
@@ -989,7 +989,7 @@ fn network_says(project: &Json, status: &str) -> Json {
         "state": if on { "On, for these addresses." } else { "Off. Trusting it does not turn this on: you do, here." },
         "warnings": network_warnings(project),
         "canTurnOn": status == "trusted" && !on,
-        "notYet": NETWORK_NOT_YET,
+        "carried": NETWORK_CARRIED,
     })
 }
 
@@ -1043,7 +1043,7 @@ pub(super) fn set_network(app: &SheetApp, id: &str, on: bool) -> Result<String, 
         return Err(format!("{} changed while you were deciding: look at it again.", found.name()));
     }
     store.set_network(&again, true)?;
-    Ok(format!("{}'s network is on, for the addresses it names. {NETWORK_NOT_YET}", again.name()))
+    Ok(format!("{}'s network is on: GridCraft carries its program's packets to the addresses it names.", again.name()))
 }
 
 /// One project: what it is for, where it stands, what it asks, what is in it, and what it says

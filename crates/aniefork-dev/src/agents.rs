@@ -3006,7 +3006,7 @@ Without the line it is a PythonCraft project (kit = "pythoncraft"), which is wha
 here: a panel and Python scripts. A project of the C Development Kit (kit = "c") holds C sources and a
 panel; it has no scripts, and may ask for read, write, files and network. For network it
 names where it would reach, [network] allow = ["host:port"], and nothing wider (no patterns):
-GridCraft is to carry its program's packets to those addresses and no others, and only once
+GridCraft carries its program's packets to those addresses and no others, and only once
 the person has turned that on for the project, which is apart from trusting it and which you
 can't do. Its page stays shut in either way. Its project.toml has a
 recipe, [c], that says what is built: sources = ["src"] (C files, or folders of them), and
@@ -3065,6 +3065,15 @@ kit hands it, or <GL/gl.h> (and <GL/glu.h>) for OpenGL 1 as games of the ninetie
 shapes a corner at a time, matrices, textures, blending, the alpha test; no lighting, fog or
 display lists. GridCraft supplies both headers when it builds, and builds its own OpenGL 1
 into a program that includes it. Drawing reaches nothing but that canvas.
+
+A program may send and take in packets (UDP) with <gridcraft/net.h>, when its project names
+where it would reach ([network] allow) and the person has turned its network on:
+net_send("host:port", data, length) sends one, net_receive(from, from_room, data, room) takes
+the next that came (-1: none), net_status() says whether it is on (1), off (-1) or not known
+yet (0). None of them waits: call net_receive once a frame. GridCraft sends only to the
+addresses the project names, or back to whoever wrote from one of those hosts, and takes in
+only from the hosts it sent to; a packet is at most 4096 bytes. program.network() tells the
+page the same as net_status.
 
 The typings follow, with every command by id."#;
 

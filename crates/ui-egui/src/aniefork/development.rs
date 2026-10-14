@@ -1175,7 +1175,7 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
                 *action = Some(Act::SetNetwork { project, on: true });
             }
         });
-        ui.label(small(said(network, "notYet")));
+        ui.label(small(said(network, "carried")));
     }
     // What is in it.
     ui.add_space(4.0);
@@ -3920,7 +3920,7 @@ mod tests {
             )
         );
         assert_eq!(said["warnings"].as_array().map(Vec::len), Some(2), "it may read the workbook, and one address is the person's own");
-        assert_eq!(said["notYet"], kits::NETWORK_NOT_YET);
+        assert_eq!(said["carried"], kits::NETWORK_CARRIED);
         // Not trusted: it stays off, and no question is put.
         assert!(turn(&mut h, &mut state, &mut open, true, false).unwrap_err().contains("not trusted as it is now"));
         assert!(asked.questions().is_empty());
@@ -3945,10 +3945,10 @@ mod tests {
             assert!(question.contains(part), "{part} is missing from\n{question}");
         }
         assert_eq!(part(&mut h)["on"], json!(false));
-        // Yes: it is on, for those addresses, and the part says nothing is carried yet.
+        // Yes: it is on, for those addresses, and GridCraft carries its packets there.
         asked.says(true);
         let turned = turn(&mut h, &mut state, &mut open, true, false).unwrap();
-        assert!(turned.starts_with("Net's network is on") && turned.contains("carries nothing yet"), "{turned}");
+        assert!(turned.starts_with("Net's network is on") && turned.contains("carries its program's packets"), "{turned}");
         assert_eq!((&part(&mut h)["on"], &part(&mut h)["canTurnOn"]), (&json!(true), &json!(false)));
         // What it was allowed says so too, where it said "off until you turn it on".
         let allowed = |h: &mut Harness| {

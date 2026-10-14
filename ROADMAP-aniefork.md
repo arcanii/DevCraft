@@ -792,6 +792,14 @@ included.
 
 Newest first.
 
+- **2026-10-14 (A network for a C program, stage N2):** On the owner's word ("Then on to
+  networking"). A C program sends and takes in packets (`<gridcraft/net.h>`: `net_send`,
+  `net_receive`, `net_status`); the loader swaps them with GridCraft once a frame; the bridge
+  carries them (`net.rs`) only while the project is trusted as it is and the person has its
+  network on, only to the addresses it names or back to who wrote from them, and takes in only
+  from the hosts it sent to; a name that turns out to stand for the person's own network is not
+  sent to; so much a second. Refusals are said in the Developer console. Seen in the isolated
+  copy with an echo server on this computer. No hook in an upstream file changed.
 - **2026-10-14 (OpenGL 1, the kit's own):** On the owner's word ("the kit should offer OpenGL
   itself as a regular devkit feature"). `<GL/gl.h>` and `<GL/glu.h>`, and the C that makes
   OpenGL 1 of the kit's OpenGL ES 3 (`gl1.rs`), built into a program whose sources include it,

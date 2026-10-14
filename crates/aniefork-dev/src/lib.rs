@@ -48,6 +48,7 @@ pub mod kit;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod kitpack;
 pub mod manifest;
+pub mod net;
 pub mod paths;
 pub mod project;
 pub mod python;

@@ -3244,6 +3244,63 @@ OpenGL ES 3 or with OpenGL 1. GLQuake 0.2.0 is in the owner's real projects fold
 word, untrusted until they trust it; building it there needs a GridCraft built with the kit's
 OpenGL 1.
 
+### A network for a C program, stage N2: GridCraft carries its packets (built 2026-10-14)
+
+**What the owner decided.** "Then on to networking", after OpenGL; N1 had settled who turns it
+on (the person, by hand, apart from trusting) and that a project that reads the workbook may
+have one.
+
+**A program sends and takes in packets** (UDP), with three calls the kit supplies for every
+build, `<gridcraft/net.h>` (`net::HEADER`): `net_send("host:port", data, length)`,
+`net_receive(from, from_room, data, room)` and `net_status()`. None of them waits: a game asks
+once a frame.
+
+- **The loader** keeps what the program sends and what has come, and swaps them with GridCraft
+  in one small request to `net`, GridCraft's own address beside the program: at most once a
+  frame while there is something to send, every two frames while there is not, and every two
+  seconds while the network is off, to see whether it was turned on. A program that never calls
+  them makes no such request. The page reaches nothing more: the packets go to GridCraft, as the
+  page's other calls do. `program.network()` tells the page what `net_status` tells the program.
+- **The bridge** answers `net` only from the project's own page, and only bytes, and only while
+  the project is trusted as it is on disk and the person has its network on for the addresses it
+  names now. **That is read again at most every two seconds** (`NET_RECHECK`), not on every
+  request as for everything else a bridge serves: an exchange comes many times a second, and
+  fingerprinting a project like GLQuake's (18 MB) that often would cost more than the game. A
+  change to the project, or its network turned off, stops its packets within two seconds.
+- **The carrier** (`net.rs`), one a project, opened while its network is on:
+  - sends only to the addresses the project names, or back to an address that wrote to it;
+  - takes in only from the hosts it has sent to, and drops the rest;
+  - looks at the number a name turns out to stand for: a name the person was told is out on the
+    internet is not sent to when it stands for their own machine or network;
+  - sends at most 4096 bytes a packet, and 400 packets or 512 KB a second;
+  - says each refusal once, in the Developer console, under the project's name, and says there
+    when it starts and stops carrying.
+- **The windows say what is so now**: "While it is on, GridCraft carries its program's packets
+  to these addresses and takes in what comes back from them". Agents are told the three calls.
+
+**Checked.** Packets as they travel between the loader and the bridge. Which numbers are the
+person's own machine or network. With sockets on this computer: a packet goes where the project
+names and its answer comes back; nothing goes anywhere else, and nothing comes in from a host it
+did not send to; the host it sent to may write from another port and be answered there, as a
+game's server does; a name that stands for the person's own network is not sent to; so much a
+second and no more. Through the bridge, over HTTP: nothing while the project names no address,
+nothing while its network is off, carried when it is on, refused elsewhere and said in the
+console, only from the page's own address, only by POST, only packets; nothing again when it is
+turned off, and when the project changes. The loader, in Node with a stand-in for GridCraft:
+nothing without GridCraft's address; "not known" until GridCraft answers, then on; a packet sent
+and its answer collected with who sent it; one too long refused; off when GridCraft says no.
+
+**Seen.** In the isolated copy, built by the kit (`net-echo`, 20 KB) and docked, its network turned on in that copy's own trust file, with an echo server on this computer at the address it names: its program sent a packet a second, the server got each from one socket, and the panel showed each answer and who sent it (25 sent, 25 received). The Developer console said that GridCraft carries its packets to that address, and that a packet to an address it does not name was not sent. A file of the project changed under it: within the two seconds its packets stopped (one more got out), and the console said why.
+
+**Known limits, for a later stage.** Each exchange is a connection of its own (the bridge
+answers one request a connection): some 30 to 60 a second while a program uses the network,
+which the system can bear; a connection that carries many is the better way. An address on the
+internet is sent to from a socket open on every address of the machine, and Windows may ask the
+person, with its own question, whether GridCraft may use the network: not seen here, where only
+this computer's own address was used. IPv6 is carried and was not tried. **Quake over the
+network (N3) is not done**: its own network part, written on these calls, and two GridCrafts
+playing each other.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

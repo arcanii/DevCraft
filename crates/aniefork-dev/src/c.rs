@@ -54,6 +54,10 @@
 //! searched after the project's own folders, so that a project's own header of the same name
 //! wins.
 //!
+//! **A program may send and take in packets** (`<gridcraft/net.h>`, [`crate::net::HEADER`]),
+//! when its project names where it would reach and the person has turned its network on:
+//! GridCraft carries them, there and nowhere else ([`crate::net`]).
+//!
 //! Nothing here runs what was built. The project's panel does: the bridge serves, beside the
 //! page, the program kept for the project as it is trusted then ([`program_bytes`]) and the
 //! loader that starts it ([`crate::c_program`]).
@@ -986,13 +990,15 @@ mod host {
     ) -> Result<(), String> {
         let real_cache = fs::canonicalize(cache).map_err(|e| format!("The build's folder can't be read ({e})."))?;
         // The kit's own headers, written for this build: what a program asks of the loader by
-        // name (OpenGL ES 3), and the kit's OpenGL 1 made of it, with the C that does it.
+        // name (OpenGL ES 3, the network), and the kit's OpenGL 1 made of it, with the C that does it.
         let kit_headers = work.join(KIT_HEADERS);
         let written = fs::create_dir_all(kit_headers.join("GLES3"))
             .and_then(|()| fs::write(kit_headers.join("GLES3").join("gl3.h"), GL_HEADER))
             .and_then(|()| fs::create_dir_all(kit_headers.join("GL")))
             .and_then(|()| fs::write(kit_headers.join("GL").join("gl.h"), crate::gl1::HEADER))
             .and_then(|()| fs::write(kit_headers.join("GL").join("glu.h"), crate::gl1::GLU_HEADER))
+            .and_then(|()| fs::create_dir_all(kit_headers.join("gridcraft")))
+            .and_then(|()| fs::write(kit_headers.join("gridcraft").join("net.h"), crate::net::HEADER))
             .and_then(|()| fs::write(work.join(GL1_SOURCE), crate::gl1::SOURCE));
         written.map_err(|e| format!("{name} was not built: the build's folder can't be written ({e})."))?;
         let real_kit = fs::canonicalize(&kit_headers).map_err(|e| format!("The build's folder can't be read ({e})."))?;

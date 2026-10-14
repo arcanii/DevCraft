@@ -6,9 +6,12 @@
 //! a system a C program asks for (a clock, a place to print, random numbers, its arguments, and
 //! files kept in memory), and, when the page names a canvas, a part of OpenGL ES 3 to draw on
 //! that canvas with (the owner, 2026-10-14; the header for it is [`crate::c::GL_HEADER`]). And
-//! nothing else: no way to the spreadsheet, to the network or to the computer's files. What the program is to do with the workbook, the project's page does for
-//! it through `spreadsheet`, where every call is checked against what the project was granted.
-//! That is what holds a C project to what it asked for.
+//! nothing else: no way to the spreadsheet or to the computer's files, and none to the network
+//! but GridCraft's, which carries the packets of a program whose project names where it would
+//! reach, once the person has turned its network on ([`crate::net`]). What the program is to do
+//! with the workbook, the project's page does for it through `spreadsheet`, where every call is
+//! checked against what the project was granted. That is what holds a C project to what it
+//! asked for.
 //!
 //! This is JavaScript, as text inside Rust source: the fork's fourth exception to upstream's
 //! "Rust only" rule, after the panel's `spreadsheet.js`, the Svelte showcase and the Development
@@ -29,9 +32,11 @@ pub const LOADER: &str = r#"// GridCraft's loader for a C project's program. Gri
 //   and files that are kept in memory: the ones the page hands it, and what it writes itself
 //   (gone when the page is closed).
 //
-// It gives it no way to the spreadsheet, to the network or to the computer's files. What the
-// program is to do with the workbook, the page does for it through `spreadsheet`, where every
-// call is checked against what the project was granted.
+// It gives it no way to the spreadsheet or to the computer's files, and none to the network but
+// GridCraft's: for a project that names where it would reach, once the person has turned its
+// network on, GridCraft carries its packets there and takes in the answers (<gridcraft/net.h>).
+// What the program is to do with the workbook, the page does for it through `spreadsheet`,
+// where every call is checked against what the project was granted.
 //
 //   const program = await CProgram.load({
 //     files: { "data.bin": bytes },          // optional: files the program can open
@@ -68,9 +73,10 @@ const CProgram = (() => {
   /**
    * Starts a program from its bytes. `files` are the files it can open, by name; `args` what its
    * main is handed; `now()` the clock, in milliseconds; `print(line)` is handed each line it prints;
-   * `canvas` is where it draws, when it draws with OpenGL ES.
+   * `canvas` is where it draws, when it draws with OpenGL ES; `network` is GridCraft's address
+   * that carries its packets (load names it: the program's own address, with `net` for its name).
    */
-  function start(wasm, { files = {}, args = ["program"], now = () => performance.now(), print = (line) => console.log(line), canvas = null } = {}) {
+  function start(wasm, { files = {}, args = ["program"], now = () => performance.now(), print = (line) => console.log(line), canvas = null, network = null } = {}) {
     const kept = new Map();
     for (const [name, data] of Object.entries(files)) {
       const held = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -485,6 +491,103 @@ const CProgram = (() => {
       glDeleteTextures: glGone("texture", (held) => drawing.deleteTexture(held)),
     };
 
+    // The network, for a program whose project names where it would reach, once the person has
+    // turned it on (<gridcraft/net.h>). GridCraft carries its packets: they go to `network`,
+    // GridCraft's own address beside the program, as the page's other calls go to GridCraft,
+    // and GridCraft decides where each may go. The page reaches nothing more for it.
+    const NET_PACKET = 4096, NET_WAITING = 256;
+    const outbox = [];
+    const inbox = [];
+    let netOn = 0; // 1 on, -1 off, 0 not known yet
+    let pumping = false;
+    /** Packets as GridCraft takes them: each its address's length (two bytes), the address, its data's length, the data. */
+    const netBytes = (packets) => {
+      const parts = [];
+      let size = 0;
+      for (const [to, data] of packets) {
+        const address = encoder.encode(to);
+        const head = new Uint8Array(4 + address.length);
+        head[0] = address.length >> 8;
+        head[1] = address.length & 255;
+        head.set(address, 2);
+        head[2 + address.length] = data.length >> 8;
+        head[3 + address.length] = data.length & 255;
+        parts.push(head, data);
+        size += head.length + data.length;
+      }
+      const out = new Uint8Array(size);
+      let at = 0;
+      for (const part of parts) {
+        out.set(part, at);
+        at += part.length;
+      }
+      return out;
+    };
+    const netPackets = (got) => {
+      const found = [];
+      let at = 0;
+      while (at + 2 <= got.length) {
+        const long = (got[at] << 8) | got[at + 1];
+        const from = decoder.decode(got.subarray(at + 2, at + 2 + long));
+        at += 2 + long;
+        if (at + 2 > got.length) break;
+        const size = (got[at] << 8) | got[at + 1];
+        found.push([from, got.slice(at + 2, at + 2 + size)]);
+        at += 2 + size;
+      }
+      return found;
+    };
+    /**
+     * Hands GridCraft what is waiting to go and takes what has come. While it is on: again as soon
+     * as there is something to send, but not sooner than a frame after the last time, and with
+     * nothing to send, every two frames. While it is off: every two seconds, to see whether it
+     * was turned on.
+     */
+    async function pump() {
+      pumping = true;
+      while (!ended) {
+        const began = Date.now();
+        const going = outbox.splice(0, NET_WAITING);
+        try {
+          const answer = await fetch(network, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: netBytes(going), cache: "no-store" });
+          netOn = answer.ok ? 1 : -1;
+          const came = answer.ok ? netPackets(new Uint8Array(await answer.arrayBuffer())) : [];
+          for (const packet of came) if (inbox.length < NET_WAITING) inbox.push(packet);
+        } catch (error) {
+          netOn = -1;
+        }
+        const pause = netOn < 0 ? 2000 : outbox.length ? 15 : 30;
+        await new Promise((done) => setTimeout(done, Math.max(0, began + pause - Date.now())));
+      }
+      pumping = false;
+    }
+    const netStart = () => {
+      if (network && !pumping && !ended) pump();
+    };
+    const net = {
+      net_status() {
+        netStart();
+        return network ? netOn : -1;
+      },
+      net_send(addressAt, dataAt, length) {
+        netStart();
+        if (!network || netOn < 0) return -1;
+        if (length < 0 || length > NET_PACKET || outbox.length >= NET_WAITING) return -2;
+        outbox.push([glText(addressAt), bytes().slice(dataAt, dataAt + length)]);
+        return 0;
+      },
+      net_receive(fromAt, fromRoom, dataAt, room) {
+        netStart();
+        const next = inbox.shift();
+        if (!next) return -1;
+        const [from, data] = next;
+        if (data.length > room) return -2;
+        bytes().set(data, dataAt);
+        glSaid(from, fromRoom, 0, fromAt);
+        return data.length;
+      },
+    };
+
     const module = new WebAssembly.Module(wasm);
     // Anything else the program was built to ask for is answered "there is no such thing".
     const given = {};
@@ -495,6 +598,8 @@ const CProgram = (() => {
         (asked.module === "wasi_snapshot_preview1" && system[asked.name]) ||
         // A drawing call, when there is a canvas and the call is one that is known; else nothing is drawn.
         (asked.module === "gl" && ((graphics && graphics[asked.name]) || (() => 0))) ||
+        // The network's three calls, carried by GridCraft.
+        (asked.module === "net" && net[asked.name]) ||
         (() => NOSYS);
     }
     const exports = new WebAssembly.Instance(module, given).exports;
@@ -534,6 +639,8 @@ const CProgram = (() => {
       memory,
       /** Whether the program has a canvas to draw on with OpenGL ES. */
       draws: !!drawing,
+      /** Whether GridCraft carries the program's packets: 1 it does, -1 it does not, 0 not known yet. */
+      network: () => (network ? netOn : -1),
       /** Why the program ended, or null while it can still run. */
       ended: () => ended,
       /** Runs a program that has a main to its end, and gives what it ended with (0: well). Once. */
@@ -584,7 +691,8 @@ const CProgram = (() => {
       const why = (await answer.text()).trim();
       throw new Error(why && why.length <= 300 ? why : `The program could not be loaded (${answer.status}).`);
     }
-    return start(new Uint8Array(await answer.arrayBuffer()), options);
+    // Packets go to GridCraft's own address beside the program.
+    return start(new Uint8Array(await answer.arrayBuffer()), { network: new URL("net", answer.url).href, ...options });
   }
 
   return { load, start };
@@ -607,9 +715,16 @@ mod tests {
         for call in ["clock_time_get", "fd_write", "fd_read", "path_open", "args_get", "random_get", "proc_exit"] {
             assert!(LOADER.contains(&format!("{call}(")), "{call}");
         }
-        // Nothing in it reaches further: it loads the one program, and never names the spreadsheet,
-        // another address, or a way to run text as script.
-        assert_eq!(LOADER.matches("fetch(").count(), 1, "the program, and nothing else");
+        // Nothing in it reaches further: it loads the one program, hands packets to GridCraft's own
+        // address beside it, and never names the spreadsheet, another address, or a way to run text
+        // as script.
+        assert_eq!(LOADER.matches("fetch(").count(), 2, "the program, and GridCraft's address for packets");
+        assert!(LOADER.contains("network: new URL(\"net\", answer.url).href") && LOADER.contains("await fetch(network, {"));
+        // The network's three calls, and nothing of it without GridCraft's address.
+        for call in ["net_status", "net_send", "net_receive"] {
+            assert!(LOADER.contains(&format!("      {call}(")), "{call}");
+        }
+        assert!(LOADER.contains("if (!network || netOn < 0) return -1;"));
         for reach in [
             "spreadsheet.run",
             "spreadsheet.batch",

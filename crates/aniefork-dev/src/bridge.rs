@@ -10,7 +10,8 @@
 //! - its path starts with the project's token;
 //! - **the project is trusted as it is on disk now.** It is read, and the user's decisions with
 //!   it, for every request: a project that was changed or is no longer trusted stops being served
-//!   at once;
+//!   at once. (A C program's packets, which come many times a second, are checked so at most every
+//!   [`NET_RECHECK`]: a change stops them within that.);
 //! - a file is one of the project's own, under its panel folder; a call comes from the project's
 //!   own page (the browser names the page that asks) and is JSON.
 //!
@@ -39,6 +40,11 @@
 //! that runs it ([`crate::c_program`]). The program can reach only what the loader hands it;
 //! what it does with the workbook, the page does for it through `spreadsheet`, checked like any
 //! panel's calls. A project of the first kit keeps its own files of those names.
+//!
+//! **A C program's packets** (`net`): for a project that names where it would reach, and whose
+//! network the person turned on ([`crate::trust`]), the loader hands over what the program sends
+//! and collects what has come, and GridCraft carries it there and nowhere else ([`crate::net`]).
+//! The page itself stays as shut in as any.
 //!
 //! A project that wasn't granted `network` is served with a policy that makes the browser refuse
 //! its requests to anywhere but this bridge. In a browser that policy cannot stop a page from
@@ -78,11 +84,13 @@ pub struct Limits {
     /// How long a panel that asks for events is kept waiting for one before it is told there
     /// were none, and asks again.
     pub hold: Duration,
+    /// How long a project whose program sends packets goes before it is read again ([`NET_RECHECK`]).
+    pub recheck: Duration,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { read: Duration::from_secs(10), answer: Duration::from_secs(30), hold: Duration::from_secs(20) }
+        Limits { read: Duration::from_secs(10), answer: Duration::from_secs(30), hold: Duration::from_secs(20), recheck: NET_RECHECK }
     }
 }
 
@@ -100,6 +108,11 @@ pub const MAX_EVENTS: usize = 256;
 /// The most panels of one project that can be kept waiting for events at once. More are answered
 /// at once and told to ask again in a moment.
 pub const MAX_LISTENERS: usize = 8;
+
+/// How long a project whose program sends packets goes before it is read from disk again, with
+/// the user's decisions: a program exchanges packets many times a second, and reading every file
+/// of a project that often would cost more than the program does.
+pub const NET_RECHECK: Duration = Duration::from_secs(2);
 
 /// Something that happened in GridCraft.
 #[derive(Clone, Debug, PartialEq)]
@@ -565,7 +578,7 @@ mod server {
     use crate::http::{self, Incoming, lock, same};
     use crate::python::{self, PythonHost, RunError};
     use crate::trust::{Status, TrustStore};
-    use crate::{c, c_program, kit, manifest, project, settings};
+    use crate::{c, c_program, kit, manifest, net, project, settings};
 
     /// The most requests answered at once for one project; more are turned away.
     const MAX_CONNECTIONS: usize = 32;
@@ -615,7 +628,19 @@ mod server {
         news: Condvar,
         /// How many panels are being kept waiting for events.
         listening: AtomicUsize,
+        /// The project's network, while its program sends packets.
+        net: Mutex<Netting>,
         shared: Arc<Shared>,
+    }
+
+    /// A project's network, as the bridge carries it.
+    #[derive(Default)]
+    struct Netting {
+        /// When the project was last read to see that it may still have it.
+        checked: Option<std::time::Instant>,
+        /// What carries its packets, while it may; why not, while it may not.
+        carrier: Option<net::Carrier>,
+        off: String,
     }
 
     struct Owner {
@@ -681,6 +706,7 @@ mod server {
                 events: Mutex::default(),
                 news: Condvar::new(),
                 listening: AtomicUsize::new(0),
+                net: Mutex::default(),
                 shared: self.0.shared.clone(),
             });
             let serving = site.clone();
@@ -762,6 +788,8 @@ mod server {
 
     fn halt(site: &Site) {
         site.stop.store(true, Ordering::SeqCst);
+        // Its network closes with it.
+        *lock(&site.net) = Netting::default();
         // Panels waiting for events are answered now, with none.
         site.news.notify_all();
         // The listener is waiting for a connection: give it one, so that it sees it should stop.
@@ -892,6 +920,10 @@ mod server {
             return Reply::missing();
         }
         let Some(rest) = rest else { return Reply::missing() };
+        // A C program's packets: checked apart, as they come many times a second.
+        if rest == "net" {
+            return netted(site, request, host);
+        }
         let calling = rest == "api";
         let (found, granted) = match trusted(&site.places, &site.id) {
             Ok(checked) => checked,
@@ -919,6 +951,67 @@ mod server {
         // stays as shut in as any other, network on or off.
         reply.network = granted.contains(&Permission::Network) && found.manifest.as_ref().is_some_and(|manifest| manifest.network.is_none());
         reply
+    }
+
+    /// Carries a C program's packets: what the loader hands over is sent, and what has come is
+    /// handed back ([`crate::net`]). Only from the project's own page, and only while the project
+    /// is trusted as it is and the person has its network on for the addresses it names, which is
+    /// read again at most every [`NET_RECHECK`]. Whatever is refused is said in the Developer
+    /// console, once.
+    fn netted(site: &Site, request: &Incoming, host: &str) -> Reply {
+        if request.method != "POST" {
+            return Reply { allow: Some("POST"), ..Reply::plain(405, "Method Not Allowed", "Packets are sent with POST.") };
+        }
+        if request.header("origin") != Ok(Some(format!("http://{host}").as_str())) {
+            return Reply::plain(403, "Forbidden", "Only this project's own panel may send packets.");
+        }
+        let kind = request.header("content-type").ok().flatten().and_then(|kind| kind.split(';').next()).map(str::trim);
+        if !kind.is_some_and(|kind| kind.eq_ignore_ascii_case("application/octet-stream")) {
+            return Reply::plain(415, "Unsupported Media Type", "Packets are sent as bytes.");
+        }
+        let outgoing = match net::packets(&request.body) {
+            Ok(outgoing) => outgoing,
+            Err(why) => return Reply::plain(400, "Bad Request", &format!("Those are not packets: {why}.")),
+        };
+        let mut netting = lock(&site.net);
+        if netting.checked.is_none_or(|when| when.elapsed() >= site.shared.limits.recheck) {
+            netting.checked = Some(net::now());
+            match network_of(&site.places, &site.id) {
+                Ok(addresses) => {
+                    if netting.carrier.as_ref().is_none_or(|carrier| carrier.allowed() != addresses.as_slice()) {
+                        let named: Vec<String> = addresses.iter().map(manifest::Address::text).collect();
+                        let text = format!("GridCraft carries this project's packets to {}, and takes in what comes from there.", named.join(", "));
+                        Console::global().push(&site.id, "network", console::Kind::Log, &text);
+                        netting.carrier = Some(net::Carrier::new(addresses));
+                    }
+                }
+                Err(why) => {
+                    if netting.carrier.take().is_some() {
+                        Console::global().push(&site.id, "network", console::Kind::Log, &format!("Its packets are no longer carried: {why}"));
+                    }
+                    netting.off = why;
+                }
+            }
+        }
+        let Netting { carrier, off, .. } = &mut *netting;
+        let Some(carrier) = carrier.as_mut() else { return Reply::plain(403, "Forbidden", off) };
+        let came = carrier.exchange(outgoing, &net::system_lookup);
+        for why in carrier.refusals() {
+            Console::global().push(&site.id, "network", console::Kind::Refused, &why);
+        }
+        Reply::new(200, "OK", "application/octet-stream", net::to_bytes(&came))
+    }
+
+    /// The addresses a project's packets may go to: it is trusted as it is on disk now, and the
+    /// person turned its network on for the addresses it names. Else why not.
+    fn network_of(places: &Places, id: &str) -> Result<Vec<manifest::Address>, String> {
+        let (found, _) = trusted(places, id)?;
+        let named = found.manifest.as_ref().and_then(|manifest| manifest.network.clone()).filter(|list| !list.is_empty());
+        let Some(named) = named else { return Err(format!("{} names no address to reach.", found.name())) };
+        if !TrustStore::load(&places.trust).network_on(&found) {
+            return Err(format!("{}'s network is off. Turn it on in its part of Developer > Development.", found.name()));
+        }
+        Ok(named)
     }
 
     /// Whether the project is one GridCraft builds a program from: its kit builds, and it has a
@@ -1428,7 +1521,7 @@ mod served {
     }
 
     fn quick() -> Limits {
-        Limits { read: Duration::from_millis(300), answer: Duration::from_millis(300), hold: Duration::from_millis(300) }
+        Limits { read: Duration::from_millis(300), answer: Duration::from_millis(300), hold: Duration::from_millis(300), recheck: Duration::ZERO }
     }
 
     #[test]
@@ -1589,6 +1682,10 @@ mod served {
 
     /// A project of the C kit, with a panel and a recipe, trusted and being served.
     fn c_project(tag: &str) -> Served {
+        c_project_with(tag, Limits::default())
+    }
+
+    fn c_project_with(tag: &str, limits: Limits) -> Served {
         let t = TempDir::new(tag);
         t.write(
             "projects/blink/project.toml",
@@ -1600,7 +1697,7 @@ mod served {
         let found = project::load(&places.projects.join("blink"));
         assert!(found.is_sound(), "{:?}", found.problem);
         TrustStore::load(&places.trust).trust(&found, false).unwrap();
-        let bridge = Bridge::new(|| {});
+        let bridge = Bridge::with_limits(|| {}, limits);
         let address = bridge.serve(&places, "blink").unwrap();
         let (port, token) = address.strip_prefix("http://127.0.0.1:").unwrap().split_once('/').unwrap();
         let (port, token) = (port.parse().unwrap(), token.trim_end_matches('/').to_string());
@@ -1631,6 +1728,97 @@ mod served {
         store.set_network(&found, true).unwrap();
         assert!(TrustStore::load(&s.places.trust).network_on(&found));
         assert!(closed(&s), "the page of a project whose network is on is as shut in as any");
+    }
+
+    /// Hands the bridge packets as the loader does, from the page's own address, and gives the
+    /// status and what came back (the packets, or why not).
+    fn exchange(s: &Served, packets: &[crate::net::Packet], origin: &str) -> (u16, Result<Vec<crate::net::Packet>, String>) {
+        let body = crate::net::to_bytes(packets);
+        let host = s.host();
+        let head = format!(
+            "POST /{}/net HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            s.token,
+            body.len()
+        );
+        let mut stream = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        stream.write_all(head.as_bytes()).unwrap();
+        stream.write_all(&body).unwrap();
+        let mut reply = Vec::new();
+        let _ = stream.read_to_end(&mut reply);
+        let split = reply.windows(4).position(|four| four == b"\r\n\r\n").unwrap();
+        let (head, body) = (String::from_utf8_lossy(&reply[..split]).into_owned(), &reply[split + 4..]);
+        let status = head.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        if status == 200 {
+            assert!(head.contains("Content-Type: application/octet-stream") && head.contains("connect-src 'self'"), "{head}");
+            (status, Ok(crate::net::packets(body).unwrap()))
+        } else {
+            (status, Err(String::from_utf8_lossy(body).into_owned()))
+        }
+    }
+
+    #[test]
+    fn a_programs_packets_are_carried_while_its_network_is_on_and_only_where_it_names() {
+        let s = c_project_with("c-packets", Limits { recheck: Duration::ZERO, ..Limits::default() });
+        let page = format!("http://{}", s.host());
+        // A server on this machine that answers each packet turned round.
+        let far = std::net::UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+        far.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let port = far.local_addr().unwrap().port();
+        let to = format!("127.0.0.1:{port}");
+        let ping = vec![(to.clone(), b"ping".to_vec())];
+        // It names no address: nothing is carried.
+        let (status, said) = exchange(&s, &ping, &page);
+        assert!(status == 403 && said.as_ref().unwrap_err().contains("names no address"), "{status} {said:?}");
+        // It names one, and is trusted as it is: its network is still off.
+        s.t.write(
+            "projects/blink/project.toml",
+            &format!("id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"network\"]\n[panel]\nentry = \"panel/index.html\"\n[c]\nsources = [\"src\"]\n[network]\nallow = [\"{to}\"]\n"),
+        );
+        let found = project::load(&s.places.projects.join("blink"));
+        let mut store = TrustStore::load(&s.places.trust);
+        store.trust(&found, false).unwrap();
+        let (status, said) = exchange(&s, &ping, &page);
+        assert!(status == 403 && said.as_ref().unwrap_err().contains("network is off"), "{status} {said:?}");
+        // The person turns it on: the packet goes, and its answer comes back with who sent it.
+        store.set_network(&found, true).unwrap();
+        let (status, came) = exchange(&s, &ping, &page);
+        assert_eq!(status, 200, "{came:?}");
+        let mut buffer = [0u8; 64];
+        let (length, from) = far.recv_from(&mut buffer).unwrap();
+        assert_eq!(&buffer[..length], b"ping");
+        far.send_to(b"gnip", from).unwrap();
+        let mut back = came.unwrap();
+        for _ in 0..200 {
+            if !back.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+            back = exchange(&s, &[], &page).1.unwrap();
+        }
+        assert_eq!(back, vec![(to.clone(), b"gnip".to_vec())]);
+        // Anywhere else is not sent to, and the Developer console says so.
+        let (status, _) = exchange(&s, &[("127.0.0.1:9".to_string(), b"no".to_vec())], &page);
+        assert_eq!(status, 200);
+        assert!(crate::console::Console::global().entries().iter().any(|e| e.project == "blink" && e.text.contains("does not name that address")));
+        // Only the project's own page may send, and only packets.
+        assert_eq!(exchange(&s, &ping, "http://127.0.0.1:1").0, 403);
+        let (status, _, _) = s.send(&format!("GET /{}/net HTTP/1.1\r\nHost: {}\r\nSec-Fetch-Site: same-origin\r\n\r\n", s.token, s.host()));
+        assert_eq!(status, 405);
+        let broken = format!(
+            "POST /{}/net HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nContent-Type: application/octet-stream\r\nContent-Length: 3\r\n\r\n\0\ta",
+            s.token,
+            host = s.host()
+        );
+        assert_eq!(s.send(&broken).0, 400);
+        // Turned off, or the project changed under it: nothing more is carried.
+        store.set_network(&found, false).unwrap();
+        assert_eq!(exchange(&s, &ping, &page).0, 403);
+        store.set_network(&found, true).unwrap();
+        assert_eq!(exchange(&s, &[], &page).0, 200);
+        s.t.write("projects/blink/src/main.c", "int main(void) { return 1; }\n");
+        let (status, said) = exchange(&s, &ping, &page);
+        assert!(status == 403 && said.as_ref().unwrap_err().contains("changed"), "{status} {said:?}");
     }
 
     #[test]
