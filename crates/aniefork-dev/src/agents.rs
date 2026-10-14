@@ -3004,7 +3004,11 @@ Kits. A project is of one development kit, which project.toml names with kit = "
 (development_status lists the kits this GridCraft has, and list_projects says each project's).
 Without the line it is a PythonCraft project (kit = "pythoncraft"), which is what is described
 here: a panel and Python scripts. A project of the C Development Kit (kit = "c") holds C sources and a
-panel; it has no scripts, and may ask for read, write and files only. Its project.toml has a
+panel; it has no scripts, and may ask for read, write, files and network. For network it
+names where it would reach, [network] allow = ["host:port"], and nothing wider (no patterns):
+GridCraft is to carry its program's packets to those addresses and no others, and only once
+the person has turned that on for the project, which is apart from trusting it and which you
+can't do. Its page stays shut in either way. Its project.toml has a
 recipe, [c], that says what is built: sources = ["src"] (C files, or folders of them), and
 optionally include (folders), define (NAME or NAME=value), optimize (size, speed, none),
 entry (main, or none) and setjmp (true when its C uses setjmp and longjmp). GridCraft builds it as one WebAssembly program with the person's

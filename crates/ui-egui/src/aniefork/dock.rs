@@ -86,7 +86,8 @@ pub fn dock(_app: &SheetApp, ctx: &egui::Context, id: &str) -> Result<String, St
     let listed = projects::list();
     let found = listed["projects"].as_array().and_then(|all| all.iter().find(|m| m["id"] == id));
     let name = found.and_then(|m| m["name"].as_str()).unwrap_or(id).to_string();
-    let network = found.and_then(|m| m["granted"].as_array()).is_some_and(|granted| granted.iter().any(|p| p == "network"));
+    // Where the page may go is the page's own `network`: never the kind GridCraft carries.
+    let network = found.is_some_and(|m| m["pageNetwork"] == true);
     let docked = Docked { project: id.to_string(), name: name.clone(), address, network, rect: None, covered: false };
     ctx.data_mut(|d| d.insert_temp(self::id(), docked));
     ctx.request_repaint();

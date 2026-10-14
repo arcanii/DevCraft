@@ -135,6 +135,70 @@ pub struct Manifest {
     pub kit: String,
     /// What of it is built, and how: the C kit's recipe.
     pub c: Option<crate::c::Recipe>,
+    /// The addresses it would reach over the network, through GridCraft (`[network] allow`).
+    /// `None` when it has no such list. Naming them allows nothing: the person turns the
+    /// network on for exactly these, apart from trusting the project ([`crate::trust`]).
+    pub network: Option<Vec<Address>>,
+}
+
+/// The most addresses a project may name to reach.
+pub const MAX_ADDRESSES: usize = 16;
+
+/// One place on the network a project asks to reach: a host, by its name or its number, and
+/// a port. Never a pattern: nothing here names every host, or every port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Address {
+    pub host: String,
+    pub port: u16,
+}
+
+impl Address {
+    /// Reads `host:port`. A host is a name (lowercase letters, digits and hyphens, in parts
+    /// joined by dots) or four numbers. A name whose last part is all digits must be four
+    /// numbers: nothing is left that two readers could take for different hosts.
+    pub fn parse(text: &str) -> Result<Address, String> {
+        let refuse = |why: &str| format!("its network address {:?} {why}", text.chars().take(80).collect::<String>());
+        let (host, port) = text.rsplit_once(':').ok_or_else(|| refuse("is not a host and a port, like example.org:26000"))?;
+        let port = port
+            .parse::<u16>()
+            .ok()
+            .filter(|number| *number != 0 && number.to_string() == port)
+            .ok_or_else(|| refuse("has no port from 1 to 65535"))?;
+        let parts: Vec<&str> = host.split('.').collect();
+        let named = !host.is_empty()
+            && host.len() <= 253
+            && parts.iter().all(|part| {
+                !part.is_empty()
+                    && part.len() <= 63
+                    && !part.starts_with('-')
+                    && !part.ends_with('-')
+                    && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            });
+        if !named {
+            return Err(refuse("does not name a host: lowercase letters, digits, hyphens and dots"));
+        }
+        let numbered = parts.last().is_some_and(|last| last.chars().all(|c| c.is_ascii_digit()));
+        if numbered && host.parse::<std::net::Ipv4Addr>().is_err() {
+            return Err(refuse("ends in a number and is not four numbers, like 192.168.1.20"));
+        }
+        Ok(Address { host: host.to_string(), port })
+    }
+
+    /// As it is written and shown: `host:port`.
+    pub fn text(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+
+    /// Whether it is on the person's own machine or their own network, as far as its name or
+    /// number says: such an address reaches what is behind their router. (A name can still
+    /// turn out to stand for a number that is: whoever carries packets checks that as well.)
+    pub fn is_local(&self) -> bool {
+        if let Ok(number) = self.host.parse::<std::net::Ipv4Addr>() {
+            return number.is_loopback() || number.is_private() || number.is_link_local() || number.is_unspecified() || number.is_broadcast();
+        }
+        let home = [".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa"];
+        self.host == "localhost" || !self.host.contains('.') || home.iter().any(|ending| self.host.ends_with(ending))
+    }
 }
 
 #[derive(Deserialize)]
@@ -150,6 +214,31 @@ struct Raw {
     c: Option<crate::c::Raw>,
     panel: Option<RawPanel>,
     python: Option<RawPython>,
+    network: Option<RawNetwork>,
+}
+
+#[derive(Deserialize)]
+struct RawNetwork {
+    allow: Option<Vec<String>>,
+}
+
+/// The addresses a `[network]` table names: at least one, each once, in the order written.
+fn addresses(raw: RawNetwork) -> Result<Vec<Address>, String> {
+    let named = raw.allow.unwrap_or_default();
+    if named.is_empty() {
+        return Err("its [network] names no address it would reach (allow = [\"host:port\"])".into());
+    }
+    if named.len() > MAX_ADDRESSES {
+        return Err(format!("its [network] names more than {MAX_ADDRESSES} addresses"));
+    }
+    let mut found: Vec<Address> = Vec::new();
+    for text in &named {
+        let address = Address::parse(text)?;
+        if !found.contains(&address) {
+            found.push(address);
+        }
+    }
+    Ok(found)
 }
 
 #[derive(Deserialize)]
@@ -292,6 +381,7 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
         workbook: raw.workbook.map(|name| workbook_name(&name)).transpose()?.flatten(),
         kit,
         c: raw.c.map(crate::c::Recipe::read).transpose()?,
+        network: raw.network.map(addresses).transpose()?,
     })
 }
 
@@ -373,6 +463,66 @@ scripts = "python"
         assert!(named(&format!("\"{}\"", "n".repeat(MAX_WORKBOOK + 1))).is_err(), "a name too long");
         assert!(same_workbook("Budget.xlsm", " budget.XLSM ") && same_workbook("Übersicht.xlsm", "übersicht.xlsm"));
         assert!(!same_workbook("Budget.xlsm", "Budget.xlsx") && !same_workbook("Budget.xlsm", ""));
+    }
+
+    #[test]
+    fn a_project_names_the_addresses_it_would_reach_and_nothing_wider() {
+        let with = |more: &str| parse(&format!("id = \"x\"\nname = \"X\"\nversion = \"1\"\n{more}"), "x");
+        assert_eq!(with("").unwrap().network, None, "a project that names none has no list");
+        let named = with("[network]\nallow = [\"quake.example.org:26000\", \"192.168.1.20:26000\", \"quake.example.org:26000\"]").unwrap();
+        let list = named.network.unwrap();
+        assert_eq!(list.iter().map(Address::text).collect::<Vec<_>>(), ["quake.example.org:26000", "192.168.1.20:26000"], "each once, in order");
+        assert_eq!((list[0].is_local(), list[1].is_local()), (false, true));
+        // What is on the person's own machine or network, by name or by number.
+        for (host, local) in [
+            ("localhost", true),
+            ("printer", true),
+            ("nas.local", true),
+            ("router.lan", true),
+            ("127.0.0.1", true),
+            ("10.1.2.3", true),
+            ("172.16.0.9", true),
+            ("169.254.1.1", true),
+            ("0.0.0.0", true),
+            ("8.8.8.8", false),
+            ("172.32.0.1", false),
+            ("example.org", false),
+            ("local.example.org", false),
+        ] {
+            assert_eq!(Address::parse(&format!("{host}:80")).unwrap().is_local(), local, "{host}");
+        }
+        // Never a pattern, a path, a scheme or a number two readers could take two ways.
+        for bad in [
+            "",
+            "example.org",
+            "example.org:",
+            "example.org:0",
+            "example.org:65536",
+            "example.org:80/path",
+            "*:80",
+            "*.example.org:80",
+            "Example.org:80",
+            "udp://example.org:80",
+            "exa mple.org:80",
+            "-a.org:80",
+            "a-.org:80",
+            "a..org:80",
+            ".org:80",
+            "1.2.3:80",
+            "999.1.1.1:80",
+            "0x7f.0.0.1:80",
+            "example.1:80",
+            "[::1]:80",
+            "example.org:+80",
+            "example.org:080",
+        ] {
+            assert!(Address::parse(bad).is_err(), "{bad:?}");
+        }
+        for bad in ["[network]", "[network]\nallow = []", "[network]\nallow = [\"example.org\"]", "[network]\nallow = \"example.org:80\""] {
+            assert!(with(bad).is_err(), "{bad:?}");
+        }
+        let many: Vec<String> = (0..=MAX_ADDRESSES).map(|n| format!("\"h{n}.example.org:80\"")).collect();
+        assert!(with(&format!("[network]\nallow = [{}]", many.join(","))).unwrap_err().contains("more than 16"));
     }
 
     #[test]

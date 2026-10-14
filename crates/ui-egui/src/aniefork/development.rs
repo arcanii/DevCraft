@@ -161,6 +161,12 @@ pub(super) enum Act {
     /// was loaded. Each ends in the operating system's own question.
     LoadKit,
     RemoveKit(String),
+    /// Turn a project's network on, for the addresses it names, or off. On ends in the
+    /// operating system's own question.
+    SetNetwork {
+        project: String,
+        on: bool,
+    },
     /// Choose the compiler in the operating system's own file dialog, and keep and check
     /// what was chosen as [`Act::CheckCompiler`] does.
     PickCompiler,
@@ -1145,6 +1151,32 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
         let line = egui::RichText::new(format!("•  {}", said(ask, "text")));
         ui.label(if ask["warn"] == true { line.color(warn).strong() } else { line });
     }
+    // The network it would reach, for a project that names addresses: off until turned on here.
+    let network = &told["network"];
+    if network.is_object() {
+        heading(ui, said(network, "title"));
+        ui.label(small(said(network, "says")));
+        for address in network["addresses"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            let note = said(address, "note");
+            let line = if note.is_empty() { said(address, "text").to_string() } else { format!("{}  ({note})", said(address, "text")) };
+            ui.label(egui::RichText::new(line).monospace().small());
+        }
+        for sentence in network["warnings"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(Json::as_str) {
+            ui.label(egui::RichText::new(sentence).color(warn));
+        }
+        ui.horizontal(|ui| {
+            ui.label(said(network, "state"));
+            let project = said(told, "id").to_string();
+            if network["on"] == true {
+                if ui.button("Turn Network Off").clicked() {
+                    *action = Some(Act::SetNetwork { project, on: false });
+                }
+            } else if ui.add_enabled(network["canTurnOn"] == true, egui::Button::new("Turn Network On…")).clicked() {
+                *action = Some(Act::SetNetwork { project, on: true });
+            }
+        });
+        ui.label(small(said(network, "notYet")));
+    }
     // What is in it.
     ui.add_space(4.0);
     egui::Grid::new("project_parts").num_columns(2).spacing(egui::vec2(10.0, 4.0)).show(ui, |ui| {
@@ -1414,6 +1446,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             | Act::CreateProject { .. }
             | Act::CloseFile
             | Act::StopTrusting(_)
+            | Act::SetNetwork { on: false, .. }
             | Act::LookAgain(_)
             | Act::StopRun(_)
             | Act::ReadMacro(_)
@@ -1500,6 +1533,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
         }
         Act::LoadKit => load_kit(app, state),
         Act::RemoveKit(id) => remove_kit(app, state, &id),
+        Act::SetNetwork { project, on } => kits::set_network(app, &project, on),
         Act::PickCompiler => {
             // The person chooses the program in the operating system's own dialog: nothing is
             // run but what they pointed at, and it is asked what it is like any name typed.
@@ -3842,6 +3876,102 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("{label:?} never came on screen");
+    }
+
+    #[test]
+    fn a_projects_network_is_turned_on_by_hand_with_the_systems_question_and_off_by_anyone() {
+        let s = Sandbox::new("dev-network");
+        std::fs::create_dir_all(s.0.join("projects/net/src")).unwrap();
+        std::fs::create_dir_all(s.0.join("projects/net/panel")).unwrap();
+        std::fs::write(s.0.join("projects/net/project.toml"), "id = \"net\"\nname = \"Net\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"read\", \"network\"]\n[panel]\nentry = \"panel/index.html\"\n[c]\nsources = [\"src\"]\n[network]\nallow = [\"example.org:26000\", \"192.168.1.20:26000\"]\n").unwrap();
+        std::fs::write(s.0.join("projects/net/panel/index.html"), "<p>net</p>").unwrap();
+        std::fs::write(s.0.join("projects/net/src/main.c"), "int main(void) { return 0; }\n").unwrap();
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        let (mut state, mut open) = (State::default(), true);
+        let turn = |h: &mut Harness, state: &mut State, open: &mut bool, on: bool, driven: bool| {
+            let ctx = h.ctx.clone();
+            super::act(h.state_mut(), &ctx, state, Act::SetNetwork { project: "net".into(), on }, driven, open)
+        };
+        let part = |h: &mut Harness| {
+            let ctx = h.ctx.clone();
+            kits::forget();
+            kits::project_pane(h.state_mut(), &ctx, "net").unwrap()["network"].clone()
+        };
+        // Its part says where it would reach, what stands against it, and that it is off.
+        let said = part(&mut h);
+        assert_eq!(
+            (&said["title"], &said["on"], &said["canTurnOn"], &said["addresses"]),
+            (
+                &json!("Network"),
+                &json!(false),
+                &json!(false),
+                &json!([{"text": "example.org:26000", "note": ""}, {"text": "192.168.1.20:26000", "note": "on your own machine or network"}])
+            )
+        );
+        assert_eq!(said["warnings"].as_array().map(Vec::len), Some(2), "it may read the workbook, and one address is the person's own");
+        assert_eq!(said["notYet"], kits::NETWORK_NOT_YET);
+        // Not trusted: it stays off, and no question is put.
+        assert!(turn(&mut h, &mut state, &mut open, true, false).unwrap_err().contains("not trusted as it is now"));
+        assert!(asked.questions().is_empty());
+        // Trusted: its network is still off, and can now be turned on. Not by what drives the window.
+        let print = gridcraft_aniefork_dev::project::load(&s.0.join("projects/net")).fingerprint.unwrap();
+        trust(h.state(), "net", &print, false).unwrap();
+        let before = asked.questions().len();
+        assert_eq!((&part(&mut h)["on"], &part(&mut h)["canTurnOn"]), (&json!(false), &json!(true)));
+        assert_eq!(turn(&mut h, &mut state, &mut open, true, true), Err(presence::BY_HAND.to_string()));
+        assert_eq!(asked.questions().len(), before, "no question was put");
+        // By hand the operating system asks, saying where to and what stands against it. No: off.
+        asked.says(false);
+        assert_eq!(turn(&mut h, &mut state, &mut open, true, false).as_deref(), Ok("Net's network stays off."));
+        let question = asked.questions().last().cloned().unwrap();
+        for part in [
+            "Turn the network on for Net?",
+            "example.org:26000",
+            "192.168.1.20:26000  (on your own machine or network)",
+            "it could send that to these addresses",
+            "behind your router",
+        ] {
+            assert!(question.contains(part), "{part} is missing from\n{question}");
+        }
+        assert_eq!(part(&mut h)["on"], json!(false));
+        // Yes: it is on, for those addresses, and the part says nothing is carried yet.
+        asked.says(true);
+        let turned = turn(&mut h, &mut state, &mut open, true, false).unwrap();
+        assert!(turned.starts_with("Net's network is on") && turned.contains("carries nothing yet"), "{turned}");
+        assert_eq!((&part(&mut h)["on"], &part(&mut h)["canTurnOn"]), (&json!(true), &json!(false)));
+        // What it was allowed says so too, where it said "off until you turn it on".
+        let allowed = |h: &mut Harness| {
+            let ctx = h.ctx.clone();
+            kits::forget();
+            kits::project_pane(h.state_mut(), &ctx, "net").unwrap()["asks"][1]["text"].as_str().unwrap_or_default().to_string()
+        };
+        assert!(allowed(&mut h).ends_with("You turned this on"), "{}", allowed(&mut h));
+        // Turning it off is anyone's: it only tightens.
+        assert_eq!(turn(&mut h, &mut state, &mut open, false, true).as_deref(), Ok("Net's network is off."));
+        assert_eq!(part(&mut h)["on"], json!(false));
+        assert!(allowed(&mut h).ends_with("Off until you turn it on"), "{}", allowed(&mut h));
+        // The page says which project and whether on, and nothing else of it.
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(NAME, json!({}));
+        h.run_steps(3);
+        assert!(turn(&mut h, &mut state, &mut open, true, false).is_ok());
+        page(&mut h, json!({"act": "network", "id": "net", "on": false}));
+        assert_eq!(part(&mut h)["on"], json!(false));
+        for bad in
+            [json!({"act": "network", "id": "net"}), json!({"act": "network", "on": true}), json!({"act": "network", "id": "../net", "on": true})]
+        {
+            page(&mut h, bad);
+            assert_eq!(part(&mut h)["on"], json!(false));
+        }
+        // A project that names no addresses has no such part, and nothing to turn on.
+        create("Clean Data").unwrap();
+        kits::forget();
+        let ctx2 = h.ctx.clone();
+        assert_eq!(kits::project_pane(h.state_mut(), &ctx2, "clean-data").unwrap()["network"], Json::Null);
+        let none = super::act(h.state_mut(), &ctx, &mut state, Act::SetNetwork { project: "clean-data".into(), on: true }, false, &mut open);
+        assert!(none.unwrap_err().contains("asks for no network"));
     }
 
     #[test]

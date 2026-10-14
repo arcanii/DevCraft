@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::manifest::Permission;
+use crate::manifest::{Address, Manifest, Permission};
 use crate::project::Project;
 
 /// The largest trust file read (bytes).
@@ -32,6 +32,15 @@ struct Record {
     /// The user chose to keep trusting it as its files change.
     #[serde(default)]
     follow_changes: bool,
+    /// The addresses the user turned the network on for, as the project named them then. Empty:
+    /// its network is off. It stands only while the project names exactly these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    network: Vec<String>,
+}
+
+/// The addresses a project names, as they are kept and compared.
+fn named(list: &[Address]) -> Vec<String> {
+    list.iter().map(Address::text).collect()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -100,11 +109,55 @@ impl TrustStore {
         match self.records.get(&project.id) {
             None => Status::Untrusted,
             Some(record) if record.fingerprint == *fingerprint || record.follow_changes => {
-                // Never more than was granted, and never more than it asks for now.
-                Status::Trusted(record.permissions.iter().copied().filter(|p| manifest.permissions.contains(p)).collect())
+                // Never more than was granted, and never more than it asks for now. And the
+                // network of a project that names where it would reach is the person's to
+                // turn on by itself: trusting it turns nothing on.
+                let allowed = |p: &Permission| *p != Permission::Network || Self::network_stands(manifest, record);
+                Status::Trusted(record.permissions.iter().copied().filter(|p| manifest.permissions.contains(p)).filter(allowed).collect())
             }
             Some(_) => Status::Changed,
         }
+    }
+
+    /// Whether the network a record holds is the network the project asks for now: always, for
+    /// a project that names no addresses (the first kit's `network`, which is its page's); for
+    /// one that names them, only when the person turned it on for exactly those.
+    fn network_stands(manifest: &Manifest, record: &Record) -> bool {
+        match &manifest.network {
+            None => true,
+            Some(list) => !list.is_empty() && record.network == named(list),
+        }
+    }
+
+    /// Whether `project` names addresses to reach, and the person has turned its network on for
+    /// them as they are now.
+    pub fn network_on(&self, project: &Project) -> bool {
+        let carried = project.manifest.as_ref().is_some_and(|manifest| manifest.network.is_some());
+        carried && matches!(self.status(project), Status::Trusted(granted) if granted.contains(&Permission::Network))
+    }
+
+    /// Records the user's decision to turn the network of `project` on, for the addresses it
+    /// names now, or off. On is for a project that is trusted as it is and asks for it; off is
+    /// always fine. Trusting a project again turns it off: it is decided by itself, each time.
+    pub fn set_network(&mut self, project: &Project, on: bool) -> Result<(), String> {
+        let list = match (&project.manifest, on) {
+            (_, false) => Vec::new(),
+            (Some(manifest), true) => match (&manifest.network, manifest.permissions.contains(&Permission::Network)) {
+                (Some(list), true) if !list.is_empty() => named(list),
+                _ => return Err(format!("{} asks for no network.", project.name())),
+            },
+            (None, true) => return Err(format!("{} could not be read.", project.name())),
+        };
+        if on && !self.status(project).is_trusted() {
+            return Err(format!("{} is not trusted as it is now, so its network stays off.", project.name()));
+        }
+        let Some(record) = self.records.get_mut(&project.id) else { return Ok(()) };
+        let before = std::mem::replace(&mut record.network, list);
+        self.save().inspect_err(|_| {
+            if let Some(record) = self.records.get_mut(&project.id) {
+                record.network = before;
+            }
+        })
     }
 
     /// The user chose to keep trusting this project as its files change.
@@ -118,7 +171,8 @@ impl TrustStore {
         let (Some(manifest), Some(fingerprint), None) = (&project.manifest, &project.fingerprint, &project.problem) else {
             return Err(format!("{} can't be trusted: {}", project.name(), project.problem.as_deref().unwrap_or("it could not be read")));
         };
-        let record = Record { fingerprint: fingerprint.clone(), permissions: manifest.permissions.clone(), follow_changes };
+        // Its network, if it names addresses to reach, is off: that is turned on by itself.
+        let record = Record { fingerprint: fingerprint.clone(), permissions: manifest.permissions.clone(), follow_changes, network: Vec::new() };
         let before = self.records.insert(project.id.clone(), record);
         self.save().inspect_err(|_| {
             // What is on disk decides: a decision that wasn't saved wasn't made.
@@ -200,6 +254,57 @@ mod tests {
         t.write("copy/panel/index.html", "<h1>Clean Data</h1>");
         t.write("copy/python/clean.py", "def main(data):\n    return data\n");
         assert_eq!(store.status(&load(&t.0.join("copy"))), Status::Untrusted);
+    }
+
+    #[test]
+    fn a_projects_network_is_turned_on_by_itself_for_the_addresses_it_names() {
+        let t = TempDir::new("trust-network");
+        let dir = t.0.join("projects/net");
+        let write = |allow: &str| {
+            t.write(
+                "projects/net/project.toml",
+                &format!("id = \"net\"\nname = \"Net\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"read\", \"network\"]\n[c]\nsources = [\"src\"]\n[network]\nallow = [{allow}]\n"),
+            );
+            t.write("projects/net/src/main.c", "int main(void) { return 0; }\n");
+            load(&dir)
+        };
+        let file = t.0.join("trusted.json");
+        let project = write("\"example.org:26000\"");
+        assert!(project.is_sound(), "{:?}", project.problem);
+        let mut store = TrustStore::load(&file);
+        // Not trusted: its network can't be turned on, and is not on.
+        assert!(store.set_network(&project, true).unwrap_err().contains("not trusted as it is now"));
+        // Trusting it grants what it asks, and not the network: that is off until turned on.
+        store.trust(&project, false).unwrap();
+        assert_eq!(store.status(&project), Status::Trusted(vec![Permission::Read]));
+        assert!(!store.network_on(&project));
+        store.set_network(&project, true).unwrap();
+        assert_eq!(store.status(&project), Status::Trusted(vec![Permission::Read, Permission::Network]));
+        assert!(store.network_on(&project) && TrustStore::load(&file).network_on(&project), "the decision is kept");
+        // Off again; and trusting it again turns it off, each time.
+        store.set_network(&project, false).unwrap();
+        assert!(!store.network_on(&project) && !TrustStore::load(&file).network_on(&project));
+        store.set_network(&project, true).unwrap();
+        store.trust(&project, false).unwrap();
+        assert!(!store.network_on(&project));
+        // The person follows its changes, and turns its network on for one address. The project
+        // then names another: it is still trusted, and its network is off again.
+        store.trust(&project, true).unwrap();
+        store.set_network(&project, true).unwrap();
+        let wider = write("\"example.org:26000\", \"192.168.1.1:80\"");
+        assert_eq!(store.status(&wider), Status::Trusted(vec![Permission::Read]), "what was turned on was the one address");
+        assert!(!store.network_on(&wider));
+        // A project that asks for none has none to turn on; turning off is always fine.
+        let plain = load(&sample(&t));
+        store.trust(&plain, false).unwrap();
+        assert!(store.set_network(&plain, true).unwrap_err().contains("asks for no network"));
+        store.set_network(&plain, false).unwrap();
+        // The first kit's `network` is its page's, with no list: trusting grants it, as before.
+        t.write("projects/web/project.toml", "id = \"web\"\nname = \"Web\"\nversion = \"1\"\npermissions = [\"network\"]\n");
+        let web = load(&t.0.join("projects/web"));
+        store.trust(&web, false).unwrap();
+        assert_eq!(store.status(&web), Status::Trusted(vec![Permission::Network]));
+        assert!(!store.network_on(&web), "it names no addresses: nothing is carried for it");
     }
 
     #[test]

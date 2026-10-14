@@ -2997,6 +2997,73 @@ the sandbox? What would this take?"
 - **What would be decided first, by the owner**: whether a project that may read the
   workbook may have a network at all, or only one that may not.
 
+### A network for a C project, stage N1: asked for, named, and turned on by itself (built 2026-10-14)
+
+**What the owner decided.** To the two stages put to them, yes; and of the question that had
+to come first: "the user can turn on networking explicitly. Yes a project can read the
+workbook and have network."
+
+**So a C project may ask for the network, and trusting it does not give it.** Three things,
+each apart:
+
+1. **It asks**, in its `project.toml`: `network` among its permissions, and where to:
+
+   ```toml
+   permissions = ["read", "network"]
+
+   [network]
+   allow = ["quake.example.org:26000", "192.168.1.20:26000"]
+   ```
+
+   An address is a host, by name or by four numbers, and a port. **Never a pattern**: no `*`,
+   no range, no scheme, no path; at most sixteen. A name that ends in a number must be four
+   numbers, so that no two readers take it for different hosts. A C project that asks and
+   names nowhere, or names somewhere and does not ask, is not a sound project. The first
+   kit's `network` is another thing (its page may talk to the internet), takes no list, and
+   is as it was.
+2. **The person trusts it**, as any project: it is granted what it asks, **and not the
+   network**.
+3. **The person turns its network on**, in the project's part, by hand: a question of the
+   operating system's own says where to, in full, and what stands against it (it may see
+   the open workbooks, so it could send them there; an address is on the person's own
+   machine or network, so it could reach what is behind their router). The project is read
+   again after the answer: what is turned on is what was asked about.
+
+**What is kept is the addresses, not a yes.** The trust file keeps, beside the decision to
+trust, the addresses the network was turned on for. It stands only while the project names
+exactly those: a project the person lets change as it goes, which then names another
+address, has its network off again. Trusting a project again turns it off, each time.
+Turning it off is anyone's, since it only tightens; turning it on is refused to what drives
+the window, and no agent has a way to it.
+
+**Its page stays shut in.** GridCraft is to carry the program's packets; the page talks to
+GridCraft and to nothing else, network on or off. Before this, the page's rules followed
+`network` alone: a C project with it on would have had a page let out. Both places that
+decide it (the bridge's rules for a page, and where a docked page may go) now ask whether
+it is the page's own `network`.
+
+**Nothing is sent yet**, and the part says so in as many words. This stage is the asking,
+the naming and the deciding. Carrying packets is N2: the bridge, and the calls the loader
+hands a program.
+
+**Checked.** Addresses: what is one, what is on the person's own machine or network, and
+twenty-two things that are not one. The kit: asking and naming go together, and are the C
+kit's. The trust file: trusting grants no network; on, off, kept across a reload; off
+again when trusted again, and when the addresses change under a project that is followed.
+A project's page with its network on is served under the same rules as any. The window:
+off and not offered before trust; refused to what drives it, with no question put; the
+question's words; no leaves it off, yes turns it on; off by anyone; the page's message.
+
+**Seen** (the isolated copy, a project made for it and trusted in that copy's own file): the
+project's part with its Network section, both addresses, both warnings, "Off", and the
+line that nothing is carried yet. **Not seen**: the operating system's question, and the
+part with the network on: the button was not pressed from here.
+
+**For N2, noted now.** A name can stand for a number on the person's own network: whoever
+sends must look at the number it turns out to be, not only at the name. How much may be
+sent, and how fast. Whether what a program receives may come from anywhere, or only from
+where it sent to.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

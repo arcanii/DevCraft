@@ -914,7 +914,10 @@ mod server {
             ("GET", rest) => file(&found, rest),
             _ => Reply { allow: Some("GET"), ..Reply::plain(405, "Method Not Allowed", "Pages are read with GET.") },
         };
-        reply.network = granted.contains(&Permission::Network);
+        // The page may talk to the internet only by the first kit's `network`. A project that
+        // names the addresses it would reach has its packets carried by GridCraft: its page
+        // stays as shut in as any other, network on or off.
+        reply.network = granted.contains(&Permission::Network) && found.manifest.as_ref().is_some_and(|manifest| manifest.network.is_none());
         reply
     }
 
@@ -1602,6 +1605,32 @@ mod served {
         let (port, token) = address.strip_prefix("http://127.0.0.1:").unwrap().split_once('/').unwrap();
         let (port, token) = (port.parse().unwrap(), token.trim_end_matches('/').to_string());
         Served { t, places, bridge, port, token, woken: Arc::default() }
+    }
+
+    #[test]
+    fn the_page_of_a_project_whose_network_is_carried_stays_shut_in() {
+        let s = c_project("c-network");
+        let closed = |s: &Served| {
+            let (status, head, _) = s.get("");
+            assert_eq!(status, 200, "{head}");
+            head.contains("connect-src 'self'") && !head.contains("default-src *")
+        };
+        assert!(closed(&s));
+        // It asks for the network and names where to. Trusted as it is now, its network is off.
+        s.t.write(
+            "projects/blink/project.toml",
+            "id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"read\", \"network\"]\n[panel]\nentry = \"panel/index.html\"\n[c]\nsources = [\"src\"]\n[network]\nallow = [\"example.org:26000\"]\n",
+        );
+        let found = project::load(&s.places.projects.join("blink"));
+        assert!(found.is_sound(), "{:?}", found.problem);
+        let mut store = TrustStore::load(&s.places.trust);
+        store.trust(&found, false).unwrap();
+        assert!(closed(&s));
+        // The person turns it on. GridCraft is to carry its packets: its page talks to nothing
+        // but GridCraft, as before. (The first kit's `network` is what opens a page.)
+        store.set_network(&found, true).unwrap();
+        assert!(TrustStore::load(&s.places.trust).network_on(&found));
+        assert!(closed(&s), "the page of a project whose network is on is as shut in as any");
     }
 
     #[test]

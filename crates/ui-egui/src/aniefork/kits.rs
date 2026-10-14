@@ -941,6 +941,91 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
     told
 }
 
+/// Said of a network that is turned on or off, while this GridCraft carries nothing yet.
+pub(super) const NETWORK_NOT_YET: &str = "This GridCraft keeps your decision and carries nothing yet: sending and receiving come in a later version.";
+const NETWORK_IS_ON: &str = "Send and receive over the network, through GridCraft, to the addresses it names. You turned this on";
+const NETWORK_READS: &str = "It may see what is in your open workbooks: with the network on, it could send that to these addresses.";
+const NETWORK_LOCAL: &str = "One of these is on your own machine or network: it could reach what is behind your router.";
+const LOCAL_NOTE: &str = "on your own machine or network";
+
+/// What stands against turning a project's network on, in sentences: it may read the
+/// workbook, and an address is the person's own.
+fn network_warnings(project: &Json) -> Vec<&'static str> {
+    let reads = project["asks"].as_array().is_some_and(|asks| asks.iter().any(|ask| ask["permission"] == "read"));
+    let local = project["network"]["addresses"].as_array().is_some_and(|all| all.iter().any(|address| address["local"] == true));
+    [(reads, NETWORK_READS), (local, NETWORK_LOCAL)].into_iter().filter_map(|(so, sentence)| so.then_some(sentence)).collect()
+}
+
+/// The network a project would reach, as its part says it: the addresses, whether it is on,
+/// and what stands against it. `Null` for a project that names no addresses.
+fn network_says(project: &Json, status: &str) -> Json {
+    let Some(addresses) = project["network"]["addresses"].as_array() else { return Json::Null };
+    let on = project["network"]["on"] == true;
+    json!({
+        "title": "Network",
+        "says": "It asks to send and receive over the network, through GridCraft, to these addresses and no others.",
+        "addresses": addresses.iter().map(|address| json!({"text": address["text"], "note": if address["local"] == true { LOCAL_NOTE } else { "" }})).collect::<Vec<_>>(),
+        "on": on,
+        "state": if on { "On, for these addresses." } else { "Off. Trusting it does not turn this on: you do, here." },
+        "warnings": network_warnings(project),
+        "canTurnOn": status == "trusted" && !on,
+        "notYet": NETWORK_NOT_YET,
+    })
+}
+
+/// What the operating system asks before a project's network is turned on: where to, in full,
+/// and what stands against it.
+pub(super) fn network_question(project: &Json) -> String {
+    let mut asked = format!("Turn the network on for {}?\n\nIt will be able to send and receive, through GridCraft, to:\n", text(project, "name"));
+    for address in project["network"]["addresses"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let note = if address["local"] == true { format!("  ({LOCAL_NOTE})") } else { String::new() };
+        asked.push_str(&format!("    {}{note}\n", text(address, "text")));
+    }
+    for sentence in network_warnings(project) {
+        asked.push_str(&format!("\n{sentence}\n"));
+    }
+    asked.push_str("\nIt stays on until you turn it off, trust the project again, or the addresses it names change.");
+    asked
+}
+
+/// Turns a project's network on, for the addresses it names now, or off. On is the person's:
+/// it ends in the operating system's own question, and the project is read again after the
+/// answer, so that what is turned on is what was asked about.
+pub(super) fn set_network(app: &SheetApp, id: &str, on: bool) -> Result<String, String> {
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+    if !manifest::valid_id(id) {
+        return Err("That is not a project.".into());
+    }
+    let read = || {
+        let found = project::load(&at.projects.join(id));
+        let store = TrustStore::load(&at.trust);
+        (describe(&found, &store), found, store)
+    };
+    let (said, found, mut store) = read();
+    if !on {
+        store.set_network(&found, false)?;
+        return Ok(format!("{}'s network is off.", found.name()));
+    }
+    if said["network"].is_null() {
+        return Err(format!("{} asks for no network.", found.name()));
+    }
+    if said["status"] != "trusted" {
+        return Err(format!("{} is not trusted as it is now, so its network stays off.", found.name()));
+    }
+    let Some(confirm) = &app.services.confirm else {
+        return Err("This copy of GridCraft can't ask your operating system to confirm, so the network stays off.".into());
+    };
+    if !confirm("Turn this project's network on?", &network_question(&said)) {
+        return Ok(format!("{}'s network stays off.", found.name()));
+    }
+    let (after, again, mut store) = read();
+    if again.fingerprint != found.fingerprint || after["network"] != said["network"] {
+        return Err(format!("{} changed while you were deciding: look at it again.", found.name()));
+    }
+    store.set_network(&again, true)?;
+    Ok(format!("{}'s network is on, for the addresses it names. {NETWORK_NOT_YET}", again.name()))
+}
+
 /// One project: what it is for, where it stands, what it asks, what is in it, and what it says
 /// it rebuilds of its workbook's macros. `None` when there is no such project any more.
 pub(super) fn project_pane(app: &SheetApp, ctx: &egui::Context, id: &str) -> Option<Json> {
@@ -965,7 +1050,13 @@ pub(super) fn project_pane(app: &SheetApp, ctx: &egui::Context, id: &str) -> Opt
     };
     let asks: Vec<Json> = project["asks"]
         .as_array()
-        .map(|all| all.iter().map(|ask| json!({"text": ask["means"], "warn": ask["unlimited"]})).collect())
+        .map(|all| {
+            // A network that was turned on is said to be on: the sentence it is asked with says "off until".
+            let on = |ask: &Json| ask["permission"] == "network" && project["network"]["on"] == true;
+            all.iter()
+                .map(|ask| json!({"text": if on(ask) { json!(NETWORK_IS_ON) } else { ask["means"].clone() }, "warn": ask["unlimited"]}))
+                .collect()
+        })
         .unwrap_or_default();
     let files: Vec<&str> = project["files"].as_array().map(|all| all.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
     let scripts: Vec<&str> = match project["python"].as_str() {
@@ -1037,6 +1128,7 @@ pub(super) fn project_pane(app: &SheetApp, ctx: &egui::Context, id: &str) -> Opt
         "problem": project["problem"],
         "asksTitle": if status == "trusted" { "You allowed it to:" } else { "It asks to be allowed to:" },
         "asks": asks,
+        "network": network_says(project, status),
         "asksNothing": match (panel.is_some(), build.is_some()) {
             (true, true) => "Show its panel and run its program there, and nothing more.",
             (true, false) => "Show its panel, and nothing more.",

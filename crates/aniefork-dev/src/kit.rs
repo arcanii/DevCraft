@@ -128,8 +128,10 @@ pub const C: Kit = Kit {
     author: "",
     // What a project's page can ask of the spreadsheet for the program it runs. The program
     // is WebAssembly: it reaches nothing but what that page hands it, so running it needs no
-    // leave of its own, as `python` does.
-    permissions: &[Permission::Read, Permission::Write, Permission::Files],
+    // leave of its own, as `python` does. `network` is not the first kit's `network`: the
+    // page stays shut in, and GridCraft is to carry the program's packets to the addresses
+    // the project names, once the person has turned that on (`crate::trust`).
+    permissions: &[Permission::Read, Permission::Write, Permission::Files, Permission::Network],
     panels: true,
     scripts: false,
     builds: true,
@@ -373,6 +375,15 @@ fn check_as(kit: Option<&'static Kit>, manifest: &Manifest) -> Result<&'static K
     if manifest.c.is_some() && !kit.builds {
         return Err(format!("it has a C recipe, which a project of {} can't have", kit.called()));
     }
+    // A list of addresses is for a program GridCraft carries packets for: one that is built.
+    // Such a project that asks for the network says where to; one that says where to asks.
+    let asks = manifest.permissions.contains(&Permission::Network);
+    match &manifest.network {
+        Some(_) if !kit.builds => return Err(format!("it names network addresses, which a project of {} can't have", kit.called())),
+        Some(_) if !asks => return Err("it names network addresses, and does not ask for \"network\"".into()),
+        None if asks && kit.builds => return Err("it asks for \"network\", and names no address it would reach ([network] allow)".into()),
+        _ => {}
+    }
     Ok(kit)
 }
 
@@ -470,7 +481,20 @@ mod tests {
         // It has no scripts: nothing of the first kit that can't be limited can be made to run for it.
         let python = check(&read("kit = \"c\"\npermissions = [\"python\"]")).unwrap_err();
         assert_eq!(python, "it asks for \"python\", which a project of the C Development Kit can't be given");
-        assert!(check(&read("kit = \"c\"\npermissions = [\"read\", \"network\"]")).unwrap_err().contains("\"network\""));
+        assert!(check(&read("kit = \"c\"\npermissions = [\"read\", \"network\"]")).unwrap_err().contains("names no address it would reach"));
+        // The network: a C project asks and says where to, both or neither; the first kit's
+        // `network` is its page's, and takes no list.
+        let reach = "[network]\nallow = [\"example.org:26000\"]";
+        assert_eq!(check(&read(&format!("kit = \"c\"\npermissions = [\"read\", \"network\"]\n{reach}"))), Ok(&C));
+        assert_eq!(
+            check(&read(&format!("kit = \"c\"\npermissions = [\"read\"]\n{reach}"))).unwrap_err(),
+            "it names network addresses, and does not ask for \"network\""
+        );
+        assert_eq!(
+            check(&read(&format!("permissions = [\"network\"]\n{reach}"))).unwrap_err(),
+            "it names network addresses, which a project of PythonCraft can't have"
+        );
+        assert_eq!(check(&read("permissions = [\"network\"]")), Ok(&PYTHONCRAFT));
         let scripts = check(&read("kit = \"c\"\n[python]\nscripts = \"python\"")).unwrap_err();
         assert_eq!(scripts, "it has Python scripts, which a project of the C Development Kit can't have");
         // It may have a panel: that is where the program built from it runs.

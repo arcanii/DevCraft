@@ -72,11 +72,18 @@ pub use project::Project;
 pub use trust::{Status, TrustStore};
 
 /// A project and where it stands, as the Projects dialog shows it and `developer.projects` reports it.
+/// What `network` means for a project that names the addresses it would reach.
+pub const CARRIED_NETWORK: &str = "Send and receive over the network, through GridCraft, to the addresses it names. Off until you turn it on";
+
 pub fn describe(project: &Project, store: &TrustStore) -> Json {
     let status = store.status(project);
     let manifest = project.manifest.as_ref();
+    // The addresses it would reach, for a project that names them: its `network` is then
+    // GridCraft's to carry, and means another thing than the first kit's.
+    let carried = manifest.and_then(|m| m.network.as_ref());
+    let means = |p: &Permission| if *p == Permission::Network && carried.is_some() { CARRIED_NETWORK } else { p.meaning() };
     let asks: Vec<Json> = manifest
-        .map(|m| m.permissions.iter().map(|p| json!({"permission": p.code(), "means": p.meaning(), "unlimited": p.is_unlimited()})).collect())
+        .map(|m| m.permissions.iter().map(|p| json!({"permission": p.code(), "means": means(p), "unlimited": p.is_unlimited()})).collect())
         .unwrap_or_default();
     let granted: Vec<&str> = match &status {
         Status::Trusted(permissions) => permissions.iter().map(|p| p.code()).collect(),
@@ -98,6 +105,13 @@ pub fn describe(project: &Project, store: &TrustStore) -> Json {
         "status": status.code(),
         "problem": match &status { Status::Problem(why) => Json::String(why.clone()), _ => Json::Null },
         "asks": asks,
+        // Where it would reach and whether the person turned that on: for a project that names addresses.
+        "network": carried.map(|list| json!({
+            "addresses": list.iter().map(|address| json!({"text": address.text(), "local": address.is_local()})).collect::<Vec<_>>(),
+            "on": store.network_on(project),
+        })),
+        // Whether its page may talk to the internet: the first kit's `network`, never a carried one.
+        "pageNetwork": granted.contains(&"network") && carried.is_none(),
         "granted": granted,
         "followsChanges": store.follows_changes(&project.id),
         "panel": manifest.and_then(|m| m.panel.as_deref()),
@@ -113,6 +127,41 @@ pub fn describe(project: &Project, store: &TrustStore) -> Json {
 mod tests {
     use super::*;
     use crate::project::tests::{TempDir, sample};
+
+    #[test]
+    fn a_project_that_names_where_it_would_reach_is_described_with_that_and_whether_it_is_on() {
+        let t = TempDir::new("describe-network");
+        t.write("net/project.toml", "id = \"net\"\nname = \"Net\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"read\", \"network\"]\n[panel]\nentry = \"panel/index.html\"\n[c]\nsources = [\"src\"]\n[network]\nallow = [\"example.org:26000\", \"192.168.1.20:26000\"]\n");
+        t.write("net/panel/index.html", "<p>net</p>");
+        t.write("net/src/main.c", "int main(void) { return 0; }\n");
+        let found = project::load(&t.0.join("net"));
+        assert!(found.is_sound(), "{:?}", found.problem);
+        let mut store = TrustStore::load(&t.0.join("trusted.json"));
+        let said = describe(&found, &store);
+        // Its `network` is GridCraft's to carry: said so where it asks, and with where to.
+        assert_eq!(said["asks"][1], json!({"permission": "network", "means": CARRIED_NETWORK, "unlimited": false}));
+        assert_eq!(
+            said["network"],
+            json!({"addresses": [{"text": "example.org:26000", "local": false}, {"text": "192.168.1.20:26000", "local": true}], "on": false})
+        );
+        // Trusted: what it asks is granted, and not the network. Turned on: it is, and its page
+        // is still not let out.
+        store.trust(&found, false).unwrap();
+        let trusted = describe(&found, &store);
+        assert_eq!((&trusted["granted"], &trusted["network"]["on"], &trusted["pageNetwork"]), (&json!(["read"]), &json!(false), &json!(false)));
+        store.set_network(&found, true).unwrap();
+        let on = describe(&found, &store);
+        assert_eq!((&on["granted"], &on["network"]["on"], &on["pageNetwork"]), (&json!(["read", "network"]), &json!(true), &json!(false)));
+        // The first kit's `network` is its page's: no list, and granted with trust.
+        t.write("web/project.toml", "id = \"web\"\nname = \"Web\"\nversion = \"1\"\npermissions = [\"network\"]\n");
+        let web = project::load(&t.0.join("web"));
+        store.trust(&web, false).unwrap();
+        let web = describe(&web, &store);
+        assert_eq!(
+            (&web["network"], &web["pageNetwork"], &web["asks"][0]["means"]),
+            (&Json::Null, &json!(true), &json!(Permission::Network.meaning()))
+        );
+    }
 
     #[test]
     fn a_project_is_described_with_what_it_asks_for_and_what_it_was_granted() {

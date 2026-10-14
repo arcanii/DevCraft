@@ -545,6 +545,8 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         // to look), never the page's.
         "trust" => project_id(&message).map(|project| Act::Trust { project, follow: message.get("follow").and_then(Json::as_bool).unwrap_or(false) }),
         "stopTrusting" => project_id(&message).map(Act::StopTrusting),
+        // A project's network, on or off: the page says which project, never where to.
+        "network" => project_id(&message).zip(message.get("on").and_then(Json::as_bool)).map(|(project, on)| Act::SetNetwork { project, on }),
         "lookAgain" => project_id(&message).map(Act::LookAgain),
         "run" => {
             let script = message.get("script").and_then(Json::as_str).filter(|script| !script.is_empty() && script.len() <= MAX_PATH);

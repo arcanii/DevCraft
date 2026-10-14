@@ -791,6 +791,15 @@ included.
 
 Newest first.
 
+- **2026-10-14 (a network for a C project, stage N1):** On the owner's word ("the user can
+  turn on networking explicitly. Yes a project can read the workbook and have network"). A C
+  project may ask for `network` and name where to (`[network] allow = ["host:port"]`, never
+  a pattern). **Trusting it does not turn the network on**: the person does, in the
+  project's part, by hand, with the operating system's own question saying where to and
+  what stands against it. The trust file keeps the addresses it was turned on for, and it
+  stands only while the project names exactly those. The project's page stays shut in,
+  network on or off. **Nothing is sent yet**, and the part says so: carrying packets is the
+  next stage. Seen in the isolated copy: the part, off. No hook in an upstream file changed.
 - **2026-10-14 (Quake played by hand; the mouse; leaving; OpenGL and a network looked into):**
   The owner played Quake in their own GridCraft, linked to its sheet. From what they asked:
   the Quake project (outside the repository, 0.3.0) **takes the mouse** when its picture is
