@@ -108,6 +108,23 @@ cells four times a second, where formulas and charts work on them.
 **Neither Doom's code nor its game data is in this repository**, and neither will be. The
 picture is here to show what a development kit can build and run, and for no other reason.
 
+The kit's second challenge was **Quake**:
+
+<p align="center">
+  <img src="docs/images-aniefork/devcraft-quake.png" alt="GridCraft with Quake running in a panel docked beside a sheet named Quake. The sheet holds the game's variables as it plays (the level The Door To Chthon, health 60, armor 150, weapon Rocket launcher), the bytes at nine places in its memory with the numbers a formula works out of them, and two charts of the last minute." width="900">
+</p>
+
+**It is not our Quake either.** Quake is id Software's game, and its name and its artwork are
+theirs. What is pictured is the shareware version, its game data unmodified (`pak0.pak`,
+version 1.06, checked against its checksum), running in GridCraft because the C Development
+Kit built it: the engine is quakegeneric, a port of the source id Software released under the
+GPL, with one file of glue and two lines changed. The kit builds it in about nine seconds, and
+it runs as Doom does: docked, playing, and filling a sheet. **Neither Quake's code nor its game
+data is in this repository.** If the picture makes you want the game, it is theirs to sell.
+
+Quake needed one thing the kit did not have, which the kit has now: a recipe can say
+`setjmp = true` for C that leaves a function half way by a jump.
+
 ### Kits from packages
 
 A kit can be loaded from a package file (`.gridkit`). Such a kit describes and runs nothing of
@@ -188,7 +205,7 @@ not theirs, and is not endorsed by them. The ArtCraft name and logos are tradema
 ArtCraft Team: the fork carries none of their logos, and names the team only to say whose work
 GridCraft is.
 
-Every picture here was made with this fork of GridCraft. Two things in them are not the
-fork's: the marks of Python, Svelte and C in the Development window's badges, and Doom, which
-is id Software's. [`ATTRIBUTION-aniefork.md`](ATTRIBUTION-aniefork.md) lists them, with the
+Every picture here was made with this fork of GridCraft. Three things in them are not the
+fork's: the marks of Python, Svelte and C in the Development window's badges, and Doom and
+Quake, which are id Software's. [`ATTRIBUTION-aniefork.md`](ATTRIBUTION-aniefork.md) lists them, with the
 pictures, beside upstream's [`ATTRIBUTION.md`](ATTRIBUTION.md).

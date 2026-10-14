@@ -182,6 +182,7 @@ entry = "panel/index.html"
 #   define    names, or NAME=value                          (optional)
 #   optimize  size | speed | none                           (optional: size)
 #   entry     main, or none when its page calls what it exports (optional: main)
+#   setjmp    true when its C uses setjmp and longjmp       (optional: false)
 [c]
 sources = ["src"]
 "#

@@ -2811,10 +2811,9 @@ from one run to the next.
 
 **What the kit learned from it.**
 
-- **A jump out of a frame is common in old C, and the kit has none.** The compiler's option
-  for it needs WebAssembly's exceptions, which the web view has. A named setting in the
-  recipe for it would be the kit's to add (never a flag of the project's choosing), and
-  would spare a project the two changes above. Not built: the owner's to ask for.
+- **A jump out of a frame is common in old C, and the kit had none.** It has one now, on
+  the owner's word: the section after this one. Quake is built with it, and its own jumps
+  are back as they were written.
 - **A program that stops is stopped for good.** Quake would go back to its console after an
   error; here the page says what happened and that is the end. With a jump there would be
   less to stop for.
@@ -2822,8 +2821,71 @@ from one run to the next.
   shows of a stopped program is one line. A copy of the loader that says where was made in
   scratch; whether the loader should say so itself, to a developer, is a thing to decide.
 - **The shareware licence of Quake names screenshots**: no commercial use of the game "or
-  any portion thereof, such as a screen display or a screenshot". No picture of Quake is in
-  the repository. One goes in only on the owner's word, as Doom's did.
+  any portion thereof, such as a screen display or a screenshot". The owner asked how a
+  magazine could show one, and whether a use that is not commercial is fair; told how that
+  is usually reasoned (reporting and comment, one frame, nothing sold, nothing of the game
+  replaced; decided case by case, and a doctrine of one country), and that it was no legal
+  advice, they said: "Yes, let's add the Quake picture - if someone buys the game the
+  proceeds will go to the original publisher, not to me. This is fair use, since I'm
+  actually unintentionally promoting the game for them." **So one picture of Quake is in
+  the README**, the fork's third exception to the rule on other parties' images
+  (`ATTRIBUTION-aniefork.md`), with "It is not our Quake either" said beside it. It is of
+  the build that uses the kit's `setjmp` setting.
+
+### A recipe may say its C jumps: `setjmp` (built 2026-10-14)
+
+**What the owner decided.** Asked, after Quake, whether the C kit should gain a setting for
+`setjmp`: "Yes."
+
+**What it is.** One more named setting in a C project's recipe:
+
+```toml
+[c]
+sources = ["src"]
+setjmp = true        # its C uses setjmp and longjmp
+```
+
+It is yes or no, and nothing else: a recipe is still a list, never a command, and nothing a
+project says becomes an option of its own choosing.
+
+**What GridCraft does for it** (`crates/aniefork-dev/src/c.rs`):
+
+- each of the project's files is compiled with `-mexception-handling -mllvm
+  -wasm-enable-sjlj`: in WebAssembly a jump is made of exceptions, and the compiler makes one
+  only when told;
+- the parts are put together with `-mexception-handling`, so that the compiler's library
+  comes with its own part of a jump;
+- **and with a tag, which the compiler's library throws with and does not define**
+  (`__c_longjmp`). With this zig (0.17.0) the putting together fails for want of it. GridCraft
+  supplies it: three lines of assembly of its own (`JUMP_TAG`), written into the build's
+  folder and built beside the project's parts. The project's own files are still built with
+  no assembly at all.
+
+**What it does not change.** The program is no less shut in: it gains no way out, only a way
+back up its own stack. Nothing is asked of the loader or of the page. A program whose recipe
+does not say `setjmp` is built exactly as before.
+
+**Found by trying** (a program of twenty lines, in scratch, then the kit's own loader in
+Node): the first option alone leaves the header refusing; both leave the tag undefined; with
+the tag, a jump from five calls deep comes back with what it carried.
+
+**Checked.** The gate, whole. The recipe: the word is read, is no when not said, and is
+refused when it is anything but yes or no. With the compiler: a program that jumps does not
+build as any project is built (the compiler's own header says why), builds when its recipe
+says `setjmp`, counts no source that is not the project's, and leaves nothing in the project.
+
+**Seen, with Quake** (the reason for it): Quake's own jumps put back as id Software wrote
+them, its recipe saying `setjmp = true`, built by the kit, and run. In Node: the three demos
+round for seven minutes of the game's time, each ending in a jump, and a new game through
+the menu, walking and firing. Docked in the isolated copy: the three demos one after another
+in the window's own web view, and the sheet following. Of Quake's code only the two lines
+that print the date of the build are changed now.
+
+**Not seen**: an error inside the game, after which Quake should now go back to its console
+and the program go on. No way was found to make one happen on purpose in a demo.
+
+**What is left of what Quake taught** (ADR-0001, "Quake"): a program that stops shows one
+line of why; sound; a mouse.
 
 ### Backlog
 

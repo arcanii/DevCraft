@@ -791,6 +791,19 @@ included.
 
 Newest first.
 
+- **2026-10-14 (the C kit: a recipe may say `setjmp`):** Quake showed the kit's first gap,
+  and the owner said to close it. A C project's recipe may say `setjmp = true`: GridCraft
+  then compiles and puts the program together with what a jump takes in WebAssembly (its
+  exceptions), and supplies the tag a jump is thrown with, which this zig's library uses and
+  does not define (three lines of assembly, GridCraft's own). It is yes or no: a recipe is
+  still a list and never a command. **Seen with Quake**, its own jumps put back: built by the
+  kit, the three demos round in Node and docked in the isolated copy, and a new game. Only
+  the two lines that print the build's date are changed in Quake's code now. The starter's
+  comments and what agents are told name the setting. No hook in an upstream file changed.
+  **A picture of Quake is in the README**, on the owner's word ("if someone buys the game
+  the proceeds will go to the original publisher, not to me"): the fork's third exception
+  to the rule on other parties' images, listed in `ATTRIBUTION-aniefork.md` and said beside
+  the picture to be id Software's.
 - **2026-10-14 (Quake, built by the C kit: the second challenge):** The owner: "Can we test
   Quake in the C Development Kit - this is challenge 2", and yes to its two downloads.
   quakegeneric (the port; GPL) and the shareware game data, unmodified and checked, are in a

@@ -11,11 +11,20 @@
 //! optimize = "size"            # optional: size | speed | none
 //! entry = "main"               # optional: main (it has a main that runs), or none (its page
 //!                              # calls the functions it exports)
+//! setjmp = true                # optional: its C uses setjmp and longjmp
 //! ```
 //!
 //! **The recipe is a list, never a command.** A project says which of its files are built and
 //! with which few named options. GridCraft writes the compiler's command line itself: nothing a
 //! project says becomes an option of its own choosing.
+//!
+//! **`setjmp` is such a named setting** (the owner, 2026-10-14, after Quake was built without
+//! it). Old C leaves a function half way by a jump, and in WebAssembly a jump is made of
+//! exceptions, which the compiler makes only when told. A recipe that says `setjmp = true` is
+//! compiled and put together with those options ([`JUMP_FLAGS`]), and with the tag a jump is
+//! thrown with ([`JUMP_TAG`]), which the compiler's own library uses and does not define:
+//! that is three lines of assembly, GridCraft's own, never the project's. The program is no
+//! less shut in for it: it gains no way out, only a way back up its own stack.
 //!
 //! **The compiler is the person's**, found or named like the Python: `zig`, used as `zig cc`,
 //! which carries the C library a WebAssembly program needs. GridCraft ships none.
@@ -128,7 +137,16 @@ pub struct Recipe {
     pub define: Vec<String>,
     pub optimize: Optimize,
     pub entry: Entry,
+    /// Its C uses `setjmp` and `longjmp`: it is built with what a jump takes in WebAssembly.
+    pub setjmp: bool,
 }
+
+/// What a program that jumps is compiled and put together with: WebAssembly's exceptions, and
+/// the compiler's way of making a jump out of them.
+pub const JUMP_FLAGS: [&str; 3] = ["-mexception-handling", "-mllvm", "-wasm-enable-sjlj"];
+/// The tag a jump is thrown with, as a file of assembly. The compiler's library throws with
+/// it and leaves it to be defined; this defines it, for a program whose recipe says `setjmp`.
+pub const JUMP_TAG: &str = "\t.globl\t__c_longjmp\n\t.tagtype\t__c_longjmp i32\n__c_longjmp:\n";
 
 /// `[c]` as it is written.
 #[derive(Deserialize)]
@@ -138,6 +156,7 @@ pub(crate) struct Raw {
     define: Option<Vec<String>>,
     optimize: Option<String>,
     entry: Option<String>,
+    setjmp: Option<bool>,
 }
 
 /// A definition: a C name, or a name and a plain value. Nothing that could be read as another
@@ -190,6 +209,7 @@ impl Recipe {
             define: define.iter().map(|text| definition(text)).collect::<Result<_, _>>()?,
             optimize,
             entry,
+            setjmp: raw.setjmp.unwrap_or(false),
         })
     }
 
@@ -706,6 +726,9 @@ mod host {
             // otherwise stop a program that does. And no assembly: the assembler can take a file
             // in without the compiler saying so.
             cmd.args(["-fno-sanitize=undefined", "-fno-gnu-inline-asm"]);
+            if recipe.setjmp {
+                cmd.args(JUMP_FLAGS);
+            }
             for folder in &recipe.include {
                 cmd.arg("-I").arg(dir.join(folder));
             }
@@ -756,10 +779,25 @@ mod host {
         if let Some(why) = lock(&first_failure).take() {
             return Err(why);
         }
+        // A program that jumps is thrown with a tag that the compiler's library leaves to be
+        // defined: GridCraft's own three lines of assembly, made here and built beside the
+        // project's parts. (The project's own files are still built with no assembly.)
+        if recipe.setjmp {
+            fs::write(work.join("jump.s"), JUMP_TAG).map_err(|e| format!("{name} was not built: the build's folder can't be written ({e})."))?;
+            let mut cmd = zig_cc(compiler, work, cache);
+            cmd.args(["-mexception-handling", "-c", "jump.s", "-o", "jump.o"]);
+            let ran = run(cmd, STEP_TIMEOUT).map_err(|why| format!("{name} was not built. Making what a jump takes: {why}."))?;
+            if !ran.ok {
+                return Err(format!("{name} was not built: this compiler can't make what setjmp takes.\n{}", said(&ran, dir)));
+            }
+        }
         let mut cmd = zig_cc(compiler, work, cache);
         cmd.arg(recipe.optimize.flag());
         if recipe.entry == Entry::None {
             cmd.arg("-mexec-model=reactor");
+        }
+        if recipe.setjmp {
+            cmd.args(["-mexception-handling", "jump.o"]);
         }
         cmd.args((0..sources.len()).map(|index| format!("{index}.o"))).arg("-o").arg(OUTPUT);
         let ran = run(cmd, STEP_TIMEOUT).map_err(|why| format!("{name} was not built. Putting it together: {why}."))?;
@@ -978,6 +1016,37 @@ mod host {
         }
 
         #[test]
+        fn a_program_that_jumps_is_built_when_its_recipe_says_so() {
+            let Some(zig) = zig() else { return };
+            let t = TempDir::new("c-jump");
+            let at = places(&t);
+            starter::create_in(&at.projects, &kit::C, "Jumper", None).unwrap();
+            // Old C's way of leaving a function half way: back to where setjmp was, from five deep.
+            t.write(
+                "projects/jumper/src/main.c",
+                "#include <setjmp.h>\nstatic jmp_buf back;\nstatic void deep(int n) { if (n == 5) longjmp(back, 7); deep(n + 1); }\n\
+                 int main(void) { if (setjmp(back) == 0) { deep(0); return 1; } return 0; }\n",
+            );
+            trust(&at, "jumper");
+            // As any project is built, the compiler's own setjmp.h refuses, and says what it wants.
+            let refused = build(&at, "jumper", &zig).unwrap_err();
+            assert!(refused.contains("src/main.c does not compile") && refused.contains("Setjmp/longjmp support requires"), "{refused}");
+            assert_eq!(standing(&at.settings, "jumper", project::load(&at.projects.join("jumper")).fingerprint.as_deref()), Standing::NotBuilt);
+            // Its recipe says it jumps: it is built, and what was built is a WebAssembly program.
+            let manifest = fs::read_to_string(at.projects.join("jumper/project.toml")).unwrap();
+            assert!(manifest.contains("\n[c]\n"), "{manifest}");
+            t.write("projects/jumper/project.toml", &manifest.replace("\n[c]\n", "\n[c]\nsetjmp = true\n"));
+            trust(&at, "jumper");
+            let built = build(&at, "jumper", &zig).unwrap();
+            assert_eq!(fs::read(&built.program).unwrap().get(..4), Some(b"\0asm".as_slice()));
+            assert_eq!(built.sources, 1, "the tag a jump takes is GridCraft's, and no source of the project's");
+            // Nothing of the making is left in the project, and the folder the compiler worked in is gone.
+            assert!(!at.projects.join("jumper/jump.s").exists() && !at.projects.join("jumper/jump.o").exists());
+            let work = built_dir(&at.settings).join(".work");
+            assert!(fs::read_dir(&work).map(|mut left| left.next().is_none()).unwrap_or(true));
+        }
+
+        #[test]
         fn a_build_takes_nothing_in_from_outside_the_project() {
             let Some(zig) = zig() else { return };
             let t = TempDir::new("c-outside");
@@ -1064,6 +1133,12 @@ mod tests {
         assert_eq!(plain.sources, ["src/main.c"]);
         assert!(plain.include.is_empty() && plain.define.is_empty());
         assert_eq!((plain.optimize, plain.entry), (Optimize::Size, Entry::Main), "what it is when nothing is said");
+        // A program jumps only when its recipe says so, in that one word.
+        assert!(!plain.setjmp);
+        assert!(read("[c]\nsources = [\"src\"]\nsetjmp = true").unwrap().setjmp);
+        assert!(!read("[c]\nsources = [\"src\"]\nsetjmp = false").unwrap().setjmp);
+        assert_eq!(JUMP_FLAGS, ["-mexception-handling", "-mllvm", "-wasm-enable-sjlj"]);
+        assert!(JUMP_TAG.lines().count() == 3 && JUMP_TAG.contains(".tagtype\t__c_longjmp i32") && !JUMP_TAG.contains(".inc"));
         let full = read("[c]\nsources = [\"src\", \"port/glue.c\"]\ninclude = [\"src\", \"vendor/doom\"]\ndefine = [\"_DEFAULT_SOURCE\", \"LEVEL=2\", \"V=1.9-b\"]\noptimize = \"speed\"\nentry = \"none\"").unwrap();
         assert_eq!((full.sources.len(), full.include.len(), full.define.len()), (2, 2, 3));
         assert_eq!((full.optimize, full.entry), (Optimize::Speed, Entry::None));
@@ -1106,6 +1181,9 @@ mod tests {
             "optimize = \"fast\"",
             "entry = \"_start\"",
             "entry = 7",
+            // Whether it jumps is yes or no: never a word that could be an option.
+            "setjmp = \"-fplugin=x\"",
+            "setjmp = 1",
         ] {
             assert!(with(bad).is_err(), "{bad:?}");
         }

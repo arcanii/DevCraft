@@ -34,7 +34,8 @@ rules.
   meant for upstream. **A second (2026-10-14): one picture of Doom running**, in the fork's
   README, as the C kit's demonstration: the shareware version, its data unmodified, said
   beside the picture to be id Software's and not the fork's. Doom's code and its game data
-  stay out of the repository as before.
+  stay out of the repository as before. **A third, the same day: one picture of Quake
+  running**, on the same terms, as the C kit's second demonstration.
 - **`README.md` at the root is the fork's own, and it is about DevCraft.** It is the one
   upstream file the fork replaces whole (the owner, 2026-10-14). **DevCraft** is the owner's
   name for what the fork specialises in: its development kits (PythonCraft is the first; the

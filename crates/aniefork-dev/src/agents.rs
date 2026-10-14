@@ -3006,8 +3006,8 @@ Without the line it is a PythonCraft project (kit = "pythoncraft"), which is wha
 here: a panel and Python scripts. A project of the C Development Kit (kit = "c") holds C sources and a
 panel; it has no scripts, and may ask for read, write and files only. Its project.toml has a
 recipe, [c], that says what is built: sources = ["src"] (C files, or folders of them), and
-optionally include (folders), define (NAME or NAME=value), optimize (size, speed, none) and
-entry (main, or none). GridCraft builds it as one WebAssembly program with the person's
+optionally include (folders), define (NAME or NAME=value), optimize (size, speed, none),
+entry (main, or none) and setjmp (true when its C uses setjmp and longjmp). GridCraft builds it as one WebAssembly program with the person's
 compiler when the person asks, for a project they trust, and keeps the program outside the
 project. The project's panel runs it (topic "panel" says how, under CProgram). The program
 can reach nothing but what its page hands it: what it is to do with a workbook, the page

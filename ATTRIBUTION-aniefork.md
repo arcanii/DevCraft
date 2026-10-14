@@ -58,6 +58,7 @@ that the table above lists, and nothing else that is another party's.
 | `docs/images-aniefork/devcraft-project.png` | the fork's contributors | screenshot of this fork of GridCraft: a starter project's part of the Development window | MIT OR Apache-2.0 | README picture |
 | `docs/images-aniefork/devcraft-console.png` | the fork's contributors | screenshot of this fork of GridCraft: the Console and its immediate line | MIT OR Apache-2.0 | README picture |
 | `docs/images-aniefork/devcraft-doom.png` | the fork's contributors made the picture; **what it shows of Doom is id Software's** | screenshot of this fork of GridCraft with Doom running in a docked panel, built by the C Development Kit | the picture's own parts: MIT OR Apache-2.0; **Doom's artwork: not the fork's, and not licensed by it** | README picture; the second exception, below |
+| `docs/images-aniefork/devcraft-quake.png` | the fork's contributors made the picture; **what it shows of Quake is id Software's** | screenshot of this fork of GridCraft with Quake running in a docked panel, built by the C Development Kit | the picture's own parts: MIT OR Apache-2.0; **Quake's artwork: not the fork's, and not licensed by it** | README picture; the third exception, below |
 
 ## A second exception: a picture of Doom running
 
@@ -80,6 +81,28 @@ which is a frame of Doom as it plays.
   says so beside it.
 - **It is not to be offered upstream**, like the marks above.
 - Another picture of Doom goes in only on the owner's word.
+
+## A third exception: a picture of Quake running
+
+**The owner's word (2026-10-14):** "Yes, let's add the Quake picture - if someone buys the game
+the proceeds will go to the original publisher, not to me. This is fair use, since I'm actually
+unintentionally promoting the game for them."
+
+So a second picture in the repository shows another party's artwork: `devcraft-quake.png`, a
+quarter of which is a frame of Quake as it plays.
+
+- **Quake is id Software's**: the game, its name and its artwork.
+- **What ran is the shareware version, its game data unmodified**: `pak0.pak`, version 1.06,
+  18,689,235 bytes, MD5 `5906e5998fc3d896ddaf5e6a62e03abb` (checked on the file that ran).
+  The engine that ran it is quakegeneric, a port of the source id Software released under the
+  GPL, with two lines changed (they printed the date of the build) and one file of glue.
+- **Its shareware licence** forbids commercial use of the game "or any portion thereof, such
+  as a screen display or a screenshot". The fork's use is not commercial: the picture shows
+  what a development kit built and ran, and sells nothing. That reading is the owner's.
+- **Neither is in this repository**: not Quake's code, not its game data. Only the picture.
+- **It is said wherever the picture is shown** that it is not the fork's Quake.
+- **It is not to be offered upstream.** Another picture of Quake goes in only on the owner's
+  word.
 
 ## Upstream's marks: removed from the fork
 
