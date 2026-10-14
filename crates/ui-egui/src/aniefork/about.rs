@@ -23,8 +23,14 @@ pub const UPSTREAM_LINK: (&str, &str) = ("github.com/storytold/gridcraft", "http
 pub const HELP_MENU: [(&str, &str); 2] =
     [("DevCraft on GitHub", "url:https://github.com/arcanii/DevCraft"), ("GridCraft on GitHub", "url:https://github.com/storytold/gridcraft")];
 
+/// Which DevCraft this is: its own version, numbered apart from GridCraft's above it.
+pub fn devcraft() -> String {
+    format!("DevCraft {}", gridcraft_aniefork_dev::DEVCRAFT_VERSION)
+}
+
 /// Hook of the About window (`dialogs::about`): what stands under the name and the version.
 pub fn credits(ui: &mut egui::Ui) {
+    ui.label(devcraft());
     ui.label(SAYS);
     ui.label(FORK);
     ui.hyperlink_to(FORK_LINK.0, FORK_LINK.1);
@@ -76,6 +82,9 @@ mod tests {
         for said in [SAYS, FORK, BASED_ON, FORK_LINK.0, UPSTREAM_LINK.0] {
             assert!(h.query_by_label(said).is_some(), "{said}");
         }
+        // DevCraft has a version of its own, which is not GridCraft's.
+        assert_eq!(devcraft(), "DevCraft 0.1.0");
+        assert!(h.query_by_label(&devcraft()).is_some() && gridcraft_aniefork_dev::DEVCRAFT_VERSION != env!("CARGO_PKG_VERSION"));
         // What upstream's own build says there is not said by the fork's.
         for gone in
             ["A clean-room, open-source, Rust-native spreadsheet. Part of ArtCraft.", "getartcraft.com/apps/gridcraft", "Join the ArtCraft Discord"]

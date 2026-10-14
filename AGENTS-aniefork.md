@@ -54,4 +54,8 @@ rules.
   except to say whose work GridCraft is. Upstream's own files that name the team in words
   (`AGENTS.md`, `CLAUDE.md`, `ATTRIBUTION.md`, `NOTICE`, the licences) stay as they are: the
   copyright notices must.
+- **DevCraft has a version of its own**: `DEVCRAFT_VERSION` in `crates/aniefork-dev/src/lib.rs`
+  (0.1.0 since 2026-10-14). It is the fork's, and is changed only when the owner says a
+  version is made. GridCraft's version (the workspace's) is upstream's and is never changed
+  here: a merge brings it.
 - **Syncing with upstream:** `ROADMAP-aniefork.md` lists the steps and what can still conflict.

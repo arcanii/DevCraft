@@ -139,11 +139,16 @@ fn run(said: Sender<Told>, ready: Sender<EventLoopProxy<Tell>>, wake: egui::Cont
     }
     // A class of its own: the app's first window is made by another library, which names its
     // class as this one would by default.
+    // Its own icon, in the title bar and on the taskbar: the toolbox, drawn in code. A window
+    // that can't be given one keeps the system's.
+    let toolbox = || tao::window::Icon::from_rgba(super::icon::toolbox(super::icon::SIZE), super::icon::SIZE, super::icon::SIZE).ok();
     let window = WindowBuilder::new()
         .with_title(TITLE)
         .with_inner_size(LogicalSize::new(1040.0, 820.0))
         .with_min_inner_size(LogicalSize::new(640.0, 420.0))
         .with_window_classname("GridCraft Development Window")
+        .with_window_icon(toolbox())
+        .with_taskbar_icon(toolbox())
         .build(&event_loop);
     let window = match window {
         Ok(window) => window,
@@ -217,6 +222,17 @@ pub fn keep_up(app: &mut SheetApp, ctx: &egui::Context) {
             rfd::FileDialog::new()
                 .set_title("Load a development kit")
                 .add_filter("GridCraft development kit", &["gridkit"])
+                .pick_file()
+                .and_then(|chosen| chosen.to_str().map(str::to_string))
+        }));
+    }
+    // So is the C kit's compiler: the person points at the zig program, or types where it is.
+    if !devpage::has_compiler_picker() {
+        devpage::set_compiler_picker(Box::new(|| {
+            rfd::FileDialog::new()
+                .set_title("Choose the zig program")
+                .add_filter("Programs", &["exe"])
+                .add_filter("All files", &["*"])
                 .pick_file()
                 .and_then(|chosen| chosen.to_str().map(str::to_string))
         }));

@@ -17,6 +17,8 @@
 //! told there is one, and panels open in the browser as before.
 
 #[cfg(target_os = "windows")]
+mod icon;
+#[cfg(target_os = "windows")]
 mod page;
 #[cfg(target_os = "windows")]
 mod window;

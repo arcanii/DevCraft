@@ -118,6 +118,17 @@ pub fn has_kit_picker() -> bool {
     kits::has_picker()
 }
 
+/// The shell says how the person chooses the C kit's compiler: with the operating system's own
+/// file dialog. Without it the compiler is named by typing where it is.
+pub fn set_compiler_picker(picker: Box<dyn Fn() -> Option<String>>) {
+    kits::set_compiler_picker(picker);
+}
+
+/// Whether the shell has said so already.
+pub fn has_compiler_picker() -> bool {
+    kits::has_compiler_picker()
+}
+
 /// The codes of the badges the page may be told to draw in a colour of their own: for the
 /// shell's test that the page has one for each.
 pub fn badge_codes() -> Vec<&'static str> {
@@ -563,6 +574,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         // A development kit, loaded from a package the person chooses in the operating
         // system's own dialog (the page names no file), and removed: by its id.
         "loadKit" => Some(Act::LoadKit),
+        "pickCompiler" => Some(Act::PickCompiler),
         "removeKit" => project_id(&message).map(Act::RemoveKit),
         "createShowcase" => Some(Act::CreateShowcase),
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),

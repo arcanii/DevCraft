@@ -407,6 +407,28 @@ pub(super) fn pick_package() -> Result<Option<String>, String> {
     PICKER.with(|kept| kept.borrow().as_ref().map(|pick| pick()).ok_or_else(|| NO_PICKER.to_string()))
 }
 
+thread_local! {
+    /// The shell's way to let the person choose the compiler's program, when it has one.
+    static COMPILER_PICKER: RefCell<Option<Box<dyn Fn() -> Option<String>>>> = const { RefCell::new(None) };
+}
+
+/// The shell says how the person chooses the compiler: the operating system's own file dialog.
+pub(super) fn set_compiler_picker(picker: Box<dyn Fn() -> Option<String>>) {
+    COMPILER_PICKER.with(|kept| *kept.borrow_mut() = Some(picker));
+}
+
+pub(super) fn has_compiler_picker() -> bool {
+    COMPILER_PICKER.with(|kept| kept.borrow().is_some())
+}
+
+/// Asks the person to choose the compiler's program. `Err` when there is no way to ask;
+/// `Ok(None)` when they chose nothing.
+pub(super) fn pick_compiler() -> Result<Option<String>, String> {
+    COMPILER_PICKER
+        .with(|kept| kept.borrow().as_ref().map(|pick| pick()))
+        .ok_or_else(|| "This copy of GridCraft can't show a file dialog: type where the compiler is.".to_string())
+}
+
 /// The projects of one kit, as they were described.
 fn of_kit<'a>(found: &'a Found, kit: &'a Kit) -> impl Iterator<Item = &'a Json> {
     found.projects.iter().filter(move |project| kit_of(project).id == kit.id)
@@ -650,12 +672,18 @@ fn console_says() -> String {
 }
 
 /// The top of the window: everything at a glance, each with the way to its own part.
+/// Which DevCraft this is, and which GridCraft it is built on: said at the top of the window.
+pub(super) fn versions() -> String {
+    format!("DevCraft {}  \u{b7}  GridCraft {}", gridcraft_aniefork_dev::DEVCRAFT_VERSION, env!("CARGO_PKG_VERSION"))
+}
+
 pub(super) fn overview(app: &SheetApp, now: &agents::Snapshot) -> Json {
     let found = found();
     let space = space();
     json!({
         "kind": "overview",
         "title": TOP,
+        "version": versions(),
         "intro": card::INTRO,
         "server": server_card(now),
         "kitsTitle": KITS,
@@ -671,7 +699,7 @@ pub(super) fn overview(app: &SheetApp, now: &agents::Snapshot) -> Json {
 /// What is said where no compiler is named: which one is looked for, and when.
 pub(super) const COMPILER_FOUND: &str = "zig, looked for when a project is built";
 /// Said beside the field the compiler is named in.
-pub(super) const COMPILER_HINT: &str = "A path or a command. Empty: zig, wherever programs are found.";
+pub(super) const COMPILER_HINT: &str = "The zig program, the folder it is in, or a command. Empty: zig, wherever programs are found.";
 /// Said of a project that has a recipe and is not trusted as it is.
 pub(super) const BUILD_NEEDS_TRUST: &str = "It is built once you trust it as it is: building runs your compiler over its files.";
 
@@ -893,6 +921,7 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
             "says": if named.is_empty() { COMPILER_FOUND } else { named.as_str() },
             "named": named,
             "hint": COMPILER_HINT,
+            "canPick": has_compiler_picker(),
         });
     }
     // The showcase is a project of the first kit.
@@ -1456,7 +1485,7 @@ mod tests {
         // What only the first kit has is not said of this one.
         assert_eq!((&empty["python"], &empty["showcase"]), (&Json::Null, &Json::Null));
         // It builds: the compiler is named here, or looked for. The first kit has none to name.
-        assert_eq!(empty["compiler"], json!({"title": "C compiler", "says": COMPILER_FOUND, "named": "", "hint": COMPILER_HINT}));
+        assert_eq!(empty["compiler"], json!({"title": "C compiler", "says": COMPILER_FOUND, "named": "", "hint": COMPILER_HINT, "canPick": false}));
         assert_eq!(kit_pane(&a, &ctx, &kit::PYTHONCRAFT)["compiler"], Json::Null);
         std::fs::write(s.0.join("developer.json"), r#"{"compiler": "C:\\tools\\zig\\zig.exe"}"#).unwrap();
         let named = kit_pane(&a, &ctx, &kit::C);

@@ -61,6 +61,12 @@ pub mod vba;
 
 use serde_json::{Value as Json, json};
 
+/// DevCraft's own version: what the fork adds to GridCraft, numbered apart from GridCraft's
+/// version, which is upstream's (the owner, 2026-10-14: "a devCraft marketing version different
+/// than GridCraft (start at 0.1.0)"). It is changed by hand, when the owner says a version is
+/// made; the Development window and Help ▸ About show it.
+pub const DEVCRAFT_VERSION: &str = "0.1.0";
+
 pub use manifest::{Manifest, Permission};
 pub use project::Project;
 pub use trust::{Status, TrustStore};

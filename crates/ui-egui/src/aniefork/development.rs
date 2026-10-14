@@ -161,6 +161,9 @@ pub(super) enum Act {
     /// was loaded. Each ends in the operating system's own question.
     LoadKit,
     RemoveKit(String),
+    /// Choose the compiler in the operating system's own file dialog, and keep and check
+    /// what was chosen as [`Act::CheckCompiler`] does.
+    PickCompiler,
     /// Run a line typed into the immediate line: one call into a project (`immediate.rs`).
     Immediate(String),
 }
@@ -818,6 +821,7 @@ fn nav_part(ui: &mut egui::Ui, rows: &Json, filter: &mut String, action: &mut Op
 fn overview_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
     let t = Tokens::get(ui.ctx());
     let warn = ui.visuals().warn_fg_color;
+    ui.weak(said(told, "version"));
     ui.label(said(told, "intro"));
     ui.add_space(4.0);
     // The MCP server.
@@ -949,6 +953,9 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
             ui.add_sized(size, egui::TextEdit::singleline(&mut state.compiler).hint_text(kits::COMPILER_FOUND))
                 .labelled_by(label.id)
                 .on_hover_text(said(compiler, "hint"));
+            if kits::has_compiler_picker() && ui.button("Browse…").on_hover_text("Opens a file dialog to choose the zig program").clicked() {
+                *action = Some(Act::PickCompiler);
+            }
             if ui.button("Check Compiler").on_hover_text("Keeps the name, and asks the compiler what it is").clicked() {
                 *action = Some(Act::CheckCompiler(state.compiler.clone()));
             }
@@ -1493,6 +1500,12 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
         }
         Act::LoadKit => load_kit(app, state),
         Act::RemoveKit(id) => remove_kit(app, state, &id),
+        Act::PickCompiler => {
+            // The person chooses the program in the operating system's own dialog: nothing is
+            // run but what they pointed at, and it is asked what it is like any name typed.
+            let Some(chosen) = kits::pick_compiler()? else { return Ok(String::new()) };
+            carry_out(app, ctx, state, Act::CheckCompiler(chosen), driven, open)
+        }
         Act::CreateProject { name, for_workbook, kit } => {
             let kit = kits::kit_named(kit).ok_or("There is no such development kit.")?;
             // The workbook it is the code of is the one that is open: nobody names another.
@@ -3829,6 +3842,46 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         panic!("{label:?} never came on screen");
+    }
+
+    #[test]
+    fn the_compiler_is_chosen_in_a_file_dialog_by_hand() {
+        let s = Sandbox::new("dev-pick-compiler");
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        let (mut state, mut open) = (State::default(), true);
+        let kit_part = |h: &mut Harness| {
+            let ctx = h.ctx.clone();
+            kits::kit_pane(h.state_mut(), &ctx, &kit::C)["compiler"]["canPick"].clone()
+        };
+        // A shell that can show no file dialog: the part does not offer one, and asking says why.
+        assert_eq!(kit_part(&mut h), json!(false));
+        let none = super::act(h.state_mut(), &ctx, &mut state, Act::PickCompiler, false, &mut open).unwrap_err();
+        assert!(none.contains("can't show a file dialog"), "{none}");
+        // The shell says how to ask. What drives the window can't open the dialog: choosing a
+        // program that GridCraft will run is the person's.
+        let asked_times = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = asked_times.clone();
+        kits::set_compiler_picker(Box::new(move || {
+            counted.set(counted.get() + 1);
+            None
+        }));
+        assert_eq!(kit_part(&mut h), json!(true));
+        assert_eq!(super::act(h.state_mut(), &ctx, &mut state, Act::PickCompiler, true, &mut open), Err(presence::BY_HAND.to_string()));
+        assert_eq!(asked_times.get(), 0, "no dialog was shown");
+        // By hand, and nothing chosen: nothing is kept.
+        assert_eq!(super::act(h.state_mut(), &ctx, &mut state, Act::PickCompiler, false, &mut open), Ok(String::new()));
+        assert_eq!((asked_times.get(), settings::load(&s.0.join("developer.json")).compiler.as_str()), (1, ""));
+        // What is chosen is kept, and asked what it is, as a name typed is: this one is no compiler.
+        kits::set_compiler_picker(Box::new(|| Some("gridcraft-no-such-compiler".to_string())));
+        let refused = super::act(h.state_mut(), &ctx, &mut state, Act::PickCompiler, false, &mut open).unwrap_err();
+        assert!(refused.contains("gridcraft-no-such-compiler did not answer as zig does"), "{refused}");
+        assert_eq!(settings::load(&s.0.join("developer.json")).compiler, "gridcraft-no-such-compiler");
+        assert_eq!(state.compiler, "gridcraft-no-such-compiler");
+        // The top of the window says which DevCraft this is, and which GridCraft it is built on.
+        let top = kits::versions();
+        assert!(top.starts_with("DevCraft 0.1.0") && top.ends_with(&format!("GridCraft {}", env!("CARGO_PKG_VERSION"))), "{top}");
     }
 
     #[test]

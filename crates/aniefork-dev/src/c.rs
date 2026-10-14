@@ -585,10 +585,19 @@ mod host {
     }
 
     /// Finds the compiler to use: the person's choice when there is one, or `zig` where
-    /// programs are looked for.
+    /// programs are looked for. The choice is the program, or the folder it is in: zig comes
+    /// as a folder with `zig` inside, and the folder is what a person has in hand.
     pub fn find(configured: &str) -> Result<Compiler, String> {
         let configured = configured.trim();
         if !configured.is_empty() {
+            if Path::new(configured).is_dir() {
+                let inside = Path::new(configured).join(if cfg!(windows) { "zig.exe" } else { "zig" });
+                if !inside.is_file() {
+                    return Err(format!("{configured} is a folder with no zig in it. Name the zig program, or the folder it is in."));
+                }
+                let program = inside.to_string_lossy().into_owned();
+                return probe(&program).ok_or_else(|| format!("{program} did not answer as zig does. (The C kit builds with zig, used as zig cc.)"));
+            }
             return probe(configured).ok_or_else(|| format!("{configured} did not answer as zig does. (The C kit builds with zig, used as zig cc.)"));
         }
         probe("zig").ok_or_else(|| {
@@ -924,6 +933,20 @@ mod host {
         fn zig() -> Option<String> {
             let named = std::env::var("GRIDCRAFT_TEST_ZIG").unwrap_or_default();
             find(&named).ok().map(|_| named)
+        }
+
+        #[test]
+        fn the_compiler_is_named_by_its_program_or_by_the_folder_it_is_in() {
+            // A folder that holds no zig says so, and is not run as a program.
+            let t = TempDir::new("c-folder");
+            let empty = t.0.display().to_string();
+            assert_eq!(find(&empty).unwrap_err(), format!("{empty} is a folder with no zig in it. Name the zig program, or the folder it is in."));
+            // The folder zig is in finds the same compiler as the program does.
+            let Some(zig) = zig() else { return };
+            let Some(folder) = Path::new(&zig).parent().filter(|folder| folder.is_dir() && !folder.as_os_str().is_empty()) else { return };
+            let (by_program, by_folder) = (find(&zig).unwrap(), find(&format!("  {}  ", folder.display())).unwrap());
+            assert_eq!((by_folder.version.as_str(), &by_folder.lib), (by_program.version.as_str(), &by_program.lib));
+            assert!(Path::new(&by_folder.program).is_file(), "what is run is the program inside");
         }
 
         #[test]

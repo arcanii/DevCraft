@@ -2887,6 +2887,116 @@ and the program go on. No way was found to make one happen on purpose in a demo.
 **What is left of what Quake taught** (ADR-0001, "Quake"): a program that stops shows one
 line of why; sound; a mouse.
 
+### What trying Quake by hand asked of the Development window (2026-10-14)
+
+The owner put Quake in their own GridCraft ("put everything in the real projects folder":
+the project's 121 files went into their projects folder, each checked the same as in
+`G:\gridcraft-quake`, and nothing else of their settings was written), and tried it. What
+they met, and asked for:
+
+- **"I get a zig error when I test it."** They had named the folder zig is in
+  (`C:\util\Tools\zig-0.17.0`) and not the program in it, and were told it "did not answer
+  as zig does". **The kit takes either now** (`c::find`): a folder with zig inside is the
+  compiler; a folder with none says so, and says what to name. Zig comes as a folder, and
+  the folder is what a person has in hand.
+- **"For the C compiler, can we add a dialog to find the compiler instead of just typing it
+  in?"** **Browse…** beside the field opens the operating system's own file dialog
+  (`Act::PickCompiler`; the shell says how, as it does for a kit's package). What is chosen
+  is kept and asked what it is, exactly as a name typed is. It is by hand: what drives the
+  window can't open the dialog, since what is chosen is a program GridCraft will run.
+- **"On the development window, should we add a refresh button (or add a check if any files
+  change)?"** The check is there already and was said so: while the window is open what it
+  shows is worked out again a few times a second, and the projects folder is read again at
+  most once a second, so a project put there appears by itself. No button was added: it
+  would do nothing the window does not do. (The picture they sent was taken as the files
+  were still being copied.)
+- **"Let's maintain a devCraft marketing version different than GridCraft (start at 0.1.0) -
+  This can be seen from the Development menu."** `DEVCRAFT_VERSION` (`aniefork-dev`), 0.1.0,
+  changed by hand when the owner says a version is made. The top of the Development window
+  says "DevCraft 0.1.0 · GridCraft 0.6.1", and Help ▸ About says which DevCraft under
+  GridCraft's own version. GridCraft's version stays upstream's.
+- **"We need a better dialog icon for the Development dialogs."** The Development window had
+  no icon of its own, so the system's blank one. It has the toolbox now, in its title bar
+  and on the taskbar: the same toolbox as the ribbon's button and the page's heading, drawn
+  dot by dot in code (`apps/gridcraft/src/aniefork/icon.rs`), so the repository holds no
+  picture file for it.
+
+**Checked.** The compiler by its folder, with the real zig, and a folder with none; the
+dialog refused to what drives the window, nothing kept when nothing is chosen, what is
+chosen kept and asked; the versions as they are said; the toolbox's picture (its colours
+where they belong, clear around it, the same on both sides, at three sizes).
+
+### Quake played by hand, and what was asked next: the mouse, leaving, OpenGL, a network (2026-10-14)
+
+**The owner played it**: "I ran Quake by hand, connected to a Quake sheet." So the panel's own
+handling of the keys, which nothing here had seen, works. Four things came of it.
+
+**1. The mouse (built, in the Quake project, 0.3.0).** "Is there a way we can support mouse
+capture - we can use key combo to unlock it, mouse click in window to capture?" A click on
+the picture gives it the keys, as before; a click when it has them gives the game the mouse
+(the browser's pointer lock), until Esc, which is the browser's own way out and which no
+page can take away, or Ctrl+Alt+M. While the game has it, moving it looks about (Quake's own
+`+mlook` is held for it) and its buttons are Quake's. Nothing of the kit changed: the page
+hands the game how far the mouse moved, as it hands it the keys. **Seen in Node**: with the
+mouse handed over, 300 dots across turned the player twenty degrees, as Quake's own numbers
+say it should, and the left button fired once. **Not seen**: the mouse held in the docked
+panel. It was not tried from here on purpose: a click posted to the picture could take the
+real pointer of the machine the owner was using.
+
+**2. Leaving the game (built, 0.3.0).** "When I exit the game it just freezes." Quake's own
+Quit ends the program, as it should, and the page showed its last picture and one line. It
+now dims the picture, says "You left Quake", and offers "Start Quake again", which loads the
+page anew. **Seen in Node**: Quit through the game's menu ends the program with 0. **Not
+seen**: the page's own words for it.
+
+**3. OpenGL (looked into, not built).** "Is there a way we can expose OpenGL bindings for 3D
+games like Quake?" There is, and it is the kit's to give, not a project's:
+
+- A C program here calls only what the kit's loader hands it (`c_program.rs`): a clock, a
+  place to print, files in memory. Anything else it asks for is answered "not there". A
+  program that draws does so today by filling a picture the page then copies to a canvas,
+  dot by dot: the processor does all of it.
+- The web view has WebGL 2, which is OpenGL ES 3 in all but name. **The loader could hand a
+  program those calls**, bound to a canvas the page names (`CProgram.load({ canvas })`): each
+  GL call a function the program imports, with the numbers GL uses for textures, buffers and
+  shaders kept in a table on the page's side. That is some hundreds of functions for the
+  whole of it, and a few dozen for a first program that draws lit triangles. It lets nothing
+  out: a page may draw with WebGL already.
+- **Quake's own OpenGL (GLQuake) is the old kind** (`glBegin`, a stack of matrices), which
+  WebGL does not have. It would need either a port of Quake written for OpenGL ES 2, or a
+  layer of C that turns the old calls into the new, built with the project.
+- So, in stages: (G1) the loader hands a small part of OpenGL ES to a program, and the C
+  starter can draw a turning triangle; (G2) the part grows to what a real game needs; (G3) a
+  Quake that draws with it. G1 is days, not hours; G3 is the long one.
+
+**4. A network (looked into, not built).** "Can we investigate adding networking function to
+the sandbox? What would this take?"
+
+- **A page can't open the kind of connection games use.** Quake speaks UDP. A page may make
+  web requests, WebSockets and the like, and nothing else: so a program in a panel can't
+  reach a Quake server, or another GridCraft, by itself, whatever the kit allows it.
+- **GridCraft can, on its behalf.** The bridge that serves a panel is GridCraft's own program
+  on the person's machine (`bridge.rs`). It could carry packets for a project: the program
+  hands the page a packet and an address, the page hands it to the bridge, and the bridge
+  sends it and keeps what comes back for the page to collect. Games ask for packets without
+  waiting, once a frame, which suits a page.
+- **What it costs is the kit's promise.** A C program "can do only what its page hands it",
+  and so a project that may read the workbook can't send it anywhere. With a network it
+  could. So it would have to be: a permission a C project asks for, which it can't today
+  (`network` is the first kit's, and the C kit's projects may ask for `read`, `write` and
+  `files`); the addresses it may reach named in its `project.toml` and shown before trust,
+  with GridCraft holding it to them; the machine itself and the home network closed unless
+  named, so a project can't knock on what is behind the person's router; and limits on how
+  much. The page of a project without it stays as it is: it may talk to GridCraft and
+  nothing else.
+- **In stages**: (N1) the permission and the list of addresses, in the manifest and in
+  review, with nothing sent yet; (N2) the bridge carries packets, and the loader hands a
+  program the few calls for it; (N3) Quake's own network part written on those calls, and
+  two GridCrafts on one network playing each other. N1 is small. N2 is the large one: the
+  bridge is a small server written by hand, and every line of this is security.
+- **What would be decided first, by the owner**: whether a project that may read the
+  workbook may have a network at all, or only one that may not.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

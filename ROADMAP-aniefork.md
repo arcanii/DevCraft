@@ -791,6 +791,25 @@ included.
 
 Newest first.
 
+- **2026-10-14 (Quake played by hand; the mouse; leaving; OpenGL and a network looked into):**
+  The owner played Quake in their own GridCraft, linked to its sheet. From what they asked:
+  the Quake project (outside the repository, 0.3.0) **takes the mouse** when its picture is
+  clicked a second time, until Esc or Ctrl+Alt+M, and **says when the game was left** and
+  offers to start it again, where it used to look frozen. Seen in Node: the mouse turning
+  the player and firing, and Quit ending the program; not seen: either in the docked panel.
+  **OpenGL** and **a network** for C programs were looked into and not built: what each
+  would take, in stages, and what a network would cost the kit's promise, is in ADR-0001
+  ("Quake played by hand"). Both wait for the owner's word.
+- **2026-10-14 (the Development window, after Quake was tried by hand):** Quake was put in
+  the owner's own projects folder on their word, and they tried it. From what they met:
+  **the C kit's compiler may be named by the folder zig is in** (they had named the folder
+  and were told it did not answer); **Browse…** beside the compiler's field opens the
+  operating system's file dialog, by hand; **DevCraft has a version of its own**, 0.1.0
+  (`DEVCRAFT_VERSION`), said at the top of the Development window and in Help ▸ About,
+  apart from GridCraft's, which stays upstream's; **the Development window has an icon**,
+  the toolbox, drawn in code. A refresh button was asked about and not added: the window
+  already reads the projects folder again about once a second. No hook in an upstream file
+  changed.
 - **2026-10-14 (the C kit: a recipe may say `setjmp`):** Quake showed the kit's first gap,
   and the owner said to close it. A C project's recipe may say `setjmp = true`: GridCraft
   then compiles and puts the program together with what a jump takes in WebAssembly (its
