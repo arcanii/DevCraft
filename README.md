@@ -1,344 +1,194 @@
-<p align="center">
-  <a href="https://getartcraft.com/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/artcraft-logo-white.svg">
-      <img alt="ArtCraft" src="docs/brand/artcraft-logo.svg" width="200">
-    </picture>
-  </a>
-</p>
-
-<h1 align="center">GridCraft</h1>
+<h1 align="center">DevCraft</h1>
 
 <p align="center">
-  <b>Spreadsheets and data; an open-source, clean-room reimplementation of Microsoft Excel, rebuilt in pure Rust.</b>
+  <b>A spreadsheet you can build on: development kits, projects you choose to trust, Python and web panels.</b>
 </p>
 
 <p align="center">
-  A fast, open-source, clean-room take on the Excel workflow. It runs natively on macOS,
-  Windows, Linux and BSD, and in the browser via WebAssembly.<br>
-  <i>By the ArtCraft team.</i>
+  DevCraft is a fork of <a href="https://github.com/storytold/gridcraft">GridCraft</a>, the
+  open-source, Rust-native spreadsheet by the ArtCraft team.<br>
+  The program it builds is still GridCraft. What the fork adds to it, and specialises in, is <b>DevCraft</b>.
 </p>
 
 <p align="center">
-  <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-147a40?style=flat-square&logo=rust&logoColor=white">
-  <img alt="Runs on macOS, Windows, Linux, BSD and the web" src="https://img.shields.io/badge/runs%20on-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20BSD%20%C2%B7%20Web-1f9d55?style=flat-square">
-  <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-147a40?style=flat-square">
-  <img alt="Agent-drivable over MCP" src="https://img.shields.io/badge/agents-MCP-1f9d55?style=flat-square">
+  <img src="docs/images-aniefork/devcraft-panel.png" alt="GridCraft with the Developer tab shown and a Svelte panel docked beside a sales dashboard. The panel shows the count, sum, average, smallest and largest of the six cells that are selected, and a bar for each." width="900">
 </p>
+
+## What DevCraft is
+
+Excel has VBA. DevCraft is this fork's answer to it: a way to extend the spreadsheet with your
+own code, built around a question VBA never asked well: *do you trust this?*
+
+- A **development kit** is a way of building on GridCraft. A kit says what a project is made of
+  and how it is run. Two are built in, and more can be loaded from a package file.
+- A **project** is a folder: a `project.toml`, code, and a web panel. It is for one workbook
+  (that workbook's code) or for any workbook.
+- **A project does nothing until you trust it.** You are shown what it asks to be allowed and
+  every file it holds. What you trust is those exact contents: change one file and it is
+  untrusted again.
+- **Trust is yours to give.** Giving it ends in a question asked by the operating system, not
+  by GridCraft's window, so nothing that drives the window can answer it for you. (An agent
+  can trust a project only if you hand it full control, which lasts until GridCraft closes.)
+
+Everything a project does to a workbook goes through GridCraft's own commands, the same ones
+the ribbon runs, and can be undone.
+
+## The kits
+
+### PythonCraft: Python and a web panel
 
 <p align="center">
-  <a href="https://discord.gg/artcraft"><img alt="Join the ArtCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+  <img src="docs/images-aniefork/devcraft-development.png" alt="The Development window: the MCP server, and three development kits (PythonCraft, the C Development Kit, and a sample kit loaded from a package), each with what it is made of and how many of its projects are trusted." width="760">
 </p>
+
+A PythonCraft project is Python scripts and a web panel. The panel can be a Svelte app or any
+other page.
+
+- **Scripts** are plain Python, run by your own Python in a process of their own:
+
+  ```python
+  def main(data):                      # run on the selection: {"range", "sheet", "rows"}
+      return {"rows": [[str(c).strip() for c in row] for row in data["rows"]]}
+  ```
+
+  A script can also work on the sheet itself, with what its project was allowed:
+
+  ```python
+  import spreadsheet
+
+  cells = spreadsheet.sheet("Data").range("A1:C3")
+  cells.write([[1, 2], [3, "=A1+B1"]])
+  spreadsheet.run("home.bold", {"range": "A1:C1"})   # any command, by id
+  ```
+
+- **The panel** is a web page that GridCraft serves from your own machine. It loads one script,
+  `spreadsheet.js`, and gets a typed `spreadsheet` object: read and write cells, run any
+  command, run the project's scripts, and be told when the selection or the workbook changes.
+  The panel in the picture above is the **Svelte Showcase**, a project the kit can make for you.
+- **Docked or in the browser.** On Windows a panel can be docked beside the sheet. It can
+  also open in your browser, which is how it is shown on other systems.
+- **A starter project** that works as it is: a panel that reads the selection, runs a script on
+  it and writes the result back.
+
+What a project may ask to be allowed, and what you are shown before you decide:
+
+| It asks for | Which lets it |
+|---|---|
+| `read` | see what is in your open workbooks |
+| `write` | change your open workbooks (every change can be undone) |
+| `files` | open, save and export files |
+| `network` | let its panel talk to the internet |
+| `python` | run its Python scripts. This one cannot be limited: a script can do anything a program you run can do, and the review says so |
 
 <p align="center">
-  <a href="https://getartcraft.com/apps/gridcraft"><b>GridCraft on getartcraft.com</b></a> ·
-  <a href="https://getartcraft.com/">ArtCraft</a> ·
-  <a href="https://getartcraft.com/apps">All Crafting Apps</a>
+  <img src="docs/images-aniefork/devcraft-project.png" alt="A project's part of the Development window: what the person allowed it, the files it holds, one of its Python files shown as text with its syntax coloured, and the ways to open its panel and run its script." width="760">
 </p>
 
-<br>
+### The C Development Kit: C, as WebAssembly
+
+A project of this kit is C sources and a web panel. GridCraft builds the C as one WebAssembly
+program with a compiler you name (zig), and the project's panel runs it. The program is shut
+in: it can reach nothing but what its page hands it, and what it does to a workbook the page
+does for it, with what the project was allowed.
+
+Its demonstration is **Doom**, running in a project of the C Development Kit:
 
 <p align="center">
-  <img src="docs/images/hero-sales.png" alt="GridCraft showing a quarterly sales dashboard: a styled table with banded rows, filter buttons, a totals row, data bars, arrow icons and sparklines, next to a clustered column chart and a pie chart" width="100%">
-  <br><sub><b>Quarterly Sales Dashboard</b>: a table with a totals row, conditional formatting, sparklines and two live charts — built entirely from GridCraft commands (<code>File → New → Sample</code>).</sub>
+  <img src="docs/images-aniefork/devcraft-doom.png" alt="GridCraft with Doom running in a panel docked beside a sheet named Doom. The sheet holds the game's variables as it plays (health 65, armor 85, weapon Shotgun, monsters nearby 11), the bytes at twelve places in its memory with the numbers a formula works out of them, and two charts of the last minute." width="900">
 </p>
 
-> [!NOTE]
-> **ArtCraft is a community of artists from all walks of life.** Painters, photographers,
-> filmmakers, illustrators, designers, animators, hobbyists, and people who picked up a pencil
-> last week. If you make things, you're one of us. **[Come say hi on Discord](https://discord.gg/artcraft).**
+**It is not our Doom.** Doom is id Software's game, and its name and its artwork are theirs.
+What is pictured is the shareware version, its game data unmodified (`doom1.wad`, version 1.9,
+checked against its published checksum), running in GridCraft because the C Development Kit
+built it: the engine is doomgeneric, a port of the source id Software released under the GPL,
+with one file of glue. The kit builds its 81 files in under seven seconds. Docked beside the
+sheet, the game writes its health, ammunition and monsters, and the bytes of its memory, into
+cells four times a second, where formulas and charts work on them.
+
+**Neither Doom's code nor its game data is in this repository**, and neither will be. The
+picture is here to show what a development kit can build and run, and for no other reason.
+
+### Kits from packages
+
+A kit can be loaded from a package file (`.gridkit`). Such a kit describes and runs nothing of
+its own: its projects are projects of a built-in kit, with that kit's limits, and what it
+brings is its words and a starter.
+
+## Working with it
 
 <p align="center">
-  <a href="#a-look-around">A look around</a> ·
-  <a href="#why-gridcraft">Why GridCraft</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#for-agents-mcp-cli-and-the-control-channel">For agents</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#roadmap">Roadmap</a> ·
-  <a href="#the-crafting-apps">The Crafting Apps</a> ·
-  <a href="#license-and-credits">License and credits</a>
+  <img src="docs/images-aniefork/devcraft-console.png" alt="The Console with its immediate line: the call PythonCraft.clean-data.count(B5:G10) was typed and run, and came back with 6." width="760">
 </p>
 
-## A look around
+- **The Development window** is where the kits, their projects and your decisions are.
+- **The Console** shows what your projects print and log, and what fails.
+- **The immediate line** calls a function of a project you trust and shows what comes back.
+  A call is named `project.function`, or `kit.project.function`:
 
-<table>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/budget.png" alt="A household budget with accounting number formats, red highlights for overspent categories, a green-yellow-red colour scale on the percent-used column, a totals row with a double border, and a horizontal bar chart comparing budget with actual" width="100%"><p align="center"><sub><b>Formatting.</b> Accounting formats, cell styles, conditional rules and colour scales, frozen headers and a bar chart.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/grades-formulas.png" alt="A gradebook table with averages and letter grades computed with IFS, green highlights on A grades and data bars, with the Formulas ribbon tab open showing the function library" width="100%"><p align="center"><sub><b>Formulas.</b> 500+ functions, dynamic arrays, LET and LAMBDA, structured table references.</sub></p></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/dark-insert.png" alt="The sales dashboard in dark mode with the Insert ribbon tab open, showing PivotTable, Table, Pictures, Shapes, chart, sparkline, link, comment, text box and symbol buttons" width="100%"><p align="center"><sub><b>Dark mode</b> and the Insert tab: tables, charts, sparklines, pictures, shapes, links and comments.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/pivot.png" alt="A PivotTable summarising revenue by region and product with a Channel report filter, grand totals and currency formatting, with the PivotTable Fields pane open on the right showing ticked fields and the Filters, Columns, Rows and Values areas" width="100%"><p align="center"><sub><b>PivotTables.</b> Field list, filters, layouts, date grouping and show-values-as, saved to and read from XLSX.</sub></p></td>
-</tr>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/format-chart.png" alt="The sales dashboard with the column chart selected: resize handles on the chart, its source data outlined in the table, the Chart Design tab open and the Format Chart Area pane on the right" width="100%"><p align="center"><sub><b>Charts.</b> Seventeen chart types, Chart Design tab and a Format pane; selecting a chart outlines its source data.</sub></p></td>
-<td width="50%" valign="top"><img src="docs/images/page-break.png" alt="The household budget in Page Break Preview: the print area outlined in blue with a dashed page break, Page 1 and Page 2 watermarks, and the area outside the print range greyed out" width="100%"><p align="center"><sub><b>Page Break Preview</b>, print settings, and PDF export and printing.</sub></p></td>
-</tr>
-</table>
+  ```text
+  clean_data.count              the function, handed the cells that are selected
+  clean_data.count(A1:C9)       handed those cells
+  PythonCraft.clean_data.count  the same, naming the kit
+  ```
 
-## Why GridCraft
+- **Agents.** GridCraft's Development server speaks MCP, so an agent can help you build a
+  project. You set how far it may go: reading only; asking you each time; building without
+  asking, where nothing it wrote runs until you say yes; or full control, for one run of
+  GridCraft. It is off until you turn it on.
+- **Macros.** GridCraft never runs VBA. It reads the macros a workbook carries and shows them
+  to you, and an agent can rebuild what they did as a PythonCraft project for you to read
+  before any of it runs.
 
-- **Familiar.** Excel's ribbon, formula bar, Name Box, sheet tabs, keyboard shortcuts, fill
-  handle, point-mode formula entry with coloured references, Format Cells, Paste Special,
-  conditional formatting, tables, charts and more. If you know Excel, you already know GridCraft.
-- **Compatible.** XLSX is the native format: styles, themes, formulas (including dynamic arrays),
-  tables, conditional formats, validation, comments, hyperlinks, charts, pictures, sparklines,
-  PivotTables and print settings round-trip. CSV and TSV too.
-  Excel 97-2003 `.xls` workbooks open with their values, formulas and number formats (formatting and objects not yet).
-  [XLSB worksheet data can be imported](docs/xlsb-import.md), using saved values instead of formulas.
-  [ODS worksheet data can be imported](docs/ods-import.md), using saved values instead of formulas.
-  [Static pictures can live inside cells](docs/cell-pictures.md), fitting their size and moving with the data.
-- **Capable.** A dependency-graph calculation engine with dynamic arrays and spilling,
-  500+ worksheet functions plus LET, LAMBDA, MAP, REDUCE, SCAN, BYROW, BYCOL and MAKEARRAY,
-  structured table references, Excel's full number-format language, sort and AutoFilter,
-  Flash Fill, data validation, outlining and subtotals.
-- **Fast.** Copy-on-write workbooks (undo snapshots are nearly free), incremental recalculation,
-  and a virtualised grid that only lays out what's on screen.
-- **Agent-native.** Every ribbon button, menu item, dialog, keystroke and mouse gesture is a
-  command that agents can run over a JSON control channel, an **MCP server**, or the CLI.
-- **Everywhere.** One Rust codebase for desktop and the web. No subscription, no licence server,
-  no telemetry.
-
-## Quick start
+## Try it
 
 ```sh
-cargo run --release -p gridcraft                              # desktop app
-cargo run --release -p gridcraft -- --sample sales            # open a sample (sales, budget, grades)
-cargo run --release -p gridcraft -- book.xlsx                 # open a workbook
-cargo run --release -p gridcraft -- --sample sales --control 7979   # + JSON control channel
-cargo xtask ci                                                 # fmt, clippy, tests, assets, layering, wasm
+cargo run --release -p gridcraft -- --sample sales
 ```
 
-Choose Español under View → Interface language for [Spanish formula names, decimal commas, and semicolon arguments](docs/formula-input.md).
-Workbooks, clipboard exchange, and programmatic APIs retain canonical English syntax.
+1. **File ▸ Options ▸ Show the Developer tab.**
+2. **Developer ▸ Development.** Open PythonCraft and make a project, or the Svelte Showcase.
+3. Read what it asks for and what it holds, and trust it.
+4. Dock its panel or open it in your browser, and select some cells.
 
-### Web
+Scripts need a Python on your machine (GridCraft finds it, or you name it). The C kit needs zig.
 
-```sh
-cd apps/gridcraft-web && trunk build --release     # → dist/web (serve it with any static server)
-cd apps/gridcraft-web && trunk serve --release     # http://127.0.0.1:8771  (?sample=sales opens a sample)
-```
+## Where it stands
 
-You need [trunk](https://trunkrs.dev) and the `wasm32-unknown-unknown` target. Open uses the
-browser's file picker (dropping files works too) and Save downloads the workbook.
+DevCraft is being built, and this fork is where it grows up. Plainly:
 
-### Ribbon access keys
+- **It has been built and run on Windows 11 only.** It is written to build wherever GridCraft
+  does: its tests pass on Windows and it builds for the web. Nobody has yet built it or
+  looked at it on macOS or Linux.
+- **Windows only, so far:** docking a panel in the window, and the Development window as it is
+  pictured here. Elsewhere a panel opens in the browser and the Development window is drawn
+  by GridCraft's own toolkit, which is plainer and has less in it.
+- **Not built yet:** a formula that calls a project's function, a project that travels inside
+  its workbook, and signing, so that you can trust a developer and not only a folder.
 
-Press and release **left Alt** on Windows/Linux/BSD, or press **F10** on any platform,
-then type a sequence below one key at a time. Keytips appear on the supported Home
-controls and menu items. On macOS, use F10 (Fn+F10 if required by your keyboard); Option
-remains available for entering accented characters.
+The record of what was decided and why is in
+[`docs/decisions-aniefork.md`](docs/decisions-aniefork.md); what the fork carries, and its
+log, are in [`ROADMAP-aniefork.md`](ROADMAP-aniefork.md).
 
-| Sequence after Alt/F10 | Action |
-|---|---|
-| `H A L` / `H A C` / `H A R` | Align left / center / right |
-| `H V S` or legacy `E S` | Open Paste Special |
-| `H O I` or legacy `O C A` | AutoFit selected columns |
+## GridCraft itself
 
-In Paste Special, **T/V/F/C** select formats/values/formulas/comments, and **E** toggles
-Transpose. **Enter** applies the selected options; **Escape** cancels the dialog.
-These letters also work with Alt held on Windows/Linux/BSD.
-
-Escape backs out one keytip level; Alt/F10 again exits keytips. Clicking, scrolling,
-or switching windows cancels navigation. Access keys do not start while editing text
-or using another dialog. This is initial support for these Home and legacy paths;
-other ribbon commands and full mouse-free navigation remain to be implemented.
-Browsers or desktop environments may reserve Alt/F10 for their own menus.
-
-### Logs
-
-The desktop app writes its log to standard error and to `gridcraft.log` in the `logs` folder
-next to its settings: `~/.config/gridcraft/logs` on Linux and BSD (`$XDG_CONFIG_HOME/gridcraft/logs`
-when set), `~/Library/Application Support/GridCraft/logs` on macOS and
-`%APPDATA%\GridCraft\logs` on Windows. Each start moves the previous log to `gridcraft.1.log` and
-that one to `gridcraft.2.log`, so the log of a run that crashed survives the next start; attach
-them to a bug report. A log file stops growing at 16 MiB. By default GridCraft's own crates log
-at `info` and everything else at `warn`; `RUST_LOG` replaces that with env_logger-style
-directives, e.g. `RUST_LOG=debug` or `RUST_LOG=warn,gridcraft_engine=debug` (a trailing `*`
-matches a prefix: `gridcraft*=debug`). Runs with `GRIDCRAFT_NO_PREFS` set (no saved settings)
-log to standard error only.
-
-## For agents: MCP, CLI and the control channel
-
-```sh
-claude mcp add gridcraft -- gridcraft-cli mcp                 # headless MCP server
-gridcraft-cli mcp --connect 7979                               # MCP bridged to a running window
-gridcraft-cli eval '=XLOOKUP("b",{"a","b"},{1,2})'             # → 2
-gridcraft-cli run --sample budget --cmd 'home.bold={"range":"B4:F4"}' --out budget.xlsx
-gridcraft-cli cat budget.xlsx --range B4:F15                   # aligned text table
-gridcraft-cli commands --search chart                          # every command and its params
-```
-
-The MCP server offers tools such as `read_range`, `write_range`, `set_cell`, `evaluate_formula`,
-`format_range`, `insert_chart`, `create_table`, `sort_range`, `filter` and `execute_command`
-(which reaches every one of GridCraft's commands). The desktop app's control channel adds real
-pointer and keyboard input, dialogs and screenshots. See [`docs/mcp.md`](docs/mcp.md),
-[`docs/cli.md`](docs/cli.md) and [`docs/control-protocol.md`](docs/control-protocol.md).
-
-## Architecture
-
-GridCraft is an engine-first Cargo workspace with enforced layering (`cargo xtask layers`). The
-egui frontend is a separate crate, so the UI can be swapped without touching the engine.
-
-| Layer | Crates |
-|---|---|
-| L0 | `core` (addresses, values, errors, dates, input parsing) · `numfmt` (number format codes) |
-| L1 | `formula` (lexer, parser, printer, reference adjustment) · `functions` (worksheet function library) |
-| L2 | `model` (workbook, sheets, copy-on-write cells, styles, tables, charts…) · `calc` (dependency graph, evaluator, dynamic arrays) · `xlsx` (XLSX, CSV, plus XLSB and ODS data import) |
-| L3 | `chart` (toolkit-free chart layout and rendering) |
-| L5 | `engine` (session, commands, history, clipboard, fill, sort, filter, file I/O) |
-| L6 | `ui-egui` (Excel-style UI, control channel) · `mcp` (MCP server) |
-| L7 | `apps/gridcraft`, `apps/gridcraft-cli`, `apps/gridcraft-web` |
-
-- **Contributor and agent rules** (clean-room, asset policy, never-crash, quality gates): [`AGENTS.md`](AGENTS.md)
-- **Bundled assets:** each one is listed with its licence in [`ATTRIBUTION.md`](ATTRIBUTION.md)
-- **Releases:** signed macOS, Windows, Linux, BSD and web builds; see [`docs/releasing.md`](docs/releasing.md)
-
-## Roadmap
-
-GridCraft is in **alpha**: the core workflow works end to end, but depth, fidelity and file
-compatibility are still rough. It covers 89% of the Excel ribbon commands in our catalog
-([`docs/parity-checklist.md`](docs/parity-checklist.md)) and 513 of Excel's 523 worksheet functions
-([`docs/function-parity.md`](docs/function-parity.md)); weighted by what Excel users rely on, we
-estimate it is about 50% ready for real work. Next up: XLSX fidelity on real-world files, very large
-workbooks and multi-threaded recalc, chart depth, text in every script, and `.xls` import. Stage,
-numbers and estimates are in [ROADMAP.md](ROADMAP.md); the ranked work list is [`docs/gaps.md`](docs/gaps.md).
-
-## Downloads
-
-**Download GridCraft** from GitHub: the [latest release](https://github.com/storytold/gridcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/gridcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.
-
-### Windows
-
-| Build | Installer | Portable |
-|---|---|---|
-| x64 (64-bit Intel/AMD) | `gridcraft-<ver>-windows-x64.msi` | `gridcraft-<ver>-windows-x64-portable.zip` |
-| arm64 (Snapdragon and other ARM PCs) | `gridcraft-<ver>-windows-arm64.msi` | `gridcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `gridcraft-<ver>-windows-x86.msi` | `gridcraft-<ver>-windows-x86-portable.zip` |
-
-Installers and executables are code-signed. The MSI installer offers an optional desktop shortcut
-(unchecked on a new installation).
-
-**If the app doesn't open on Windows:** the desktop app initializes only DirectX 12 by default.
-Letting wgpu also create an OpenGL instance can crash some graphics drivers (AMD's
-`atio6axx.dll`) before the window appears, so the app would flash in Task Manager and quit.
-`WGPU_BACKEND` overrides the default for troubleshooting (for example `dx12` or `vulkan`). In
-PowerShell, from the folder containing the executable:
-
-```powershell
-$env:WGPU_BACKEND = "vulkan"
-& .\gridcraft.exe
-Remove-Item Env:WGPU_BACKEND                     # restore the default for later launches
-```
-
-An explicit `gl` override can bring the driver crash back on affected systems, and `vulkan` can
-bring back a crash in some Intel UHD Graphics drivers (`igvk64.dll`, #120). The macOS, Linux and
-web backend defaults are unchanged.
-
-**If the app is slow on an older Windows PC, or DirectX 12 can't start:** when DirectX 12 finds no
-graphics card with a driver for it, it only offers Microsoft's software renderer, which draws every
-frame on the processor. In that case GridCraft uses OpenGL instead, without setting anything; if
-the first renderer fails to start, it tries the other one once. The log file records the choice
-(lines starting with `graphics:`). `WGPU_BACKEND` still overrides it (and then nothing else is
-tried), e.g. `$env:WGPU_BACKEND = "gl"` or `"dx12"`.
-
-DirectX 12 shaders are compiled with FXC, which is part of Windows, so no `dxcompiler.dll` or
-`dxil.dll` is needed, and a copy another program put on `PATH` can no longer stop the app at start
-("Parent device is lost", #339). `$env:WGPU_DX12_COMPILER = "dxc"` (or `"auto"`) selects wgpu's DXC
-handling again for troubleshooting.
-
-### macOS
-
-| Build | File | Notes |
-|---|---|---|
-| App, universal (Apple silicon + Intel) | `gridcraft-<ver>-macos-universal.dmg` | Signed and notarized |
-| Command-line tool, universal | `gridcraft-cli-<ver>-macos-universal.zip` | Signed and notarized |
-
-### Linux
-
-| Format | x86_64 | aarch64 (ARM64) | Notes |
-|---|---|---|---|
-| AppImage | `gridcraft-<ver>-linux-x86_64.AppImage` | `gridcraft-<ver>-linux-aarch64.AppImage` | Runs anywhere; updates itself with [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) (`.zsync` files) |
-| Flatpak | `gridcraft-<ver>-linux-x86_64.flatpak` | `gridcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
-| Debian/Ubuntu | `gridcraft-<ver>-linux-x86_64.deb` | `gridcraft-<ver>-linux-aarch64.deb` | |
-| Fedora/RHEL/openSUSE | `gridcraft-<ver>-linux-x86_64.rpm` | `gridcraft-<ver>-linux-aarch64.rpm` | |
-| Tarball | `gridcraft-<ver>-linux-x86_64.tar.gz` | `gridcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
-
-### FreeBSD
-
-| Build | File |
-|---|---|
-| x86_64 | `gridcraft-<ver>-freebsd-x86_64.tar.gz` |
-
-### Web (WebAssembly)
-
-| Build | File | Notes |
-|---|---|---|
-| Static site | `gridcraft-web-<ver>.zip` | Runs in a modern browser; host it on any static server |
-
-## The Crafting Apps
-
-GridCraft is one of the **Crafting Apps**: free, open-source creative tools from the
-[ArtCraft](https://getartcraft.com/) team, each written from scratch in Rust and each able to
-stand on its own.
-
-| | App | What it's for | Code | Learn more |
-|:-:|---|---|---|---|
-| <img src="https://raw.githubusercontent.com/storytold/photocraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.photocraft.png" alt="" width="32" height="32"> | **PhotoCraft** | Image editing: layers, masks, type and real PSD files | [GitHub](https://github.com/storytold/photocraft) | [Website](https://getartcraft.com/apps/photocraft) |
-| <img src="https://raw.githubusercontent.com/storytold/vectorcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.vectorcraft.png" alt="" width="32" height="32"> | **VectorCraft** | Vector illustration | [GitHub](https://github.com/storytold/vectorcraft) | [Website](https://getartcraft.com/apps/vectorcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/filmcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.filmcraft.png" alt="" width="32" height="32"> | **FilmCraft** | Video editing, color and sound | [GitHub](https://github.com/storytold/filmcraft) | [Website](https://getartcraft.com/apps/filmcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/lightcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png" alt="" width="32" height="32"> | **LightCraft** | Photo library and raw development | [GitHub](https://github.com/storytold/lightcraft) | [Website](https://getartcraft.com/apps/lightcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/pdfcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png" alt="" width="32" height="32"> | **PdfCraft** | Reading, organizing and protecting PDFs | [GitHub](https://github.com/storytold/pdfcraft) | [Website](https://getartcraft.com/apps/pdfcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/effectcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png" alt="" width="32" height="32"> | **EffectCraft** | Motion graphics and visual effects | [GitHub](https://github.com/storytold/effectcraft) | [Website](https://getartcraft.com/apps/effectcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/designcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.designcraft.png" alt="" width="32" height="32"> | **DesignCraft** | Page layout and publishing | [GitHub](https://github.com/storytold/designcraft) | [Website](https://getartcraft.com/apps/designcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/gridcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.gridcraft.png" alt="" width="32" height="32"> | **GridCraft** | **Spreadsheets and data · you are here** | [GitHub](https://github.com/storytold/gridcraft) | [Website](https://getartcraft.com/apps/gridcraft) |
-
-And [**ArtCraft**](https://getartcraft.com/) itself, our AI image and video studio for artists who want real control.
-
-<br>
-
-<p align="center">
-  <a href="https://discord.gg/artcraft"><img alt="Join the ArtCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
-</p>
-
-<h3 align="center">Come make things with us</h3>
-
-<p align="center">
-  Our Discord is where artists of every kind hang out: people who paint, shoot, draw, cut film,
-  set type, and people still figuring out what they like to make. Share what you're working on,
-  ask for help, tell us what's broken, or tell us what you wish these tools could do.
-  Whatever your medium and however long you've been at it, you're welcome here.
-</p>
-
-<p align="center">
-  <a href="https://discord.gg/artcraft"><b>discord.gg/artcraft</b></a> ·
-  <a href="https://getartcraft.com/">getartcraft.com</a> ·
-  <a href="https://getartcraft.com/apps">The Crafting Apps</a> ·
-  <a href="https://getartcraft.com/apps/gridcraft">GridCraft</a>
-</p>
+Everything about the spreadsheet (formulas, charts, PivotTables, file formats, downloads, the
+MCP server and the command line) is upstream's work, and is described in
+[GridCraft's own README](https://github.com/storytold/gridcraft#readme). The fork merges
+upstream's `main` regularly, and keeps its own code apart so that it can:
+[`AGENTS-aniefork.md`](AGENTS-aniefork.md) says how.
 
 ## License and credits
 
-GridCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Copyright (c) 2026 ArtCraft Team and the GridCraft contributors. Required notices are in [NOTICE](NOTICE).
+GridCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
+your option, and so is what this fork adds. Copyright (c) 2026 ArtCraft Team and the GridCraft
+contributors. Required notices are in [NOTICE](NOTICE).
 
-Bundled fonts, icons, images and other assets keep their own open licenses; each one is listed
-with its author, source and license in [ATTRIBUTION.md](ATTRIBUTION.md).
+GridCraft is the work of the ArtCraft team and its contributors. This fork is based on it, is
+not theirs, and is not endorsed by them. The ArtCraft name and logos are trademarks of the
+ArtCraft Team: the fork carries none of their logos, and names the team only to say whose work
+GridCraft is.
 
-All UI icons are drawn in code and are original; the sample workbooks and every screenshot in
-this README were made with GridCraft itself. GridCraft bundles no fonts: it uses the fonts
-installed on your system.
-
-The ArtCraft name, wordmark and logos in [`docs/brand/`](docs/brand/) are trademarks of the
-ArtCraft Team and are not covered by this license. They may be used only unmodified, and only as
-part of this repository and GridCraft, under [`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt).
-Forks and modified versions must remove them.
-
-<sub>Microsoft, Excel and Microsoft 365 are trademarks or registered trademarks of Microsoft Corporation in the United States and/or other countries. GridCraft is an independent, open-source project and is not affiliated with, sponsored by or endorsed by Microsoft Corporation; these names are used only to describe the workflows it is compatible with.</sub>
-
-<br>
-
-<p align="center">
-  <a href="https://getartcraft.com/"><img alt="ArtCraft" src="docs/brand/artcraft-mark.svg" width="28"></a><br>
-  <sub>Made by the <a href="https://getartcraft.com/">ArtCraft</a> team and community.</sub>
-</p>
+Every picture here was made with this fork of GridCraft. Two things in them are not the
+fork's: the marks of Python, Svelte and C in the Development window's badges, and Doom, which
+is id Software's. [`ATTRIBUTION-aniefork.md`](ATTRIBUTION-aniefork.md) lists them, with the
+pictures, beside upstream's [`ATTRIBUTION.md`](ATTRIBUTION.md).

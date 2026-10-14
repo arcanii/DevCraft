@@ -4,6 +4,7 @@
 //! (`storytold/gridcraft`) only ever meet the short hooks that call into it. See
 //! `AGENTS-aniefork.md` at the repository root.
 
+pub mod about;
 pub mod agents;
 mod card;
 pub mod console;

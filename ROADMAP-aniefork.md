@@ -710,6 +710,8 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
+| `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
+| `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -738,6 +740,11 @@ the fork. Decided 2026-10-11: check by hand for now.
 
 Sync often: upstream lands many commits a day, and small merges are easy. What can still conflict:
 
+- **`README.md`**, whenever upstream changes theirs: the root README is the fork's own since
+  2026-10-14. Keep the fork's (`git checkout --ours README.md`), then read upstream's change.
+- **The logo files in `docs/brand/`**, if upstream changes one (the fork deleted them): delete
+  it again (`git rm`). A new file upstream adds there merges in without a conflict, so **look
+  in `docs/brand/` after every merge**: only `LICENSE-brand.txt` belongs there.
 - **The hooks above**, when upstream edits the lines around them. Take upstream's code and put
   the hook back. The 0.5.0 merge conflicted at three: the module list in `lib.rs` (both sides
   added modules), the command listing in `control.rs` (upstream now filters it) and the View tab
@@ -784,6 +791,26 @@ included.
 
 Newest first.
 
+- **2026-10-14 (upstream's marks leave the fork; the README moves to the root):** Shown what
+  upstream's brand licence asks of a published, modified version and where the marks were,
+  the owner: "Yes - let's do it - we need to do it anyways from their rules. We reference
+  upstream of course", "Delete their logo files", and yes to the About window and the Help
+  menu. **Done**: the fork's README is `README.md` at the root, in place of upstream's (it
+  was `.github/README.md` for a few hours); the eight logo files in `docs/brand/` are
+  deleted (the licence's text stays); Help ▸ About says what the fork is, links to the
+  fork's page, and says "Based on GridCraft by the ArtCraft team." with upstream's
+  repository, in place of "Part of ArtCraft.", getartcraft.com and the Discord invitation;
+  the Help menu on macOS has the same two links. **Two new hooks**, both of which take
+  upstream's lines out (`dialogs.rs`, `native_menu.rs`), and `aniefork/about.rs` with its
+  tests. **Not seen**: the macOS menu (never compiled here), and the README as GitHub draws
+  it. **Left as upstream has it**: the copyright notices; upstream's documents that name
+  the team in words; the addresses in `packaging/` (getartcraft.com and the Discord, in the
+  installers' own information), which matter only if the fork ever gives out builds.
+  **The owner renamed the repository `arcanii/DevCraft`** on GitHub the same day (it is
+  still a fork of storytold/gridcraft there, and GitHub sends the old address on). The
+  addresses the fork gives of itself follow: the README, which is now headed DevCraft and
+  says the program it builds is still GridCraft; the About window and the Help menu; the
+  fork's rules and its attribution table; and the local `origin`.
 - **2026-10-14 (DevCraft: the fork's own README, and its pictures):** The owner: "on our
   fork, let's look to make a focused README.md showcasing the Development Kit. Our fork can
   specialize in it, and we call it \"DevCraft\"", and "Let's get some screenshots showcasing

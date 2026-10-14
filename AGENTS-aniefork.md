@@ -1,6 +1,7 @@
 # aniefork: this checkout is a fork
 
-This repository is arcanii/gridcraft, a fork of storytold/gridcraft (the `upstream` remote).
+This repository is arcanii/DevCraft (until 2026-10-14, arcanii/gridcraft), a fork of
+storytold/gridcraft (the `upstream` remote). The program it builds is still named GridCraft.
 [`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md) are upstream's files and stay unchanged here;
 everything in them still applies (never crash, no Microsoft assets, clean room, quality gates).
 This file says where the fork differs. Read it and [`ROADMAP-aniefork.md`](ROADMAP-aniefork.md) at
@@ -34,11 +35,22 @@ rules.
   README, as the C kit's demonstration: the shareware version, its data unmodified, said
   beside the picture to be id Software's and not the fork's. Doom's code and its game data
   stay out of the repository as before.
-- **The fork's front page is `.github/README.md`, and it is about DevCraft.** GitHub shows a
-  README in `.github/` before the one at the root, so upstream's `README.md` stays as upstream
-  has it and never conflicts. **DevCraft** is the owner's name (2026-10-14) for what the fork
-  specialises in: its development kits (PythonCraft is the first; the C Development Kit the
-  second). The README's pictures are in `docs/images-aniefork/`, each with a row in
-  `ATTRIBUTION-aniefork.md`, which `cargo xtask assets` reads here beside upstream's table.
-  Say in it only what was seen working, and say what was not.
+- **`README.md` at the root is the fork's own, and it is about DevCraft.** It is the one
+  upstream file the fork replaces whole (the owner, 2026-10-14). **DevCraft** is the owner's
+  name for what the fork specialises in: its development kits (PythonCraft is the first; the
+  C Development Kit the second). When a merge conflicts in `README.md`, keep the fork's
+  (`git checkout --ours README.md`), then read what upstream changed in theirs in case the
+  fork's should say something of it. Its pictures are in `docs/images-aniefork/`, each with a
+  row in `ATTRIBUTION-aniefork.md`, which `cargo xtask assets` reads here beside upstream's
+  table. Say in it only what was seen working, and say what was not.
+- **The fork carries none of upstream's marks.** Upstream's brand licence
+  (`docs/brand/LICENSE-brand.txt`, which stays) asks of a published, modified version that it
+  remove the ArtCraft marks and not present itself as an ArtCraft product; it may say in
+  plain text that it is based on GridCraft by the ArtCraft team. So: the logo files in
+  `docs/brand/` are deleted here (if a merge brings one back or changes one, delete it
+  again); Help ▸ About and the Help menu say what the fork is, through
+  `crates/ui-egui/src/aniefork/about.rs`; and nothing the fork writes uses the ArtCraft name
+  except to say whose work GridCraft is. Upstream's own files that name the team in words
+  (`AGENTS.md`, `CLAUDE.md`, `ATTRIBUTION.md`, `NOTICE`, the licences) stay as they are: the
+  copyright notices must.
 - **Syncing with upstream:** `ROADMAP-aniefork.md` lists the steps and what can still conflict.

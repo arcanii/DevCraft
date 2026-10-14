@@ -147,7 +147,7 @@ marks themselves, which stay their owners'. Each is used here unchanged, in one 
 name the thing it stands for. GridCraft is not affiliated with, or endorsed by, the Python
 Software Foundation or the Svelte project.
 
-These are in the fork (arcanii/gridcraft) by its owner's decision of 2026-10-13, as an
+These are in the fork (arcanii/DevCraft) by its owner's decision of 2026-10-13, as an
 exception to upstream's rule that the repository holds no other party's iconography. They are
 not to be offered upstream.
 "#),

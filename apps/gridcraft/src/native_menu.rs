@@ -174,8 +174,9 @@ fn tree() -> Vec<(&'static str, Vec<Entry>)> {
             vec![
                 ("Agent Control (MCP)…", "dialog:agents", None),
                 ("Contributors…", "dialog:about:Contributors", None),
-                ("GridCraft on getartcraft.com", "url:https://getartcraft.com/apps/gridcraft", None),
-                ("Join the ArtCraft Discord…", "url:https://discord.gg/artcraft", None),
+                // The fork's own page and upstream's repository, in place of upstream's two links (aniefork).
+                (gridcraft_ui_egui::aniefork::about::HELP_MENU[0].0, gridcraft_ui_egui::aniefork::about::HELP_MENU[0].1, None),
+                (gridcraft_ui_egui::aniefork::about::HELP_MENU[1].0, gridcraft_ui_egui::aniefork::about::HELP_MENU[1].1, None),
             ],
         ),
     ]

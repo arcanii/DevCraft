@@ -2669,12 +2669,12 @@ is the C DevKit".
   whole. PythonCraft is the first kit and the C Development Kit the second, whose
   demonstration is Doom. (Read so from the owner's words; nothing in the program is named
   DevCraft yet, and whether a window should be is theirs to say.)
-- **The README is `.github/README.md`.** GitHub shows a README there before the one at the
-  root. So the fork's front page is its own, and upstream's `README.md` is untouched and
-  can't conflict at a merge, which is the fork's rule for upstream's files. Someone who
-  opens the folder sees upstream's README first; the fork's is linked from nowhere in it.
-  If the owner would sooner have the root file be the fork's, it is one move, and a
-  conflict to settle by hand whenever upstream changes theirs.
+- **The README is `README.md` at the root, in place of upstream's.** It was first made as
+  `.github/README.md`, which GitHub shows before the root one and which left upstream's
+  file untouched. That hid upstream's README and removed nothing, and upstream's brand
+  licence asks for removal (below), so on the owner's word the fork's README took the
+  root file's place. It is the one upstream file the fork replaces whole: a merge in which
+  upstream changed theirs conflicts there, and is settled by keeping the fork's.
 - **It says only what was seen**, and what was not: built and run on Windows 11 only; what
   is Windows only; what is not built. An agent's full control is said as it is: the README
   first said no agent could trust a project, which the Development server's own words
@@ -2716,17 +2716,46 @@ is the C DevKit".
   - in words only, which the licence allows: `AGENTS.md`, `CLAUDE.md`, `ATTRIBUTION.md`,
     and the fork's README, which says GridCraft is the ArtCraft team's work and that the
     fork is not theirs.
-  The fork's README is the one GitHub shows (GitHub's own page on READMEs: the `.github`
-  directory is looked in first), which hides upstream's from the front page but does not
-  remove a mark. **What removing them would take**, each for the owner to say: the fork's
-  README moved to the root in place of upstream's (a conflict to settle at any merge in
-  which upstream changed theirs); the eight image files deleted (upstream seldom changes
-  them); and a hook that words the About window and the Help menu for the fork ("Based on
-  GridCraft by the ArtCraft team", and no invitation to their Discord for a program that
-  is not theirs). The sister forks have the same files.
+  **The owner's word (2026-10-14):** "Yes - let's do it - we need to do it anyways from
+  their rules. We reference upstream of course." "Delete their logo files." And yes to
+  the program's own words. **Done:**
+  - the fork's README is the root `README.md`; upstream's is no longer in the fork;
+  - the eight logo files are deleted. The licence's own text stays in `docs/brand/`;
+  - Help ▸ About says, under the name and version, what the program is, "This is a fork
+    of GridCraft, with DevCraft: development kits for the spreadsheet.", the fork's page,
+    "Based on GridCraft by the ArtCraft team." and upstream's repository. The Help menu
+    on macOS has the fork's page and upstream's repository. Neither sends anyone to
+    upstream's site or community for a program that is not upstream's. It is
+    `aniefork/about.rs`, with a test that the words name the team once and only so;
+  - **two hooks that take upstream's lines out**, which no hook did before
+    (`dialogs.rs`, three lines; `native_menu.rs`, two). After a conflict there,
+    upstream's lines go again.
+  **What is left, and why**: the copyright notices in `LICENSE-MIT` and `NOTICE` (they
+  must stay); upstream's documents that name the team in words; one line of upstream's
+  Portuguese table, now unused; the program's name, GridCraft, which the licence does not
+  list among the marks; and the addresses in `packaging/` (getartcraft.com and the
+  Discord, in what an installer says of itself), which matter only if the fork gives out
+  builds, and it gives out none. The sister forks have the same files and were not
+  touched.
+- **The repository is `arcanii/DevCraft`.** The owner asked whether to rename it, was told
+  what stood for and against (the program it builds is still GridCraft in every window,
+  in its settings folder and in its file names; GitHub sends the old address on, so it
+  can be done at any time; a name ending in Craft beside upstream's family of apps may
+  be read as one of theirs, which their licence asks a fork not to suggest), and renamed
+  it on GitHub the same day. So: the README is headed DevCraft and says in its first lines
+  that it is a fork of GridCraft by the ArtCraft team and that the program is still
+  GridCraft; the About window says "This is DevCraft, a fork of GridCraft with development
+  kits for the spreadsheet."; every address the fork gives of itself is the new one; and
+  the local `origin` points there. The folder on disk, the crates, the program and its
+  settings folder keep their names: renaming those would touch upstream's files
+  everywhere, and is not asked.
 
-**Not seen**: the README as GitHub draws it, with its pictures. That needs a push, which is
-the owner's.
+**Checked**: the gate, whole, on all of it (1,888 tests). **Seen**: on GitHub, the fork's
+README as the front page with its five pictures, in the form the owner pushed
+(`.github/README.md`); in the isolated copy, Help ▸ About with the fork's words and its two
+links, and none of upstream's three lines. **Not seen**: the README at the root as GitHub
+draws it (that needs a push, which is the owner's); the Help menu on macOS, which was never
+compiled here.
 
 ### Backlog
 

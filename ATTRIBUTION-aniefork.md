@@ -1,6 +1,6 @@
 # Asset attribution: what the fork holds that is not its own
 
-This is the fork's own list ([arcanii/gridcraft](https://github.com/arcanii/gridcraft)), beside
+This is the fork's own list ([arcanii/DevCraft](https://github.com/arcanii/DevCraft)), beside
 upstream's [`ATTRIBUTION.md`](ATTRIBUTION.md), which stays as upstream has it. It lists what the
 fork adds to the repository that somebody else drew.
 
@@ -44,7 +44,7 @@ else. A test of the shell's checks the same of what the repository holds.
 
 ## The fork's own pictures
 
-The pictures in the fork's README ([`.github/README.md`](.github/README.md)). They are asset
+The pictures in the fork's README ([`README.md`](README.md)). They are asset
 files, so `cargo xtask assets` checks that each has a row here: in the fork the check reads this
 table as well as upstream's. Each is a picture of this fork of GridCraft running in a settings
 folder made for the purpose, showing upstream's original sample workbook and the fork's own
@@ -80,3 +80,12 @@ which is a frame of Doom as it plays.
   says so beside it.
 - **It is not to be offered upstream**, like the marks above.
 - Another picture of Doom goes in only on the owner's word.
+
+## Upstream's marks: removed from the fork
+
+Upstream's [`ATTRIBUTION.md`](ATTRIBUTION.md) lists eight files in `docs/brand/` (the ArtCraft
+logo and mark, in two forms and colours each). **They are not in the fork** since 2026-10-14:
+upstream's brand licence ([`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt), which
+is kept) asks a published, modified version to remove them. Upstream's table is left as upstream
+has it, so those eight rows name files this repository does not hold.
+
