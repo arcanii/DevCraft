@@ -111,6 +111,7 @@ pub fn describe(project: &Project, store: &TrustStore) -> Json {
         // Where it would reach and whether the person turned that on: for a project that names addresses.
         "network": carried.map(|list| json!({
             "addresses": list.iter().map(|address| json!({"text": address.text(), "local": address.is_local()})).collect::<Vec<_>>(),
+            "listen": manifest.and_then(|m| m.listen),
             "on": store.network_on(project),
         })),
         // Whether its page may talk to the internet: the first kit's `network`, never a carried one.
@@ -145,7 +146,7 @@ mod tests {
         assert_eq!(said["asks"][1], json!({"permission": "network", "means": CARRIED_NETWORK, "unlimited": false}));
         assert_eq!(
             said["network"],
-            json!({"addresses": [{"text": "example.org:26000", "local": false}, {"text": "192.168.1.20:26000", "local": true}], "on": false})
+            json!({"addresses": [{"text": "example.org:26000", "local": false}, {"text": "192.168.1.20:26000", "local": true}], "listen": null, "on": false})
         );
         // Trusted: what it asks is granted, and not the network. Turned on: it is, and its page
         // is still not let out.

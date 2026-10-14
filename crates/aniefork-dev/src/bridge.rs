@@ -843,11 +843,13 @@ mod server {
         allow: Option<&'static str>,
         /// The project was granted `network`.
         network: bool,
+        /// One header more: whether a program's packets are taken in on the port it listens on.
+        listening: Option<String>,
     }
 
     impl Reply {
         fn new(status: u16, reason: &'static str, kind: &'static str, body: Vec<u8>) -> Reply {
-            Reply { status, reason, kind, body, allow: None, network: false }
+            Reply { status, reason, kind, body, allow: None, network: false, listening: None }
         }
 
         fn plain(status: u16, reason: &'static str, text: &str) -> Reply {
@@ -877,6 +879,9 @@ mod server {
             );
             if let Some(allow) = self.allow {
                 head.push_str(&format!("Allow: {allow}\r\n"));
+            }
+            if let Some(listening) = &self.listening {
+                head.push_str(&format!("X-GridCraft-Listening: {listening}\r\n"));
             }
             head.push_str("\r\n");
             let mut out = head.into_bytes();
@@ -977,12 +982,12 @@ mod server {
         if netting.checked.is_none_or(|when| when.elapsed() >= site.shared.limits.recheck) {
             netting.checked = Some(net::now());
             match network_of(&site.places, &site.id) {
-                Ok(addresses) => {
-                    if netting.carrier.as_ref().is_none_or(|carrier| carrier.allowed() != addresses.as_slice()) {
+                Ok((addresses, listen)) => {
+                    if netting.carrier.as_ref().is_none_or(|carrier| carrier.allowed() != addresses.as_slice() || carrier.listen_port() != listen) {
                         let named: Vec<String> = addresses.iter().map(manifest::Address::text).collect();
                         let text = format!("GridCraft carries this project's packets to {}, and takes in what comes from there.", named.join(", "));
                         Console::global().push(&site.id, "network", console::Kind::Log, &text);
-                        netting.carrier = Some(net::Carrier::new(addresses));
+                        netting.carrier = Some(net::Carrier::new(addresses, listen));
                     }
                 }
                 Err(why) => {
@@ -995,23 +1000,38 @@ mod server {
         }
         let Netting { carrier, off, .. } = &mut *netting;
         let Some(carrier) = carrier.as_mut() else { return Reply::plain(403, "Forbidden", off) };
+        // A program that hosts asks, once a frame, until it is told.
+        let listening = (request.header("x-gridcraft-listen") == Ok(Some("yes"))).then(|| carrier.listen(&net::system_lookup));
+        if let Some(Ok(port)) = listening
+            && !netting_said_listening(&site.id, port)
+        {
+            Console::global().push(&site.id, "network", console::Kind::Log, &format!("It listens on port {port}, for the hosts it names."));
+        }
         let came = carrier.exchange(outgoing, &net::system_lookup);
         for why in carrier.refusals() {
             Console::global().push(&site.id, "network", console::Kind::Refused, &why);
         }
-        Reply::new(200, "OK", "application/octet-stream", net::to_bytes(&came))
+        let mut reply = Reply::new(200, "OK", "application/octet-stream", net::to_bytes(&came));
+        reply.listening = listening.map(|listened| listened.map_or("no".to_string(), |port| port.to_string()));
+        reply
+    }
+
+    /// Whether the console was already told that a project listens on `port`: it is said once.
+    fn netting_said_listening(id: &str, port: u16) -> bool {
+        let text = format!("It listens on port {port}, for the hosts it names.");
+        Console::global().entries().iter().any(|entry| entry.project == id && entry.text == text)
     }
 
     /// The addresses a project's packets may go to: it is trusted as it is on disk now, and the
     /// person turned its network on for the addresses it names. Else why not.
-    fn network_of(places: &Places, id: &str) -> Result<Vec<manifest::Address>, String> {
+    fn network_of(places: &Places, id: &str) -> Result<(Vec<manifest::Address>, Option<u16>), String> {
         let (found, _) = trusted(places, id)?;
         let named = found.manifest.as_ref().and_then(|manifest| manifest.network.clone()).filter(|list| !list.is_empty());
         let Some(named) = named else { return Err(format!("{} names no address to reach.", found.name())) };
         if !TrustStore::load(&places.trust).network_on(&found) {
             return Err(format!("{}'s network is off. Turn it on in its part of Developer > Development.", found.name()));
         }
-        Ok(named)
+        Ok((named, found.manifest.as_ref().and_then(|manifest| manifest.listen)))
     }
 
     /// Whether the project is one GridCraft builds a program from: its kit builds, and it has a
@@ -1819,6 +1839,60 @@ mod served {
         s.t.write("projects/blink/src/main.c", "int main(void) { return 1; }\n");
         let (status, said) = exchange(&s, &ping, &page);
         assert!(status == 403 && said.as_ref().unwrap_err().contains("changed"), "{status} {said:?}");
+    }
+
+    #[test]
+    fn a_program_that_hosts_is_told_whether_it_listens() {
+        let s = c_project_with("c-listen", Limits { recheck: Duration::ZERO, ..Limits::default() });
+        let page = format!("http://{}", s.host());
+        let port = std::net::UdpSocket::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        s.t.write(
+            "projects/blink/project.toml",
+            &format!("id = \"blink\"\nname = \"Blink\"\nversion = \"1\"\nkit = \"c\"\npermissions = [\"network\"]\n[panel]\nentry = \"panel/index.html\"\n[c]\nsources = [\"src\"]\n[network]\nallow = [\"127.0.0.1:{port}\"]\nlisten = {port}\n"),
+        );
+        let found = project::load(&s.places.projects.join("blink"));
+        let mut store = TrustStore::load(&s.places.trust);
+        store.trust(&found, false).unwrap();
+        store.set_network(&found, true).unwrap();
+        // The program asks to listen: it is told the port, and a player that writes to it first is let in.
+        let ask = |s: &Served| {
+            let host = s.host();
+            let head = format!(
+                "POST /{}/net HTTP/1.1\r\nHost: {host}\r\nOrigin: {page}\r\nX-GridCraft-Listen: yes\r\nContent-Type: application/octet-stream\r\nContent-Length: 0\r\n\r\n",
+                s.token
+            );
+            let (status, head, _) = s.send(&head);
+            (status, head)
+        };
+        let (status, head) = ask(&s);
+        assert!(status == 200 && head.contains(&format!("X-GridCraft-Listening: {port}")), "{head}");
+        let player = std::net::UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+        player.send_to(b"hello host", ("127.0.0.1", port)).unwrap();
+        let mut came = Vec::new();
+        for _ in 0..200 {
+            came = exchange(&s, &[], &page).1.unwrap();
+            if !came.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(came, vec![(player.local_addr().unwrap().to_string(), b"hello host".to_vec())]);
+        assert!(
+            crate::console::Console::global()
+                .entries()
+                .iter()
+                .any(|e| e.project == "blink" && e.text == format!("It listens on port {port}, for the hosts it names."))
+        );
+        // Not asked: nothing is said of it.
+        assert!(
+            !s.send(&format!(
+                "POST /{}/net HTTP/1.1\r\nHost: {h}\r\nOrigin: {page}\r\nContent-Type: application/octet-stream\r\nContent-Length: 0\r\n\r\n",
+                s.token,
+                h = s.host()
+            ))
+            .1
+            .contains("X-GridCraft-Listening")
+        );
     }
 
     #[test]

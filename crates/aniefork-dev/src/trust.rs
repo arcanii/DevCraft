@@ -38,9 +38,10 @@ struct Record {
     network: Vec<String>,
 }
 
-/// The addresses a project names, as they are kept and compared.
-fn named(list: &[Address]) -> Vec<String> {
-    list.iter().map(Address::text).collect()
+/// What a project names for its network, as it is kept and compared: the addresses, and the
+/// port it may listen on.
+fn named(manifest: &Manifest, list: &[Address]) -> Vec<String> {
+    list.iter().map(Address::text).chain(manifest.listen.map(|port| format!("listen {port}"))).collect()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,7 +126,7 @@ impl TrustStore {
     fn network_stands(manifest: &Manifest, record: &Record) -> bool {
         match &manifest.network {
             None => true,
-            Some(list) => !list.is_empty() && record.network == named(list),
+            Some(list) => !list.is_empty() && record.network == named(manifest, list),
         }
     }
 
@@ -143,7 +144,7 @@ impl TrustStore {
         let list = match (&project.manifest, on) {
             (_, false) => Vec::new(),
             (Some(manifest), true) => match (&manifest.network, manifest.permissions.contains(&Permission::Network)) {
-                (Some(list), true) if !list.is_empty() => named(list),
+                (Some(list), true) if !list.is_empty() => named(manifest, list),
                 _ => return Err(format!("{} asks for no network.", project.name())),
             },
             (None, true) => return Err(format!("{} could not be read.", project.name())),
@@ -294,6 +295,13 @@ mod tests {
         let wider = write("\"example.org:26000\", \"192.168.1.1:80\"");
         assert_eq!(store.status(&wider), Status::Trusted(vec![Permission::Read]), "what was turned on was the one address");
         assert!(!store.network_on(&wider));
+        // A port to listen on is part of what is turned on: naming one, or another, turns it off.
+        let one = write("\"example.org:26000\"]\nlisten = 26000 #");
+        assert!(one.is_sound(), "{:?}", one.problem);
+        store.set_network(&one, true).unwrap();
+        assert!(store.network_on(&one));
+        let other = write("\"example.org:26000\"]\nlisten = 26001 #");
+        assert!(!store.network_on(&other), "the port it listens on changed");
         // A project that asks for none has none to turn on; turning off is always fine.
         let plain = load(&sample(&t));
         store.trust(&plain, false).unwrap();

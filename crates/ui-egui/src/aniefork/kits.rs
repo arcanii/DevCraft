@@ -968,6 +968,11 @@ const NETWORK_READS: &str = "It may see what is in your open workbooks: with the
 const NETWORK_LOCAL: &str = "One of these is on your own machine or network: it could reach what is behind your router.";
 const LOCAL_NOTE: &str = "on your own machine or network";
 
+/// What a port to listen on lets a project do, in a sentence.
+fn listen_says(port: u64) -> String {
+    format!("And to take in packets on port {port} from these hosts, before it has written to them: so that it can host a game.")
+}
+
 /// What stands against turning a project's network on, in sentences: it may read the
 /// workbook, and an address is the person's own.
 fn network_warnings(project: &Json) -> Vec<&'static str> {
@@ -985,6 +990,7 @@ fn network_says(project: &Json, status: &str) -> Json {
         "title": "Network",
         "says": "It asks to send and receive over the network, through GridCraft, to these addresses and no others.",
         "addresses": addresses.iter().map(|address| json!({"text": address["text"], "note": if address["local"] == true { LOCAL_NOTE } else { "" }})).collect::<Vec<_>>(),
+        "listen": project["network"]["listen"].as_u64().map(listen_says),
         "on": on,
         "state": if on { "On, for these addresses." } else { "Off. Trusting it does not turn this on: you do, here." },
         "warnings": network_warnings(project),
@@ -1000,6 +1006,9 @@ pub(super) fn network_question(project: &Json) -> String {
     for address in project["network"]["addresses"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let note = if address["local"] == true { format!("  ({LOCAL_NOTE})") } else { String::new() };
         asked.push_str(&format!("    {}{note}\n", text(address, "text")));
+    }
+    if let Some(port) = project["network"]["listen"].as_u64() {
+        asked.push_str(&format!("\n{}\n", listen_says(port)));
     }
     for sentence in network_warnings(project) {
         asked.push_str(&format!("\n{sentence}\n"));
@@ -1317,6 +1326,21 @@ mod tests {
         let file = s.0.join("projects").join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, text).unwrap();
+    }
+
+    #[test]
+    fn a_port_to_host_on_is_said_in_the_projects_part_and_in_the_systems_question() {
+        let hosts =
+            json!({"name": "Net", "asks": [], "network": {"addresses": [{"text": "127.0.0.1:26000", "local": true}], "listen": 26000, "on": false}});
+        let part = network_says(&hosts, "trusted");
+        assert!(
+            part["listen"].as_str().is_some_and(|said| said.contains("on port 26000 from these hosts") && said.contains("host a game")),
+            "{part}"
+        );
+        assert!(network_question(&hosts).contains("take in packets on port 26000 from these hosts"));
+        // One that only joins says nothing of it.
+        let joins = json!({"name": "Net", "asks": [], "network": {"addresses": [{"text": "game.example.org:26000", "local": false}], "on": false}});
+        assert!(network_says(&joins, "trusted")["listen"].is_null() && !network_question(&joins).contains("take in packets on port"));
     }
 
     /// A project that says it is the code of `workbook`, with a note on the sample's macros.

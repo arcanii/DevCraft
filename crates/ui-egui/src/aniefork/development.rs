@@ -1175,6 +1175,9 @@ fn project_part(ui: &mut egui::Ui, told: &Json, action: &mut Option<Act>) {
                 *action = Some(Act::SetNetwork { project, on: true });
             }
         });
+        if let Some(listen) = network["listen"].as_str() {
+            ui.label(small(listen));
+        }
         ui.label(small(said(network, "carried")));
     }
     // What is in it.

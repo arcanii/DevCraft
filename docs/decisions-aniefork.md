@@ -3347,6 +3347,65 @@ log said the web view was gone, GridCraft answered in 6 ms; reloaded, in a new w
 **Not handled**: the Development window, when it is a page (its own web view), is not watched
 so; a panel opened in the browser is the browser's to look after.
 
+### A network for a C program, stage N3: hosting, and GLQuake played between two GridCrafts (built 2026-10-14)
+
+**What the owner decided.** "Move on to N3". Asked whether a project may name a port to listen
+on, taking in packets there only from the hosts it names, shown before the network is turned
+on: "Yes, allow listening". Asked to download Quake's own network part (`net_dgrm.c`, one file
+of the same release): "Yes, download it".
+
+**The kit: a program may host.** N2 took in packets only from the hosts a program had sent to,
+so no GridCraft could host a game.
+
+- **`[network] listen = 26000`**, beside `allow` and never alone: the port the project may take
+  in packets on, from the hosts it names, before it has written to them. It is part of what the
+  person turns the network on for (the trust record keeps it with the addresses): naming one,
+  or another, turns the network off again. The project's part and the system's question say it:
+  "And to take in packets on port 26000 from these hosts, before it has written to them: so
+  that it can host a game."
+- **`net_listen()`**, a fourth call of `<gridcraft/net.h>`: a program that hosts asks once a
+  frame until GridCraft says. GridCraft then binds that port, on this machine alone when every
+  host named is this machine, else on every address of it (where Windows may ask the person),
+  takes in from the hosts named, and sends from that port, so that its answers come from where
+  it was written to. One that only joins never listens. The loader asks with the exchange
+  (`X-GridCraft-Listen`), and the bridge says whether (`X-GridCraft-Listening`); it is said once
+  in the Developer console, and why not when it can't (none named, the port taken).
+
+**GLQuake, outside the repository, plays another GridCraft** (0.3.0). Quake's own network part
+(`net_dgrm.c`, its protocol) speaks through a "LAN driver": the project's `src/net_gridcraft.c`
+is one, written on the kit's calls. GridCraft gives a program one port where Quake opens a
+socket for each connection, so its sockets are Quake's names for who it talks to: a packet is
+handed to the one connected to whoever sent it, else to the one that listens. Three more places
+of id Software's code are changed, each marked, eight in all:
+
+- Quake called each of its poll procedures with an argument none of them takes; WebAssembly
+  stops the program for that ("function signature mismatch"), the moment a game is joined.
+- Quake's connect waits two and a half seconds for the server's answer, in which a page takes in
+  nothing: it waits no time, and the console's `connect` (the menu's Join too) is the project's,
+  which asks the server a frame before, so that the answer is there when Quake looks.
+
+The panel has **Host a game** (a deathmatch on E1M1) and **Join**, which takes only a computer's
+number. As it comes, the project names this computer (`127.0.0.1:26000`) and port 26000.
+
+**Checked.** A port to listen on is read, beside the addresses and never alone; it is part of
+the person's decision. The carrier: without a port named it does not listen, and says so; with
+one, a player that writes first is let in, and is answered from that port; a host not named is
+not; a port taken is said. The bridge: a program that asks is told the port, and a player that
+writes first comes through; one that does not ask is told nothing. The window and the question
+say it, and say nothing of it for a project that only joins.
+
+**Seen, in two copies of GridCraft on this computer, each with settings of its own**: GLQuake
+built by the kit in each and docked, its network on in each copy's own trust file. Copy A's
+Host a game: a deathmatch on E1M1, "Hosting", and its console said it listens on port 26000.
+Copy B's Join: it asked, joined, and spawned elsewhere on E1M1; both frag boards showed two
+players, and still did twenty seconds later. (The first time, copy B stopped on the poll
+procedures' mismatch: that is how it was found.)
+
+**Not seen**: two computers on a network playing each other, and so Windows' question for a port
+on every address; a game played by hand over the network. **Known**: Quake looks for games on
+the network as it joins (a second and a half, finding none here, since GridCraft calls out to
+no one); a host that quits waits up to five seconds for its players to be told.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

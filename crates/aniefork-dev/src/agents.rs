@@ -3072,7 +3072,9 @@ net_send("host:port", data, length) sends one, net_receive(from, from_room, data
 the next that came (-1: none), net_status() says whether it is on (1), off (-1) or not known
 yet (0). None of them waits: call net_receive once a frame. GridCraft sends only to the
 addresses the project names, or back to whoever wrote from one of those hosts, and takes in
-only from the hosts it sent to; a packet is at most 4096 bytes. program.network() tells the
+only from the hosts it sent to; a packet is at most 4096 bytes. A program that hosts a game
+calls net_listen() once a frame until it says 1 (or -1): GridCraft then takes in packets on the
+port the project names ([network] listen = 26000) from the hosts it names, and sends from it. program.network() tells the
 page the same as net_status.
 
 The typings follow, with every command by id."#;

@@ -500,6 +500,9 @@ const CProgram = (() => {
     const inbox = [];
     let netOn = 0; // 1 on, -1 off, 0 not known yet
     let pumping = false;
+    // Whether the program asked to listen (it hosts), and what GridCraft said: 1 it listens, -1 it can't, 0 not yet.
+    let listenAsked = false;
+    let listening = 0;
     /** Packets as GridCraft takes them: each its address's length (two bytes), the address, its data's length, the data. */
     const netBytes = (packets) => {
       const parts = [];
@@ -549,8 +552,12 @@ const CProgram = (() => {
         const began = Date.now();
         const going = outbox.splice(0, NET_WAITING);
         try {
-          const answer = await fetch(network, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: netBytes(going), cache: "no-store" });
+          const headers = { "Content-Type": "application/octet-stream" };
+          if (listenAsked) headers["X-GridCraft-Listen"] = "yes";
+          const answer = await fetch(network, { method: "POST", headers, body: netBytes(going), cache: "no-store" });
           netOn = answer.ok ? 1 : -1;
+          const said = answer.headers.get("X-GridCraft-Listening");
+          if (listenAsked) listening = !answer.ok || said === "no" ? -1 : said ? 1 : listening;
           const came = answer.ok ? netPackets(new Uint8Array(await answer.arrayBuffer())) : [];
           for (const packet of came) if (inbox.length < NET_WAITING) inbox.push(packet);
         } catch (error) {
@@ -576,6 +583,12 @@ const CProgram = (() => {
         outbox.push([glText(addressAt), bytes().slice(dataAt, dataAt + length)]);
         return 0;
       },
+      net_listen() {
+        netStart();
+        if (!network) return -1;
+        listenAsked = true;
+        return listening;
+      },
       net_receive(fromAt, fromRoom, dataAt, room) {
         netStart();
         const next = inbox.shift();
@@ -598,7 +611,7 @@ const CProgram = (() => {
         (asked.module === "wasi_snapshot_preview1" && system[asked.name]) ||
         // A drawing call, when there is a canvas and the call is one that is known; else nothing is drawn.
         (asked.module === "gl" && ((graphics && graphics[asked.name]) || (() => 0))) ||
-        // The network's three calls, carried by GridCraft.
+        // The network's calls, carried by GridCraft.
         (asked.module === "net" && net[asked.name]) ||
         (() => NOSYS);
     }
@@ -721,7 +734,7 @@ mod tests {
         assert_eq!(LOADER.matches("fetch(").count(), 2, "the program, and GridCraft's address for packets");
         assert!(LOADER.contains("network: new URL(\"net\", answer.url).href") && LOADER.contains("await fetch(network, {"));
         // The network's three calls, and nothing of it without GridCraft's address.
-        for call in ["net_status", "net_send", "net_receive"] {
+        for call in ["net_status", "net_send", "net_receive", "net_listen"] {
             assert!(LOADER.contains(&format!("      {call}(")), "{call}");
         }
         assert!(LOADER.contains("if (!network || netOn < 0) return -1;"));

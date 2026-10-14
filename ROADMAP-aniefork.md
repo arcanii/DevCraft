@@ -792,6 +792,13 @@ included.
 
 Newest first.
 
+- **2026-10-14 (A network for a C program, stage N3):** On the owner's word ("Move on to N3";
+  "Yes, allow listening"). A project may name a port to host on (`[network] listen`), part of
+  what the person turns the network on for; its program asks with `net_listen()`, and GridCraft
+  takes in packets there from the hosts the project names, and answers from it. GLQuake
+  (outside the repository, 0.3.0) plays another GridCraft over it: Quake's own network part on
+  a driver of the project's. Seen with two copies of GridCraft on one computer, one hosting a
+  deathmatch and the other joined to it. No hook in an upstream file changed.
 - **2026-10-14 (A docked panel that stops answering):** On the owner's word, after they asked
   whether a kit's crash takes the whole application down (it does not: the kits' code runs in
   processes of its own). GridCraft asks the docked page a question every two seconds; silent for

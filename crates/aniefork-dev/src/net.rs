@@ -15,7 +15,9 @@
 //!   own machine or network ([`crate::manifest::Address::is_local`]) and stands for a number that
 //!   is, is not sent to: a name can be pointed anywhere, and the person was told the address was
 //!   out on the internet.
-//! - **It takes in only from the hosts it has sent to.** Whatever else arrives is dropped.
+//! - **It takes in only from the hosts it has sent to**, and, once its program asks to listen
+//!   (`net_listen`), on the port the project names, from the hosts the project names: what a
+//!   program that hosts a game needs. Whatever else arrives is dropped.
 //! - **So much and no more**: a packet is at most [`MAX_PACKET`] bytes, at most [`MAX_A_SECOND`]
 //!   packets and [`MAX_BYTES_A_SECOND`] bytes go out in a second, and at most [`MAX_A_REPLY`]
 //!   come back to the loader at a time. What is over is dropped, as a network drops packets.
@@ -94,6 +96,13 @@ GRIDCRAFT_NET(net_status) int net_status(void);
    or too much is waiting to go. Whether it may go there is GridCraft's to decide: a packet to
    anywhere else is dropped, and the Developer console says so. */
 GRIDCRAFT_NET(net_send) int net_send(const char *address, const void *data, int length);
+
+/* Takes in packets on the port the project names to listen on ([network] listen), from the
+   hosts it names, before the program has written to them: what a program that hosts a game
+   asks for. Ask once a frame until it says: 1 GridCraft listens, and sends from that port too;
+   0 not known yet; -1 it can't (the project names no port, the network is off, or the port is
+   taken: the Developer console says which). */
+GRIDCRAFT_NET(net_listen) int net_listen(void);
 
 /* The next packet that came: its bytes into `data` (room for `room`), and who sent it into
    `from` ("number:port", closed with a zero; room for `from_room`). Its length, which may be 0;
@@ -222,6 +231,11 @@ pub struct Carrier {
     /// Who wrote to it: it may answer them.
     heard: HashSet<SocketAddr>,
     sockets: Vec<(Bound, UdpSocket)>,
+    /// The port the project names to listen on; and, once the program asked, the socket on it,
+    /// whether it is on this machine alone, and the hosts that may write to it.
+    listen: Option<u16>,
+    listener: Option<(u16, UdpSocket, bool)>,
+    welcome: HashSet<IpAddr>,
     /// This second's sending: when it began, packets, bytes.
     second: (Instant, u32, usize),
     /// What was refused and has not been said yet; and what has been said, so it is said once.
@@ -230,10 +244,14 @@ pub struct Carrier {
 }
 
 impl Carrier {
-    /// A carrier for the addresses a project names, as its network was turned on for them.
-    pub fn new(allowed: Vec<Address>) -> Carrier {
+    /// A carrier for the addresses a project names, and the port it may listen on, as its
+    /// network was turned on for them.
+    pub fn new(allowed: Vec<Address>, listen: Option<u16>) -> Carrier {
         Carrier {
             allowed,
+            listen,
+            listener: None,
+            welcome: HashSet::new(),
             looked_up: Vec::new(),
             sent_to: HashSet::new(),
             heard: HashSet::new(),
@@ -247,6 +265,77 @@ impl Carrier {
     /// The addresses it carries for.
     pub fn allowed(&self) -> &[Address] {
         &self.allowed
+    }
+
+    /// The port it may listen on.
+    pub fn listen_port(&self) -> Option<u16> {
+        self.listen
+    }
+
+    /// Takes in packets on the port the project names, from the hosts it names, before the
+    /// program has written to them; and sends from that port from then on, so that its answers
+    /// come from where it was written to. On this machine alone when every host it names is this
+    /// machine. The port it listens on, or why not (said once, too).
+    pub fn listen(&mut self, lookup: &dyn Fn(&str, u16) -> Vec<SocketAddr>) -> Result<u16, String> {
+        if let Some((port, _, _)) = &self.listener {
+            return Ok(*port);
+        }
+        let Some(port) = self.listen else {
+            let why = "It did not listen: the project names no port to listen on ([network] listen).".to_string();
+            self.refuse(why.clone());
+            return Err(why);
+        };
+        let mut welcome = HashSet::new();
+        for address in self.allowed.clone() {
+            if let Ok(found) = self.stands_for(&address, lookup) {
+                welcome.extend(found.iter().map(SocketAddr::ip).filter(IpAddr::is_ipv4));
+            }
+        }
+        if welcome.is_empty() {
+            let why = format!("It did not listen on port {port}: none of the hosts the project names can be reached.");
+            self.refuse(why.clone());
+            return Err(why);
+        }
+        let here = welcome.iter().all(IpAddr::is_loopback);
+        let ip = if here { Ipv4Addr::LOCALHOST } else { Ipv4Addr::UNSPECIFIED };
+        match UdpSocket::bind((ip, port)).and_then(|socket| socket.set_nonblocking(true).map(|()| socket)) {
+            Ok(socket) => {
+                self.welcome = welcome;
+                self.listener = Some((port, socket, here));
+                Ok(port)
+            }
+            Err(e) => {
+                let why = format!("It did not listen on port {port}: {e}.");
+                self.refuse(why.clone());
+                Err(why)
+            }
+        }
+    }
+
+    /// What a named address stands for, as far as it may be reached: looked up again after a
+    /// while, and without the person's own machine or network for a name they were told is out
+    /// on the internet. Why not, when nothing it stands for may be reached.
+    fn stands_for(&mut self, address: &Address, lookup: &dyn Fn(&str, u16) -> Vec<SocketAddr>) -> Result<Vec<SocketAddr>, String> {
+        let now = now();
+        let kept = self.looked_up.iter().position(|(was, _, when)| was == address && now.duration_since(*when) < NAMES_KEPT);
+        let found = match kept {
+            Some(i) => self.looked_up.get(i).map(|(_, found, _)| found.clone()).unwrap_or_default(),
+            None => {
+                let found = lookup(&address.host, address.port);
+                self.looked_up.retain(|(was, _, _)| was != address);
+                self.looked_up.push((address.clone(), found.clone(), now));
+                found
+            }
+        };
+        if found.is_empty() {
+            return Err("the name stands for nothing that can be reached".into());
+        }
+        // A name the person was told is out on the internet is not let reach their own network.
+        let fit: Vec<SocketAddr> = found.into_iter().filter(|at| address.is_local() || !is_local_ip(&at.ip())).collect();
+        if fit.is_empty() {
+            return Err("the name stands for an address on your own machine or network, which the project does not say it reaches".into());
+        }
+        Ok(fit)
     }
 
     /// What was refused since it was last asked, each said once.
@@ -289,28 +378,13 @@ impl Carrier {
             self.refuse(format!("A packet to {shown} was not sent: the project does not name that address, and nothing there wrote to it."));
             return None;
         };
-        let now = now();
-        let kept = self.looked_up.iter().position(|(was, _, when)| *was == address && now.duration_since(*when) < NAMES_KEPT);
-        let stands_for = match kept {
-            Some(i) => self.looked_up.get(i).map(|(_, found, _)| found.clone()).unwrap_or_default(),
-            None => {
-                let found = lookup(&address.host, address.port);
-                self.looked_up.retain(|(was, _, _)| *was != address);
-                self.looked_up.push((address.clone(), found.clone(), now));
-                found
+        match self.stands_for(&address, lookup) {
+            Ok(found) => found.iter().find(|at| at.is_ipv4()).or_else(|| found.first()).copied(),
+            Err(why) => {
+                self.refuse(format!("A packet to {shown} was not sent: {why}."));
+                None
             }
-        };
-        if stands_for.is_empty() {
-            self.refuse(format!("A packet to {shown} was not sent: the name stands for nothing that can be reached."));
-            return None;
         }
-        // A name the person was told is out on the internet is not let reach their own network.
-        let fits = |at: &&SocketAddr| address.is_local() || !is_local_ip(&at.ip());
-        let Some(at) = stands_for.iter().filter(fits).find(|at| at.is_ipv4()).or_else(|| stands_for.iter().find(fits)) else {
-            self.refuse(format!("A packet to {shown} was not sent: the name stands for an address on your own machine or network, which the project does not say it reaches."));
-            return None;
-        };
-        Some(*at)
     }
 
     fn send(&mut self, at: SocketAddr, to: &str, data: &[u8]) {
@@ -327,6 +401,22 @@ impl Carrier {
                 "Packets were dropped: a program may send {MAX_A_SECOND} packets, or {} KB, in a second.",
                 MAX_BYTES_A_SECOND / 1024
             ));
+            return;
+        }
+        // While it listens, it sends from that port: whoever it hosts wrote there, and its
+        // answers are to come from there.
+        let from_listener = self.listener.as_ref().is_some_and(|(_, _, here)| at.is_ipv4() && (!here || at.ip().is_loopback()));
+        if from_listener {
+            if let Some((_, socket, _)) = &self.listener {
+                match socket.send_to(data, at) {
+                    Ok(_) => {
+                        self.second.1 += 1;
+                        self.second.2 = self.second.2.saturating_add(data.len());
+                        self.sent_to.insert(at.ip());
+                    }
+                    Err(e) => self.refuse(format!("A packet to {to} was not sent: {e}.")),
+                }
+            }
             return;
         }
         let kind = Bound::of(&at);
@@ -350,15 +440,18 @@ impl Carrier {
         }
     }
 
-    /// What has come from the hosts it sent to, oldest first; what came from anywhere else is dropped.
+    /// What has come from the hosts it sent to, and while it listens from the hosts it names,
+    /// oldest first; what came from anywhere else is dropped.
     fn take_in(&mut self) -> Vec<Packet> {
         let mut found = Vec::new();
         let mut buffer = vec![0u8; MAX_PACKET.max(65_536)];
-        for (_, socket) in &self.sockets {
+        let listening = self.listener.iter().map(|(_, socket, _)| socket);
+        for socket in listening.chain(self.sockets.iter().map(|(_, socket)| socket)) {
             while found.len() < MAX_A_REPLY {
                 match socket.recv_from(&mut buffer) {
                     Ok((length, from)) => {
-                        if !self.sent_to.contains(&from.ip()) || length > MAX_PACKET {
+                        let known = self.sent_to.contains(&from.ip()) || self.welcome.contains(&from.ip());
+                        if !known || length > MAX_PACKET {
                             continue;
                         }
                         self.heard.insert(from);
@@ -453,7 +546,7 @@ mod tests {
     #[test]
     fn a_packet_goes_where_the_project_names_and_its_answer_comes_back() {
         let (far, port) = echo();
-        let mut carrier = Carrier::new(named(&[&format!("127.0.0.1:{port}")]));
+        let mut carrier = Carrier::new(named(&[&format!("127.0.0.1:{port}")]), None);
         let found = carrier.exchange(vec![(format!("127.0.0.1:{port}"), b"ping".to_vec())], &system_lookup);
         let from = answer_one(&far);
         assert!(from.ip().is_loopback(), "sent from this machine to this machine");
@@ -473,7 +566,7 @@ mod tests {
     fn nothing_goes_anywhere_else_and_nothing_comes_in_from_anywhere_else() {
         let (far, port) = echo();
         let (other, other_port) = echo();
-        let mut carrier = Carrier::new(named(&[&format!("127.0.0.1:{port}")]));
+        let mut carrier = Carrier::new(named(&[&format!("127.0.0.1:{port}")]), None);
         // Not named: not sent, and said once.
         carrier
             .exchange(vec![(format!("127.0.0.1:{other_port}"), b"no".to_vec()), (format!("127.0.0.1:{other_port}"), b"no".to_vec())], &system_lookup);
@@ -511,20 +604,20 @@ mod tests {
         let (far, port) = echo();
         // The project names a host out on the internet, which stands, today, for this machine.
         let pointed_home = move |_: &str, _: u16| vec![SocketAddr::from((Ipv4Addr::LOCALHOST, port))];
-        let mut carrier = Carrier::new(named(&[&format!("game.example.org:{port}")]));
+        let mut carrier = Carrier::new(named(&[&format!("game.example.org:{port}")]), None);
         carrier.exchange(vec![(format!("game.example.org:{port}"), b"ping".to_vec())], &pointed_home);
         let said = carrier.refusals();
         assert!(said.iter().any(|why| why.contains("on your own machine or network")), "{said:?}");
         far.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
         assert!(far.recv_from(&mut [0u8; 16]).is_err(), "nothing arrived");
         // A name the project says is on the person's network may stand for it.
-        let mut home = Carrier::new(named(&[&format!("box.lan:{port}")]));
+        let mut home = Carrier::new(named(&[&format!("box.lan:{port}")]), None);
         home.exchange(vec![(format!("box.lan:{port}"), b"ping".to_vec())], &pointed_home);
         far.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         answer_one(&far);
         assert_eq!(collect(&mut home, &pointed_home), vec![(format!("127.0.0.1:{port}"), b"gnip".to_vec())]);
         // A name that stands for nothing: not sent, and said.
-        let mut lost = Carrier::new(named(&["gone.example.org:1"]));
+        let mut lost = Carrier::new(named(&["gone.example.org:1"]), None);
         lost.exchange(vec![("gone.example.org:1".to_string(), b"x".to_vec())], &|_: &str, _: u16| Vec::new());
         assert!(lost.refusals().iter().any(|why| why.contains("stands for nothing")));
     }
@@ -532,7 +625,7 @@ mod tests {
     #[test]
     fn so_much_is_sent_in_a_second_and_no_more() {
         let (far, port) = echo();
-        let mut carrier = Carrier::new(named(&[&format!("127.0.0.1:{port}")]));
+        let mut carrier = Carrier::new(named(&[&format!("127.0.0.1:{port}")]), None);
         let many: Vec<Packet> = (0..MAX_A_REQUEST).map(|_| (format!("127.0.0.1:{port}"), vec![7u8; 8])).collect();
         carrier.exchange(many.clone(), &system_lookup);
         carrier.exchange(many, &system_lookup);
@@ -541,10 +634,48 @@ mod tests {
         drop(far);
     }
 
+    /// A port on this machine that nobody is listening on now.
+    fn free_port() -> u16 {
+        UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap().port()
+    }
+
+    #[test]
+    fn a_program_that_hosts_takes_in_from_the_hosts_it_names_on_the_port_it_names() {
+        let port = free_port();
+        // Without a port named, it does not listen, and says why.
+        let mut client = Carrier::new(named(&["127.0.0.1:26000"]), None);
+        assert!(client.listen(&system_lookup).unwrap_err().contains("names no port"));
+        // With one: on this machine alone, as the only host named is this machine.
+        let mut host = Carrier::new(named(&[&format!("127.0.0.1:{port}")]), Some(port));
+        assert_eq!(host.listen(&system_lookup), Ok(port));
+        assert_eq!(host.listen(&system_lookup), Ok(port), "once is enough");
+        // A player writes to it before it has written to them, from a port of their own.
+        let player = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        player.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let player_at = player.local_addr().unwrap();
+        player.send_to(b"connect me", (Ipv4Addr::LOCALHOST, port)).unwrap();
+        let came = collect(&mut host, &system_lookup);
+        assert_eq!(came, vec![(player_at.to_string(), b"connect me".to_vec())]);
+        // Its answer goes back from the port it listens on, which is where the player wrote.
+        host.exchange(vec![(player_at.to_string(), b"welcome".to_vec())], &system_lookup);
+        let mut buffer = [0u8; 64];
+        let (length, from) = player.recv_from(&mut buffer).unwrap();
+        assert_eq!((&buffer[..length], from.port()), (b"welcome".as_slice(), port));
+        // A host it does not name is not let in (another of this machine's own numbers).
+        let stranger = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
+        stranger.send_to(b"let me in", (Ipv4Addr::LOCALHOST, port)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(host.exchange(Vec::new(), &system_lookup).is_empty());
+        // The port is taken: a second carrier can't listen there, and says so.
+        let mut second = Carrier::new(named(&[&format!("127.0.0.1:{port}")]), Some(port));
+        assert!(second.listen(&system_lookup).unwrap_err().contains(&format!("did not listen on port {port}")));
+        assert!(second.refusals().iter().any(|why| why.contains("did not listen")));
+    }
+
     #[test]
     fn the_header_declares_what_the_loader_answers() {
         assert!(HEADER.is_ascii() && !HEADER.contains('\r'));
-        for call in ["net_status", "net_send", "net_receive"] {
+        for call in ["net_status", "net_send", "net_receive", "net_listen"] {
             assert!(HEADER.contains(&format!("GRIDCRAFT_NET({call}) int {call}(")), "{call}");
             assert!(crate::c_program::LOADER.contains(&format!("      {call}(")), "{call} is not answered by the loader");
         }

@@ -139,6 +139,10 @@ pub struct Manifest {
     /// `None` when it has no such list. Naming them allows nothing: the person turns the
     /// network on for exactly these, apart from trusting the project ([`crate::trust`]).
     pub network: Option<Vec<Address>>,
+    /// The port it may take in packets on from the hosts it names, before it has written to
+    /// them (`[network] listen`): so that it can host a game. Only beside `allow`, and like the
+    /// addresses, it allows nothing until the person turns the network on for it.
+    pub listen: Option<u16>,
 }
 
 /// The most addresses a project may name to reach.
@@ -220,6 +224,12 @@ struct Raw {
 #[derive(Deserialize)]
 struct RawNetwork {
     allow: Option<Vec<String>>,
+    listen: Option<i64>,
+}
+
+/// The port a `[network]` table names to listen on.
+fn listen_port(port: i64) -> Result<u16, String> {
+    u16::try_from(port).ok().filter(|port| *port != 0).ok_or_else(|| format!("its [network] listen, {port}, is not a port from 1 to 65535"))
 }
 
 /// The addresses a `[network]` table names: at least one, each once, in the order written.
@@ -381,6 +391,7 @@ pub fn parse(source: &str, folder: &str) -> Result<Manifest, String> {
         workbook: raw.workbook.map(|name| workbook_name(&name)).transpose()?.flatten(),
         kit,
         c: raw.c.map(crate::c::Recipe::read).transpose()?,
+        listen: raw.network.as_ref().and_then(|network| network.listen).map(listen_port).transpose()?,
         network: raw.network.map(addresses).transpose()?,
     })
 }
@@ -523,6 +534,14 @@ scripts = "python"
         }
         let many: Vec<String> = (0..=MAX_ADDRESSES).map(|n| format!("\"h{n}.example.org:80\"")).collect();
         assert!(with(&format!("[network]\nallow = [{}]", many.join(","))).unwrap_err().contains("more than 16"));
+        // A port to listen on, to host a game: beside the addresses, never alone.
+        let hosting = with("[network]\nallow = [\"192.168.1.20:26000\"]\nlisten = 26000").unwrap();
+        assert_eq!((hosting.listen, hosting.network.map(|list| list.len())), (Some(26000), Some(1)));
+        assert_eq!(with("[network]\nallow = [\"192.168.1.20:26000\"]").unwrap().listen, None);
+        for bad in ["0", "65536", "-1"] {
+            assert!(with(&format!("[network]\nallow = [\"a.example.org:1\"]\nlisten = {bad}")).unwrap_err().contains("not a port"), "{bad}");
+        }
+        assert!(with("[network]\nlisten = 26000").unwrap_err().contains("names no address"));
     }
 
     #[test]
