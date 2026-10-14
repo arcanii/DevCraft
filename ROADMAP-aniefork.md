@@ -792,6 +792,12 @@ included.
 
 Newest first.
 
+- **2026-10-14 (OpenGL 1, the kit's own):** On the owner's word ("the kit should offer OpenGL
+  itself as a regular devkit feature"). `<GL/gl.h>` and `<GL/glu.h>`, and the C that makes
+  OpenGL 1 of the kit's OpenGL ES 3 (`gl1.rs`), built into a program whose sources include it,
+  and only then. GLQuake (0.2.0) uses it and carries no OpenGL of its own; **a picture of it is
+  in the README**, under the Quake exception, on the owner's word. Agents are told a C program
+  may draw. No hook in an upstream file changed.
 - **2026-10-14 (What Windows calls the program):** On the owner's word ("Go with
   recommended"): the version information of `gridcraft.exe` names it DevCraft ("DevCraft
   (GridCraft with development kits)"), which is what Task Manager shows. A hook in

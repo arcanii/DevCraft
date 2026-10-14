@@ -59,6 +59,7 @@ that the table above lists, and nothing else that is another party's.
 | `docs/images-aniefork/devcraft-console.png` | the fork's contributors | screenshot of this fork of GridCraft: the Console and its immediate line | MIT OR Apache-2.0 | README picture |
 | `docs/images-aniefork/devcraft-doom.png` | the fork's contributors made the picture; **what it shows of Doom is id Software's** | screenshot of this fork of GridCraft with Doom running in a docked panel, built by the C Development Kit | the picture's own parts: MIT OR Apache-2.0; **Doom's artwork: not the fork's, and not licensed by it** | README picture; the second exception, below |
 | `docs/images-aniefork/devcraft-quake.png` | the fork's contributors made the picture; **what it shows of Quake is id Software's** | screenshot of this fork of GridCraft with Quake running in a docked panel, built by the C Development Kit | the picture's own parts: MIT OR Apache-2.0; **Quake's artwork: not the fork's, and not licensed by it** | README picture; the third exception, below |
+| `docs/images-aniefork/devcraft-glquake.png` | the fork's contributors made the picture; **what it shows of Quake is id Software's** | screenshot of this fork of GridCraft with GLQuake running in a docked panel, built by the C Development Kit and drawn with its OpenGL | the picture's own parts: MIT OR Apache-2.0; **Quake's artwork: not the fork's, and not licensed by it** | README picture; under the third exception, below |
 
 ## A second exception: a picture of Doom running
 
@@ -103,6 +104,14 @@ quarter of which is a frame of Quake as it plays.
 - **It is said wherever the picture is shown** that it is not the fork's Quake.
 - **It is not to be offered upstream.** Another picture of Quake goes in only on the owner's
   word.
+
+**A second picture under it, the same day.** The owner's word: "Add a GLQuake to the README.md
+(same exception)". `devcraft-glquake.png` shows GLQuake, Quake as it draws with OpenGL, on the
+same terms: the same game data, unmodified (`pak0.pak` 1.06, the same MD5, checked on the file
+that ran); the engine is id Software's own release of GLQuake under the GPL
+(github.com/id-Software/Quake), with five places changed for today's compiler and one file of
+glue, drawing with the C kit's own OpenGL 1. Neither its code nor its data is in this
+repository, and it is said beside the picture that it is not the fork's Quake.
 
 ## Upstream's marks: removed from the fork
 

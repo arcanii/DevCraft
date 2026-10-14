@@ -3043,6 +3043,7 @@ of the project), which gives it CProgram:
     args: ["name", "-flag"],              // optional: what main() is handed
     print: (line) => show(line),          // optional: each line the program prints
     files: { "data.bin": bytes },         // optional: files it can open (read only)
+    canvas: picture,                      // optional: a <canvas> it draws on with OpenGL
   });
   program.run()                           // a program with a main: runs it to its end, and gives what it ended with
   program.exports.step()                  // entry = "none": the functions it exports
@@ -3057,6 +3058,13 @@ from the files it holds, load fails with words that say so: show them, since onl
 can build. The program is handed a clock, a place to print, random numbers, its arguments
 and files kept in memory (gone when the page is closed), and nothing else: no network, none
 of the computer's files, and no way to the spreadsheet. The page makes the calls for it.
+
+A program may draw on the canvas its page names, with the page's WebGL 2 (program.draws is
+false where the page has none). Its C includes <GLES3/gl3.h> for the part of OpenGL ES 3 the
+kit hands it, or <GL/gl.h> (and <GL/glu.h>) for OpenGL 1 as games of the nineties used it:
+shapes a corner at a time, matrices, textures, blending, the alpha test; no lighting, fog or
+display lists. GridCraft supplies both headers when it builds, and builds its own OpenGL 1
+into a program that includes it. Drawing reaches nothing but that canvas.
 
 The typings follow, with every command by id."#;
 

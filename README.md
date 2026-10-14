@@ -125,6 +125,20 @@ data is in this repository.** If the picture makes you want the game, it is thei
 Quake needed one thing the kit did not have, which the kit has now: a recipe can say
 `setjmp = true` for C that leaves a function half way by a jump.
 
+Its third challenge was **GLQuake**, Quake as it draws with OpenGL:
+
+<p align="center">
+  <img src="docs/images-aniefork/devcraft-glquake.png" alt="GridCraft with GLQuake running in a panel docked beside a sheet named Quake. The game is drawn by the graphics card. The sheet holds the game's variables as it plays (the level the Necropolis, health 83, weapon Nailgun, ten monsters killed of 47), the bytes at nine places in its memory with the numbers a formula works out of them, and two charts of the last minute." width="900">
+</p>
+
+**Still not our Quake.** It is id Software's own release of GLQuake, under the GPL, on the same
+shareware data, built by the C Development Kit with five places of its code changed for today's
+compiler and one file of glue. It is drawn by the graphics card: a C program can draw on a
+canvas its page names, with **OpenGL ES 3** (`<GLES3/gl3.h>`), or with **OpenGL 1**
+(`<GL/gl.h>`) as games of the nineties did, which the kit makes of OpenGL ES 3 and builds into a
+program that includes it. The kit builds GLQuake in about three seconds, and a picture takes it
+a few dozen draws. **Neither its code nor its data is in this repository.**
+
 ### Kits from packages
 
 A kit can be loaded from a package file (`.gridkit`). Such a kit describes and runs nothing of

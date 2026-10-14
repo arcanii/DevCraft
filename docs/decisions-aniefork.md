@@ -3204,6 +3204,46 @@ the program: "Go with recommended".
   would move the person's settings, their trusted projects and what was built, and would
   conflict at every merge of upstream.
 
+### OpenGL 1, the kit's own: `<GL/gl.h>` (built 2026-10-14)
+
+**What the owner decided.** Asked whether the kit should offer OpenGL 1 itself, rather than
+GLQuake carrying its own: "Yes the kit should offer OpenGL itself as a regular devkit feature."
+
+- **`gl1.rs`**: `<GL/gl.h>`, `<GL/glu.h>` and the C that makes OpenGL 1 of OpenGL ES 3. It is the
+  layer written for GLQuake, now the kit's, with three calls of GLU added (`gluPerspective`,
+  `gluOrtho2D`, `gluLookAt`). Text inside Rust source: the repository holds no C file.
+- **Built into a program that includes it, and only then.** The kit writes the two headers
+  beside `<GLES3/gl3.h>` for every build. The compiler says what each source read; when one read
+  the kit's `GL/`, the kit compiles its OpenGL 1 as the project's sources are compiled and puts
+  it in. A program that does not include it is built as before. A project's own `<GL/gl.h>`
+  wins, and then the kit's is neither read nor built in. The recipe says nothing of it.
+- **It gains a program nothing**: it draws through the loader's OpenGL ES 3, on the canvas the
+  page names.
+- **Agents are told now that a C program may draw**: `canvas` in `CProgram.load`, and the two
+  headers (the topic "panel"). Neither G1 nor G2 had told them.
+- **GLQuake 0.2.0 has no OpenGL of its own**: its `gl/` folder is gone, and its recipe builds
+  `quake` and `src`.
+
+**Checked.** The headers declare nothing the C does not define, and every call OpenGL 1 shares
+with OpenGL ES 3 is renamed and answered under the new name. With the compiler: a program
+written for OpenGL 1 (a view set with `gluPerspective`, a quad a corner at a time) is built with
+it, asks the page for OpenGL ES 3's calls and for none of OpenGL 1's, and counts one source of
+its own; a program that does not include it asks the page for nothing; a project's own
+`<GL/gl.h>` wins.
+
+**Seen.** GLQuake 0.2.0 built by the kit with its OpenGL 1 (47 sources, about three seconds),
+docked in the isolated copy, playing its demos and filling a linked sheet. That is the README's
+picture.
+
+### A picture of GLQuake in the README (2026-10-14)
+
+**The owner's word:** "Add a GLQuake to the README.md (same exception)". So
+`devcraft-glquake.png` is in the README under the third exception (`ATTRIBUTION-aniefork.md`),
+with "Still not our Quake" beside it, and the README says that a C program may draw with
+OpenGL ES 3 or with OpenGL 1. GLQuake 0.2.0 is in the owner's real projects folder, on their
+word, untrusted until they trust it; building it there needs a GridCraft built with the kit's
+OpenGL 1.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

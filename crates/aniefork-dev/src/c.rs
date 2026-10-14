@@ -46,6 +46,14 @@
 //! what the person trusted, and what was built from other files than the project holds now is
 //! not what is found for it.
 //!
+//! **A program may draw**, on a canvas its page names. The kit supplies `<GLES3/gl3.h>`, the
+//! part of OpenGL ES 3 the loader answers ([`GL_HEADER`]), and `<GL/gl.h>` with `<GL/glu.h>`,
+//! OpenGL 1 as games of the nineties drew with it, made of OpenGL ES 3 ([`crate::gl1`]): a
+//! program one of whose sources reads it is built with the kit's C for it, and one that does
+//! not is built without it. Both are written into the folder the compiler works in, and
+//! searched after the project's own folders, so that a project's own header of the same name
+//! wins.
+//!
 //! Nothing here runs what was built. The project's panel does: the bridge serves, beside the
 //! page, the program kept for the project as it is trusted then ([`program_bytes`]) and the
 //! loader that starts it ([`crate::c_program`]).
@@ -392,6 +400,10 @@ GRIDCRAFT_GL(glDeleteTextures) void glDeleteTextures(GLsizei n, const GLuint *te
 "#;
 /// Where the kit's own headers are put for a build, inside the folder the compiler works in.
 const KIT_HEADERS: &str = "kit";
+/// The kit's OpenGL 1 ([`crate::gl1`]) as it is written for a build, beside the kit's headers,
+/// and what it is compiled to.
+const GL1_SOURCE: &str = "kit-gl1.c";
+const GL1_OBJECT: &str = "kit-gl1.o";
 
 /// `[c]` as it is written.
 #[derive(Deserialize)]
@@ -682,7 +694,7 @@ mod host {
     use std::fs;
     use std::io::Read;
     use std::process::{Command, Stdio};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
     use std::time::{Duration, Instant};
 
@@ -973,11 +985,19 @@ mod host {
         name: &str,
     ) -> Result<(), String> {
         let real_cache = fs::canonicalize(cache).map_err(|e| format!("The build's folder can't be read ({e})."))?;
-        // The kit's own headers, written for this build: what a program asks of the loader by name.
+        // The kit's own headers, written for this build: what a program asks of the loader by
+        // name (OpenGL ES 3), and the kit's OpenGL 1 made of it, with the C that does it.
         let kit_headers = work.join(KIT_HEADERS);
-        let written = fs::create_dir_all(kit_headers.join("GLES3")).and_then(|()| fs::write(kit_headers.join("GLES3").join("gl3.h"), GL_HEADER));
+        let written = fs::create_dir_all(kit_headers.join("GLES3"))
+            .and_then(|()| fs::write(kit_headers.join("GLES3").join("gl3.h"), GL_HEADER))
+            .and_then(|()| fs::create_dir_all(kit_headers.join("GL")))
+            .and_then(|()| fs::write(kit_headers.join("GL").join("gl.h"), crate::gl1::HEADER))
+            .and_then(|()| fs::write(kit_headers.join("GL").join("glu.h"), crate::gl1::GLU_HEADER))
+            .and_then(|()| fs::write(work.join(GL1_SOURCE), crate::gl1::SOURCE));
         written.map_err(|e| format!("{name} was not built: the build's folder can't be written ({e})."))?;
         let real_kit = fs::canonicalize(&kit_headers).map_err(|e| format!("The build's folder can't be read ({e})."))?;
+        // Whether a source read the kit's OpenGL 1: then the program is built with it.
+        let draws_with_gl1 = AtomicBool::new(false);
         let one = |index: usize, source: &String| -> Result<(), String> {
             let mut cmd = zig_cc(compiler, work, cache);
             cmd.arg(recipe.optimize.flag());
@@ -1006,6 +1026,9 @@ mod host {
                 .map_err(|_| format!("{name} was not built: the compiler did not say what {source} reads."))?;
             for file in dependencies(&read) {
                 let path = Path::new(&file);
+                if within(path, &real_kit.join("GL")) {
+                    draws_with_gl1.store(true, Ordering::SeqCst);
+                }
                 let inside = fs::canonicalize(path).ok().and_then(|real| real.strip_prefix(real_dir).ok().map(Path::to_path_buf));
                 let in_project =
                     inside.is_some_and(|inner| !inner.components().any(|part| part.as_os_str().to_str().is_none_or(manifest::kept_by_git)));
@@ -1040,6 +1063,18 @@ mod host {
         if let Some(why) = lock(&first_failure).take() {
             return Err(why);
         }
+        // The kit's OpenGL 1, for a program that includes it: compiled as the project's sources
+        // are, and put together with them.
+        let draws_with_gl1 = draws_with_gl1.load(Ordering::SeqCst);
+        if draws_with_gl1 {
+            let mut cmd = zig_cc(compiler, work, cache);
+            cmd.arg(recipe.optimize.flag()).args(["-fno-sanitize=undefined", "-fno-gnu-inline-asm"]).arg("-I").arg(&kit_headers);
+            cmd.args(["-c", GL1_SOURCE, "-o", GL1_OBJECT]);
+            let ran = run(cmd, STEP_TIMEOUT).map_err(|why| format!("{name} was not built. Making the kit's OpenGL 1: {why}."))?;
+            if !ran.ok {
+                return Err(format!("{name} was not built: this compiler can't make the kit's OpenGL 1.\n{}", said(&ran, dir)));
+            }
+        }
         // A program that jumps is thrown with a tag that the compiler's library leaves to be
         // defined: GridCraft's own three lines of assembly, made here and built beside the
         // project's parts. (The project's own files are still built with no assembly.)
@@ -1059,6 +1094,9 @@ mod host {
         }
         if recipe.setjmp {
             cmd.args(["-mexception-handling", "jump.o"]);
+        }
+        if draws_with_gl1 {
+            cmd.arg(GL1_OBJECT);
         }
         cmd.args((0..sources.len()).map(|index| format!("{index}.o"))).arg("-o").arg(OUTPUT);
         let ran = run(cmd, STEP_TIMEOUT).map_err(|why| format!("{name} was not built. Putting it together: {why}."))?;
@@ -1343,6 +1381,112 @@ mod host {
                 let asked: Vec<u8> = std::iter::once(name.len() as u8).chain(name.bytes()).collect();
                 assert!(program.windows(asked.len()).any(|part| part == asked.as_slice()), "{name} is declared and not asked for");
             }
+        }
+
+        /// What a WebAssembly program asks of whoever runs it: each import's module and name, read
+        /// out of its import section.
+        fn imports(program: &[u8]) -> Vec<(String, String)> {
+            fn number(bytes: &[u8], at: &mut usize) -> usize {
+                let (mut value, mut shift) = (0usize, 0);
+                loop {
+                    let byte = bytes[*at];
+                    *at += 1;
+                    value |= usize::from(byte & 0x7f) << shift;
+                    if byte & 0x80 == 0 {
+                        return value;
+                    }
+                    shift += 7;
+                }
+            }
+            fn name(bytes: &[u8], at: &mut usize) -> String {
+                let length = number(bytes, at);
+                *at += length;
+                String::from_utf8_lossy(&bytes[*at - length..*at]).into_owned()
+            }
+            let mut at = 8;
+            while at < program.len() {
+                let id = program[at];
+                at += 1;
+                let size = number(program, &mut at);
+                if id != 2 {
+                    at += size;
+                    continue;
+                }
+                let mut found = Vec::new();
+                for _ in 0..number(program, &mut at) {
+                    let module = name(program, &mut at);
+                    let field = name(program, &mut at);
+                    // What is imported: a function (its type), a table (its kind, then limits), a
+                    // memory (limits), a global (its type and whether it changes), a tag.
+                    let kind = program[at];
+                    at += 1;
+                    match kind {
+                        1 | 2 => {
+                            at += usize::from(kind == 1);
+                            let limits = program[at];
+                            at += 1;
+                            number(program, &mut at);
+                            if limits & 1 == 1 {
+                                number(program, &mut at);
+                            }
+                        }
+                        3 => at += 2,
+                        _ => {
+                            at += usize::from(kind == 4);
+                            number(program, &mut at);
+                        }
+                    }
+                    found.push((module, field));
+                }
+                return found;
+            }
+            Vec::new()
+        }
+
+        #[test]
+        fn a_program_that_includes_opengl_1_is_built_with_the_kits_own_and_one_that_does_not_without_it() {
+            let Some(zig) = zig() else { return };
+            let t = TempDir::new("c-gl1");
+            let at = places(&t);
+            starter::create_in(&at.projects, &kit::C, "Old", None).unwrap();
+            // A program written for OpenGL 1, as a game of the nineties was: a view, a shape a corner at a time.
+            t.write(
+                "projects/old/src/main.c",
+                "#include <GL/gl.h>\n#include <GL/glu.h>\n\
+                 int main(void) {\n\
+                     glMatrixMode(GL_PROJECTION);\n    gluPerspective(90, 4.0 / 3.0, 4, 4096);\n    glMatrixMode(GL_MODELVIEW);\n\
+                     glEnable(GL_DEPTH_TEST);\n    glBindTexture(GL_TEXTURE_2D, 7);\n    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);\n\
+                     glBegin(GL_QUADS);\n    glColor3f(1, 0.5f, 0);\n    glTexCoord2f(0, 0);\n    glVertex3f(-1, -1, -8);\n\
+                     glVertex3f(1, -1, -8);\n    glVertex3f(1, 1, -8);\n    glVertex3f(-1, 1, -8);\n    glEnd();\n    glFlush();\n\
+                     return 0;\n}\n",
+            );
+            // Its recipe is the starter's: it says nothing of OpenGL.
+            trust(&at, "old");
+            let built = build(&at, "old", &zig).unwrap();
+            let asked = imports(&fs::read(&built.program).unwrap());
+            let of_gl: Vec<&str> = asked.iter().filter(|(module, _)| module == "gl").map(|(_, field)| field.as_str()).collect();
+            // It asks the page for OpenGL ES 3's calls, by their names; OpenGL 1's are the program's own now.
+            for call in ["glDrawArrays", "glBufferData", "glCreateShader", "glEnable", "glBindTexture"] {
+                assert!(of_gl.contains(&call), "{call}: {of_gl:?}");
+            }
+            assert!(!of_gl.iter().any(|call| call.starts_with("gl1_") || ["glBegin", "glVertex3f", "glMatrixMode"].contains(call)), "{of_gl:?}");
+            assert!(asked.iter().all(|(module, _)| module == "gl" || module == "wasi_snapshot_preview1"), "{asked:?}");
+            assert_eq!(built.sources, 1, "the kit's OpenGL 1 is not among the project's files");
+            assert!(!at.projects.join("old/kit").exists() && !at.projects.join("old/kit-gl1.c").exists());
+            // A program that does not include it is built without it: it asks the page for nothing.
+            starter::create_in(&at.projects, &kit::C, "Plain", None).unwrap();
+            trust(&at, "plain");
+            let plain = build(&at, "plain", &zig).unwrap();
+            assert!(imports(&fs::read(&plain.program).unwrap()).iter().all(|(module, _)| module != "gl"));
+            // A project's own <GL/gl.h> wins, and then the kit's OpenGL 1 is not built in.
+            starter::create_in(&at.projects, &kit::C, "Own GL", None).unwrap();
+            t.write("projects/own-gl/src/GL/gl.h", "#define OWN_GL 0\n");
+            t.write("projects/own-gl/src/main.c", "#include <GL/gl.h>\nint main(void) { return OWN_GL; }\n");
+            let manifest = fs::read_to_string(at.projects.join("own-gl/project.toml")).unwrap();
+            t.write("projects/own-gl/project.toml", &manifest.replace("\n[c]\n", "\n[c]\ninclude = [\"src\"]\n"));
+            trust(&at, "own-gl");
+            let own = build(&at, "own-gl", &zig).unwrap();
+            assert!(imports(&fs::read(&own.program).unwrap()).iter().all(|(module, _)| module != "gl"));
         }
 
         #[test]
