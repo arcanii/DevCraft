@@ -1635,9 +1635,16 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             c::Builder::global().start(&at, &id, &named, move || again.request_repaint())?;
             Ok(String::new())
         }
-        Act::CreateShowcase => projects::create_showcase(),
+        // Each kit that has a showcase has its own: which is meant is the kit whose part is shown.
+        Act::CreateShowcase => match &state.pane {
+            Pane::Kit(id) if *id == gridcraft_aniefork_dev::kit::C.id => projects::create_triangle(),
+            _ => projects::create_showcase(),
+        },
         // Showing a panel is opening it: the person's alone to do (checked above).
-        Act::ShowShowcase { docked } => show_panel(app, ctx, showcase::ID, docked, open),
+        Act::ShowShowcase { docked } => {
+            let of_c = matches!(&state.pane, Pane::Kit(id) if *id == gridcraft_aniefork_dev::kit::C.id);
+            show_panel(app, ctx, if of_c { gridcraft_aniefork_dev::triangle::ID } else { showcase::ID }, docked, open)
+        }
         Act::ShowPanel { project, docked } => show_panel(app, ctx, &project, docked, open),
         Act::OpenFolder => match (projects::places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
@@ -3274,9 +3281,11 @@ mod tests {
         );
         assert_eq!(second["pane"]["says"], kit::C.says);
         assert_eq!(
-            (&second["pane"]["python"], &second["pane"]["showcase"], &second["pane"]["projectsSays"]),
-            (&Json::Null, &Json::Null, &json!("No projects yet"))
+            (&second["pane"]["python"], &second["pane"]["showcase"]["stands"], &second["pane"]["projectsSays"]),
+            (&Json::Null, &json!("none"), &json!("No projects yet"))
         );
+        // Its showcase is its own: a program that draws, not the first kit's Svelte one.
+        assert!(second["pane"]["showcase"]["text"].as_str().is_some_and(|text| text.contains("OpenGL ES")));
         assert!(second["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:c" && row["selected"] == true));
         // A project made there is that kit's: a manifest, a program and the panel that runs
         // it, untrusted.
@@ -3823,9 +3832,9 @@ mod tests {
         assert!(h.query_by_label_contains("can't run a C project").is_none());
         h.get_by_label("No projects yet");
         h.get_by_label(&kits::projects_note(&kit::C));
-        assert!(
-            h.query_by_label_contains("Python:").is_none() && h.query_by_label("Create Showcase").is_none() && h.query_by_label("Showcase").is_none()
-        );
+        // It has no Python to name; its showcase is its own.
+        assert!(h.query_by_label_contains("Python:").is_none() && h.query_by_label("Create Showcase").is_some());
+        h.get_by_label_contains("draws with OpenGL ES");
         // A project made there is that kit's, and is not the first kit's.
         h.get_by_role_and_label(Role::TextInput, "New project:").focus();
         h.run_steps(2);
@@ -3972,6 +3981,48 @@ mod tests {
         assert_eq!(kits::project_pane(h.state_mut(), &ctx2, "clean-data").unwrap()["network"], Json::Null);
         let none = super::act(h.state_mut(), &ctx, &mut state, Act::SetNetwork { project: "clean-data".into(), on: true }, false, &mut open);
         assert!(none.unwrap_err().contains("asks for no network"));
+    }
+
+    #[test]
+    fn the_c_kits_part_offers_its_showcase_which_draws_and_is_built_before_it_is_shown() {
+        use gridcraft_aniefork_dev::triangle;
+        let s = Sandbox::new("dev-triangle");
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        let showcase_of = |h: &mut Harness, of: &'static gridcraft_aniefork_dev::kit::Kit| {
+            let ctx = h.ctx.clone();
+            kits::forget();
+            kits::kit_pane(h.state_mut(), &ctx, of)["showcase"].clone()
+        };
+        // Each kit says its own showcase: the C kit's is a program that draws.
+        let none = showcase_of(&mut h, &kit::C);
+        assert_eq!((&none["stands"], &none["text"]), (&json!("none"), &json!("A C program that draws with OpenGL ES: a triangle, turning.")));
+        assert!(showcase_of(&mut h, &kit::PYTHONCRAFT)["text"].as_str().unwrap().contains("Svelte"));
+        // Created from the C kit's part, it is the turning triangle, untrusted; from the first
+        // kit's part, the Svelte one.
+        let (mut state, mut open) = (State { pane: Pane::kit(&kit::C), ..State::default() }, true);
+        let made = super::act(h.state_mut(), &ctx, &mut state, Act::CreateShowcase, false, &mut open).unwrap();
+        assert!(made.starts_with("Turning Triangle was created. It is not trusted yet"), "{made}");
+        assert!(s.0.join("projects").join(triangle::ID).join("src/triangle.c").is_file() && !s.0.join("projects").join(showcase::ID).exists());
+        let untrusted = showcase_of(&mut h, &kit::C);
+        assert_eq!(untrusted["stands"], json!("untrusted"));
+        assert!(untrusted["text"].as_str().unwrap().contains("not trusted yet"));
+        // Trusted, and nothing built from it yet: there is nothing to show, and the part says what is wanting.
+        let print = gridcraft_aniefork_dev::project::load(&s.0.join("projects").join(triangle::ID)).fingerprint.unwrap();
+        trust(h.state(), triangle::ID, &print, false).unwrap();
+        let unbuilt = showcase_of(&mut h, &kit::C);
+        assert_eq!(unbuilt["stands"], json!("untrusted"));
+        assert!(unbuilt["text"].as_str().unwrap().contains("not built yet"), "{unbuilt}");
+        // Built from the files it holds: it is ready.
+        let kept = s.0.join("built").join(triangle::ID).join(&print);
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::write(kept.join("program.wasm"), b"\0asm\x01\0\0\0").unwrap();
+        let ready = showcase_of(&mut h, &kit::C);
+        assert_eq!((&ready["stands"], &ready["text"]), (&json!("trusted"), &json!("Turning Triangle is ready.")));
+        let mut first = State { pane: Pane::kit(&kit::PYTHONCRAFT), ..State::default() };
+        let svelte = super::act(h.state_mut(), &ctx, &mut first, Act::CreateShowcase, false, &mut open).unwrap();
+        assert!(svelte.starts_with("Svelte Showcase was created"), "{svelte}");
     }
 
     #[test]

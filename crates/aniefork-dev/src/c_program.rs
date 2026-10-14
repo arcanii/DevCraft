@@ -4,8 +4,9 @@
 //! A C project is built as one WebAssembly program ([`crate::c`]). A WebAssembly program can do
 //! nothing by itself: it asks whoever runs it for everything. The loader hands it the little of
 //! a system a C program asks for (a clock, a place to print, random numbers, its arguments, and
-//! files kept in memory) and nothing else: no way to the spreadsheet, to the network or to the
-//! computer's files. What the program is to do with the workbook, the project's page does for
+//! files kept in memory), and, when the page names a canvas, a part of OpenGL ES 3 to draw on
+//! that canvas with (the owner, 2026-10-14; the header for it is [`crate::c::GL_HEADER`]). And
+//! nothing else: no way to the spreadsheet, to the network or to the computer's files. What the program is to do with the workbook, the project's page does for
 //! it through `spreadsheet`, where every call is checked against what the project was granted.
 //! That is what holds a C project to what it asked for.
 //!
@@ -65,9 +66,10 @@ const CProgram = (() => {
 
   /**
    * Starts a program from its bytes. `files` are the files it can open, by name; `args` what its
-   * main is handed; `now()` the clock, in milliseconds; `print(line)` is handed each line it prints.
+   * main is handed; `now()` the clock, in milliseconds; `print(line)` is handed each line it prints;
+   * `canvas` is where it draws, when it draws with OpenGL ES.
    */
-  function start(wasm, { files = {}, args = ["program"], now = () => performance.now(), print = (line) => console.log(line) } = {}) {
+  function start(wasm, { files = {}, args = ["program"], now = () => performance.now(), print = (line) => console.log(line), canvas = null } = {}) {
     const kept = new Map();
     for (const [name, data] of Object.entries(files)) {
       const held = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -299,13 +301,159 @@ const CProgram = (() => {
       },
     };
 
+    // OpenGL ES 3, for a program whose page names a canvas to draw on: each call the program
+    // makes is answered with that canvas's WebGL 2, which is OpenGL ES 3 as a page has it.
+    // What OpenGL names by number (a buffer, a shader, a texture) is kept here under that
+    // number; 0 is none. It draws on the one canvas and reaches nothing else of the page.
+    const drawing = canvas ? canvas.getContext("webgl2", { alpha: false, antialias: true }) : null;
+    const made = { buffer: [null], shader: [null], program: [null], texture: [null], array: [null], place: [null] };
+    const keep = (kind, object) => (object ? made[kind].push(object) - 1 : 0);
+    const glText = (at) => {
+      const all = bytes();
+      let end = at;
+      while (end < all.length && all[end] !== 0) end++;
+      return decoder.decode(all.subarray(at, end));
+    };
+    const glFloats = (at, count) => new Float32Array(memory.buffer, at, count);
+    /** Writes what OpenGL had to say into the program's own room for it, closed with a zero. */
+    const glSaid = (log, room, lengthAt, at) => {
+      const held = encoder.encode(log || "").subarray(0, Math.max(0, room - 1));
+      if (room > 0 && at) {
+        bytes().set(held, at);
+        bytes()[at + held.length] = 0;
+      }
+      if (lengthAt) view().setInt32(lengthAt, held.length, true);
+    };
+    const glFresh = (kind, make) => (count, at) => {
+      for (let i = 0; i < count; i++) view().setUint32(at + i * 4, keep(kind, make()), true);
+    };
+    const glGone = (kind, drop) => (count, at) => {
+      for (let i = 0; i < count; i++) {
+        const id = view().getUint32(at + i * 4, true);
+        if (made[kind][id]) drop(made[kind][id]);
+        if (id) made[kind][id] = null;
+      }
+    };
+    /** The dots of a picture handed over as bytes: so many bytes a dot. */
+    const glDots = (at, width, height, format, type) => {
+      if (!at || type !== 0x1401) return null;
+      const each = { 0x1908: 4, 0x1907: 3, 0x1909: 1 }[format] || 4;
+      return new Uint8Array(memory.buffer, at, width * height * each);
+    };
+    const graphics = drawing && {
+      glViewport: (x, y, width, height) => drawing.viewport(x, y, width, height),
+      glScissor: (x, y, width, height) => drawing.scissor(x, y, width, height),
+      glClearColor: (red, green, blue, alpha) => drawing.clearColor(red, green, blue, alpha),
+      glClearDepthf: (depth) => drawing.clearDepth(depth),
+      glClear: (mask) => drawing.clear(mask),
+      glEnable: (what) => drawing.enable(what),
+      glDisable: (what) => drawing.disable(what),
+      glDepthFunc: (how) => drawing.depthFunc(how),
+      glDepthMask: (flag) => drawing.depthMask(!!flag),
+      glCullFace: (mode) => drawing.cullFace(mode),
+      glFrontFace: (mode) => drawing.frontFace(mode),
+      glBlendFunc: (from, to) => drawing.blendFunc(from, to),
+      glPixelStorei: (name, value) => drawing.pixelStorei(name, value),
+      glGetError: () => drawing.getError(),
+
+      glCreateShader: (type) => keep("shader", drawing.createShader(type)),
+      glShaderSource(shader, count, textsAt, lengthsAt) {
+        let source = "";
+        for (let i = 0; i < count; i++) {
+          const at = view().getUint32(textsAt + i * 4, true);
+          const length = lengthsAt ? view().getInt32(lengthsAt + i * 4, true) : -1;
+          source += length < 0 ? glText(at) : decoder.decode(bytes().subarray(at, at + length));
+        }
+        if (made.shader[shader]) drawing.shaderSource(made.shader[shader], source);
+      },
+      glCompileShader: (shader) => made.shader[shader] && drawing.compileShader(made.shader[shader]),
+      glGetShaderiv(shader, name, at) {
+        const held = made.shader[shader];
+        let value = 0;
+        if (held && name === 0x8b84) value = (drawing.getShaderInfoLog(held) || "").length + 1;
+        else if (held) value = Number(drawing.getShaderParameter(held, name));
+        view().setInt32(at, value, true);
+      },
+      glGetShaderInfoLog: (shader, room, lengthAt, at) => glSaid(made.shader[shader] ? drawing.getShaderInfoLog(made.shader[shader]) : "", room, lengthAt, at),
+      glDeleteShader(shader) {
+        if (made.shader[shader]) drawing.deleteShader(made.shader[shader]);
+        if (shader) made.shader[shader] = null;
+      },
+      glCreateProgram: () => keep("program", drawing.createProgram()),
+      glAttachShader: (program, shader) => made.program[program] && made.shader[shader] && drawing.attachShader(made.program[program], made.shader[shader]),
+      glBindAttribLocation: (program, index, nameAt) => made.program[program] && drawing.bindAttribLocation(made.program[program], index, glText(nameAt)),
+      glLinkProgram: (program) => made.program[program] && drawing.linkProgram(made.program[program]),
+      glGetProgramiv(program, name, at) {
+        const held = made.program[program];
+        let value = 0;
+        if (held && name === 0x8b84) value = (drawing.getProgramInfoLog(held) || "").length + 1;
+        else if (held) value = Number(drawing.getProgramParameter(held, name));
+        view().setInt32(at, value, true);
+      },
+      glGetProgramInfoLog: (program, room, lengthAt, at) => glSaid(made.program[program] ? drawing.getProgramInfoLog(made.program[program]) : "", room, lengthAt, at),
+      glUseProgram: (program) => drawing.useProgram(made.program[program] || null),
+      glDeleteProgram(program) {
+        if (made.program[program]) drawing.deleteProgram(made.program[program]);
+        if (program) made.program[program] = null;
+      },
+      glGetAttribLocation: (program, nameAt) => (made.program[program] ? drawing.getAttribLocation(made.program[program], glText(nameAt)) : -1),
+      glGetUniformLocation(program, nameAt) {
+        const place = made.program[program] ? drawing.getUniformLocation(made.program[program], glText(nameAt)) : null;
+        return place ? keep("place", place) : -1;
+      },
+
+      glUniform1i: (place, a) => drawing.uniform1i(made.place[place] || null, a),
+      glUniform1f: (place, a) => drawing.uniform1f(made.place[place] || null, a),
+      glUniform2f: (place, a, b) => drawing.uniform2f(made.place[place] || null, a, b),
+      glUniform3f: (place, a, b, c) => drawing.uniform3f(made.place[place] || null, a, b, c),
+      glUniform4f: (place, a, b, c, d) => drawing.uniform4f(made.place[place] || null, a, b, c, d),
+      glUniform3fv: (place, count, at) => drawing.uniform3fv(made.place[place] || null, glFloats(at, count * 3)),
+      glUniform4fv: (place, count, at) => drawing.uniform4fv(made.place[place] || null, glFloats(at, count * 4)),
+      glUniformMatrix3fv: (place, count, turned, at) => drawing.uniformMatrix3fv(made.place[place] || null, !!turned, glFloats(at, count * 9)),
+      glUniformMatrix4fv: (place, count, turned, at) => drawing.uniformMatrix4fv(made.place[place] || null, !!turned, glFloats(at, count * 16)),
+
+      glGenBuffers: glFresh("buffer", () => drawing.createBuffer()),
+      glBindBuffer: (target, buffer) => drawing.bindBuffer(target, made.buffer[buffer] || null),
+      glBufferData(target, size, at, usage) {
+        if (at) drawing.bufferData(target, new Uint8Array(memory.buffer, at, size), usage);
+        else drawing.bufferData(target, size, usage);
+      },
+      glBufferSubData: (target, offset, size, at) => drawing.bufferSubData(target, offset, new Uint8Array(memory.buffer, at, size)),
+      glDeleteBuffers: glGone("buffer", (held) => drawing.deleteBuffer(held)),
+      glGenVertexArrays: glFresh("array", () => drawing.createVertexArray()),
+      glBindVertexArray: (array) => drawing.bindVertexArray(made.array[array] || null),
+      glDeleteVertexArrays: glGone("array", (held) => drawing.deleteVertexArray(held)),
+      glEnableVertexAttribArray: (index) => drawing.enableVertexAttribArray(index),
+      glDisableVertexAttribArray: (index) => drawing.disableVertexAttribArray(index),
+      glVertexAttribPointer: (index, size, type, normal, stride, offset) => drawing.vertexAttribPointer(index, size, type, !!normal, stride, offset),
+      glDrawArrays: (mode, first, count) => drawing.drawArrays(mode, first, count),
+      glDrawElements: (mode, count, type, offset) => drawing.drawElements(mode, count, type, offset),
+
+      glGenTextures: glFresh("texture", () => drawing.createTexture()),
+      glBindTexture: (target, texture) => drawing.bindTexture(target, made.texture[texture] || null),
+      glActiveTexture: (unit) => drawing.activeTexture(unit),
+      glTexImage2D: (target, level, kind, width, height, border, format, type, at) =>
+        drawing.texImage2D(target, level, kind, width, height, border, format, type, glDots(at, width, height, format, type)),
+      glTexSubImage2D(target, level, x, y, width, height, format, type, at) {
+        const dots = glDots(at, width, height, format, type);
+        if (dots) drawing.texSubImage2D(target, level, x, y, width, height, format, type, dots);
+      },
+      glTexParameteri: (target, name, value) => drawing.texParameteri(target, name, value),
+      glGenerateMipmap: (target) => drawing.generateMipmap(target),
+      glDeleteTextures: glGone("texture", (held) => drawing.deleteTexture(held)),
+    };
+
     const module = new WebAssembly.Module(wasm);
     // Anything else the program was built to ask for is answered "there is no such thing".
     const given = {};
     for (const asked of WebAssembly.Module.imports(module)) {
       if (asked.kind !== "function") throw new Error(`The program asks for ${asked.module}.${asked.name}, which is not something a page can hand it.`);
       given[asked.module] ??= {};
-      given[asked.module][asked.name] = (asked.module === "wasi_snapshot_preview1" && system[asked.name]) || (() => NOSYS);
+      given[asked.module][asked.name] =
+        (asked.module === "wasi_snapshot_preview1" && system[asked.name]) ||
+        // A drawing call, when there is a canvas and the call is one that is known; else nothing is drawn.
+        (asked.module === "gl" && ((graphics && graphics[asked.name]) || (() => 0))) ||
+        (() => NOSYS);
     }
     const exports = new WebAssembly.Instance(module, given).exports;
     memory = exports.memory;
@@ -342,6 +490,8 @@ const CProgram = (() => {
     return {
       exports: functions,
       memory,
+      /** Whether the program has a canvas to draw on with OpenGL ES. */
+      draws: !!drawing,
       /** Why the program ended, or null while it can still run. */
       ended: () => ended,
       /** Runs a program that has a main to its end, and gives what it ended with (0: well). Once. */
@@ -436,6 +586,17 @@ mod tests {
         }
         // What a program asks for that the loader doesn't know is answered "there is no such thing".
         assert!(LOADER.contains("(() => NOSYS)"));
+        // Drawing: on the one canvas the page names, with its WebGL 2, and with no canvas nothing.
+        assert_eq!(LOADER.matches("getContext(").count(), 1, "one canvas, and its own way of drawing");
+        assert!(LOADER.contains("canvas.getContext(\"webgl2\"") && LOADER.contains("asked.module === \"gl\""));
+        // Every call the kit's header declares is one the loader answers, and it answers no other.
+        let declared: Vec<&str> = crate::c::GL_HEADER.lines().filter_map(|line| line.strip_prefix("GRIDCRAFT_GL(")?.split(')').next()).collect();
+        assert!(declared.len() > 50 && declared.contains(&"glDrawArrays"), "{}", declared.len());
+        for call in &declared {
+            assert!(LOADER.contains(&format!("      {call}")), "{call} is declared and not answered");
+        }
+        let answered = LOADER.lines().filter(|line| line.starts_with("      gl") && line[8..].chars().next().is_some_and(char::is_uppercase)).count();
+        assert_eq!(answered, declared.len(), "the loader answers what the header declares");
         // It is plain text a browser reads as it is: nothing a build step would have to make of it.
         assert!(LOADER.is_ascii() && !LOADER.contains('\r') && !LOADER.contains("import ") && !LOADER.contains("require("));
     }

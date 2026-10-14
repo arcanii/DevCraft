@@ -56,6 +56,7 @@ pub mod sha256;
 pub mod showcase;
 mod showcase_files;
 pub mod starter;
+pub mod triangle;
 pub mod trust;
 pub mod vba;
 

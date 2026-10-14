@@ -3064,6 +3064,58 @@ sends must look at the number it turns out to be, not only at the name. How much
 sent, and how fast. Whether what a program receives may come from anywhere, or only from
 where it sent to.
 
+### OpenGL for a C program, stage G1: a part of OpenGL ES 3, and a showcase that draws (built 2026-10-14)
+
+**What the owner decided.** Asked whether to begin on it: "Yes."
+
+**A C program may draw.** Until now a program drew by filling a picture that its page copied
+to a canvas dot by dot. Now:
+
+- **The page names a canvas** when it starts the program: `CProgram.load({ canvas })`.
+- **The loader answers the program's OpenGL calls with that canvas's WebGL 2**, which is
+  OpenGL ES 3 as a page has it (`c_program.rs`). What OpenGL names by number (a shader, a
+  buffer, a texture) the loader keeps under that number. With no canvas named, the calls
+  do nothing.
+- **The kit supplies the header**: `<GLES3/gl3.h>`, GridCraft's own (`c::GL_HEADER`), put
+  into the folder the compiler works in for every build and searched after the project's
+  own folders, so that a project's own header of that name wins. Each call in it is one the
+  program asks of whoever runs it, by its own name. It is text inside Rust source, as the
+  loader is.
+- **It is a part, not the whole**: 60 calls. Enough for shaders, buffers of
+  corners, textures, depth and blending: what a small 3D program needs. The names and
+  numbers are OpenGL's own, so code written for OpenGL ES reads the same.
+
+**It lets nothing out.** The program draws on the one canvas the page handed it. A page may
+draw with WebGL already; the program gains no way to the sheet, the network or the files.
+Nothing was added to what a project asks to be allowed.
+
+**The C kit has a showcase** (`triangle.rs`): Turning Triangle. One file of C makes two
+shaders and three coloured corners and draws them turned; its page has a canvas and calls
+`frame` for each picture. Created from the C kit's part ("Create Showcase", which each kit
+that has one answers with its own), untrusted like any project, and built before its panel
+has anything to run: the part says which of the two is wanting.
+
+**Checked.** The loader answers exactly the calls the header declares, and no other; it
+draws on one canvas only. The showcase is a sound project that asks for nothing, and every
+call it makes is declared. With the compiler: it builds with the kit's header, what it asks
+of its page is drawing calls by name, nothing of the kit's is left in the project, and a
+project's own header of the same name wins. The windows: each kit's own showcase, and the
+three states of the C kit's (not trusted, not built, ready).
+
+**Seen.** First in a browser, with the loader and the program served as the bridge serves
+them: the program made its shaders ("Ready to draw."), and the dots read back from the
+canvas were the background at a corner, red near the top corner, cream and blue near the
+other two, and after half a turn the red at the bottom. Then **docked in the isolated
+copy**, built by the kit (29 KB): the triangle in the panel, and a second later turned.
+
+**Not seen**: "Create Showcase" pressed in the C kit's part (the project was put into the
+sandbox as the button would put it); textures, depth and blending, which the showcase does
+not use.
+
+**Next, if the owner says**: G2, the part grown to what a real game needs, and looked at
+with a program that uses textures and depth; G3, a Quake that draws with it, which needs a
+Quake written for OpenGL ES 2 or a layer of C that turns the old calls into the new.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

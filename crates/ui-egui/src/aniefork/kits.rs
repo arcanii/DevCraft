@@ -924,6 +924,26 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
             "canPick": has_compiler_picker(),
         });
     }
+    // The C kit's showcase is a program that draws with OpenGL ES. Its panel has something to
+    // run once it is trusted and built: until then the part says which of the two is wanting.
+    if kit.id == kit::C.id {
+        use gridcraft_aniefork_dev::triangle;
+        let project = found.projects.iter().find(|project| project["id"] == triangle::ID);
+        let trusted = project.is_some_and(|project| project["status"] == "trusted");
+        let print = project.and_then(|project| project["fingerprint"].as_str());
+        let built = trusted && matches!(c::standing(&at.settings, triangle::ID, print), c::Standing::Built { .. });
+        told["showcase"] = json!({
+            "stands": match (project.is_some(), built) { (false, _) => "none", (true, true) => "trusted", (true, false) => "untrusted" },
+            "text": match (project.is_some(), trusted, built) {
+                (false, ..) => "A C program that draws with OpenGL ES: a triangle, turning.",
+                (true, false, _) => "Turning Triangle is not trusted yet: review and trust it in its own part, build it, then come back.",
+                (true, true, false) => "Turning Triangle is trusted and not built yet: build it in its own part, then come back.",
+                (true, true, true) => "Turning Triangle is ready.",
+            },
+            "canDock": super::dock::available(ctx),
+            "canBrowse": app.services.open_url.is_some(),
+        });
+    }
     // The showcase is a project of the first kit.
     if kit.id == kit::PYTHONCRAFT.id {
         let standing = found.projects.iter().find(|project| project["id"] == showcase::ID).map(|project| project["status"] == "trusted");
@@ -1574,8 +1594,9 @@ mod tests {
             "A project is a folder with a project.toml, C sources and a web panel that runs the program built from them. It does nothing until you trust it."
         );
         assert_eq!((&empty["projects"], &empty["projectsEmpty"]), (&json!([]), &json!(NONE_YET)), "the first kit's are not listed here");
-        // What only the first kit has is not said of this one.
-        assert_eq!((&empty["python"], &empty["showcase"]), (&Json::Null, &Json::Null));
+        // What only the first kit has is not said of this one; its showcase is its own.
+        assert_eq!((&empty["python"], &empty["showcase"]["stands"]), (&Json::Null, &json!("none")));
+        assert!(empty["showcase"]["text"].as_str().is_some_and(|text| text.contains("draws with OpenGL ES")));
         // It builds: the compiler is named here, or looked for. The first kit has none to name.
         assert_eq!(empty["compiler"], json!({"title": "C compiler", "says": COMPILER_FOUND, "named": "", "hint": COMPILER_HINT, "canPick": false}));
         assert_eq!(kit_pane(&a, &ctx, &kit::PYTHONCRAFT)["compiler"], Json::Null);

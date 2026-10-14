@@ -791,6 +791,14 @@ included.
 
 Newest first.
 
+- **2026-10-14 (OpenGL for a C program, stage G1):** On the owner's word. A C project's page
+  names a canvas (`CProgram.load({ canvas })`) and the loader answers the program's OpenGL
+  calls with that canvas's WebGL 2: 60 calls of OpenGL ES 3, enough for shaders,
+  buffers, textures, depth and blending. The kit supplies the header, `<GLES3/gl3.h>`, its
+  own, for every build. The program draws on that one canvas and gains no way out. **The C
+  kit has a showcase**, Turning Triangle, created from its part. Seen: drawn and turning,
+  in a browser and docked in the isolated copy, built by the kit. No hook in an upstream
+  file changed.
 - **2026-10-14 (a network for a C project, stage N1):** On the owner's word ("the user can
   turn on networking explicitly. Yes a project can read the workbook and have network"). A C
   project may ask for `network` and name where to (`[network] allow = ["host:port"]`, never

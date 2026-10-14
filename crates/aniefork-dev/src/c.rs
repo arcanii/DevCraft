@@ -148,6 +148,197 @@ pub const JUMP_FLAGS: [&str; 3] = ["-mexception-handling", "-mllvm", "-wasm-enab
 /// it and leaves it to be defined; this defines it, for a program whose recipe says `setjmp`.
 pub const JUMP_TAG: &str = "\t.globl\t__c_longjmp\n\t.tagtype\t__c_longjmp i32\n__c_longjmp:\n";
 
+/// The header for the part of OpenGL ES 3 the loader hands a program
+/// ([`crate::c_program`]): `<GLES3/gl3.h>`, GridCraft's own, supplied to every build. It is
+/// not a file of a project, and a project that holds one of the same name is built with its
+/// own. Text inside Rust source, as the loader is: the repository holds no C file.
+pub const GL_HEADER: &str = r#"/*
+ * GridCraft's C Development Kit: the part of OpenGL ES 3 that the kit's loader hands a program.
+ *
+ * A C project's program is WebAssembly, run by its panel's page. When the page names a canvas
+ * to draw on (CProgram.load({ canvas })), the loader answers the calls below with that canvas's
+ * WebGL 2, which is OpenGL ES 3 as a page has it. A call made with no canvas does nothing.
+ *
+ * This is not the whole of OpenGL ES 3: it is what is here. The names and numbers are OpenGL's
+ * own, so that code written for OpenGL ES reads the same; the file is GridCraft's, written for
+ * this kit, and is not a project's to change: GridCraft supplies it when it builds.
+ */
+#ifndef GRIDCRAFT_GLES3_GL3_H
+#define GRIDCRAFT_GLES3_GL3_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef void GLvoid;
+typedef char GLchar;
+typedef unsigned char GLboolean;
+typedef unsigned char GLubyte;
+typedef int GLint;
+typedef int GLsizei;
+typedef unsigned int GLuint;
+typedef unsigned int GLenum;
+typedef unsigned int GLbitfield;
+typedef float GLfloat;
+typedef long GLintptr;
+typedef long GLsizeiptr;
+
+#define GL_FALSE 0
+#define GL_TRUE 1
+#define GL_NO_ERROR 0
+#define GL_ZERO 0
+#define GL_ONE 1
+
+#define GL_DEPTH_BUFFER_BIT 0x00000100
+#define GL_STENCIL_BUFFER_BIT 0x00000400
+#define GL_COLOR_BUFFER_BIT 0x00004000
+
+#define GL_POINTS 0x0000
+#define GL_LINES 0x0001
+#define GL_LINE_LOOP 0x0002
+#define GL_LINE_STRIP 0x0003
+#define GL_TRIANGLES 0x0004
+#define GL_TRIANGLE_STRIP 0x0005
+#define GL_TRIANGLE_FAN 0x0006
+
+#define GL_LESS 0x0201
+#define GL_LEQUAL 0x0203
+#define GL_ALWAYS 0x0207
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_FRONT 0x0404
+#define GL_BACK 0x0405
+#define GL_CW 0x0900
+#define GL_CCW 0x0901
+#define GL_CULL_FACE 0x0B44
+#define GL_DEPTH_TEST 0x0B71
+#define GL_BLEND 0x0BE2
+#define GL_SCISSOR_TEST 0x0C11
+#define GL_UNPACK_ALIGNMENT 0x0CF5
+
+#define GL_BYTE 0x1400
+#define GL_UNSIGNED_BYTE 0x1401
+#define GL_SHORT 0x1402
+#define GL_UNSIGNED_SHORT 0x1403
+#define GL_INT 0x1404
+#define GL_UNSIGNED_INT 0x1405
+#define GL_FLOAT 0x1406
+
+#define GL_RGB 0x1907
+#define GL_RGBA 0x1908
+#define GL_LUMINANCE 0x1909
+#define GL_RGB8 0x8051
+#define GL_RGBA8 0x8058
+
+#define GL_TEXTURE_2D 0x0DE1
+#define GL_NEAREST 0x2600
+#define GL_LINEAR 0x2601
+#define GL_NEAREST_MIPMAP_NEAREST 0x2700
+#define GL_LINEAR_MIPMAP_LINEAR 0x2703
+#define GL_TEXTURE_MAG_FILTER 0x2800
+#define GL_TEXTURE_MIN_FILTER 0x2801
+#define GL_TEXTURE_WRAP_S 0x2802
+#define GL_TEXTURE_WRAP_T 0x2803
+#define GL_REPEAT 0x2901
+#define GL_CLAMP_TO_EDGE 0x812F
+#define GL_TEXTURE0 0x84C0
+
+#define GL_ARRAY_BUFFER 0x8892
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
+#define GL_STREAM_DRAW 0x88E0
+#define GL_STATIC_DRAW 0x88E4
+#define GL_DYNAMIC_DRAW 0x88E8
+
+#define GL_FRAGMENT_SHADER 0x8B30
+#define GL_VERTEX_SHADER 0x8B31
+#define GL_COMPILE_STATUS 0x8B81
+#define GL_LINK_STATUS 0x8B82
+#define GL_INFO_LOG_LENGTH 0x8B84
+
+/* Each call is asked of the loader, by its own name. */
+#define GRIDCRAFT_GL(name) __attribute__((import_module("gl"), import_name(#name)))
+
+/* The picture as a whole. */
+GRIDCRAFT_GL(glViewport) void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+GRIDCRAFT_GL(glScissor) void glScissor(GLint x, GLint y, GLsizei width, GLsizei height);
+GRIDCRAFT_GL(glClearColor) void glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+GRIDCRAFT_GL(glClearDepthf) void glClearDepthf(GLfloat depth);
+GRIDCRAFT_GL(glClear) void glClear(GLbitfield mask);
+GRIDCRAFT_GL(glEnable) void glEnable(GLenum cap);
+GRIDCRAFT_GL(glDisable) void glDisable(GLenum cap);
+GRIDCRAFT_GL(glDepthFunc) void glDepthFunc(GLenum func);
+GRIDCRAFT_GL(glDepthMask) void glDepthMask(GLboolean flag);
+GRIDCRAFT_GL(glCullFace) void glCullFace(GLenum mode);
+GRIDCRAFT_GL(glFrontFace) void glFrontFace(GLenum mode);
+GRIDCRAFT_GL(glBlendFunc) void glBlendFunc(GLenum sfactor, GLenum dfactor);
+GRIDCRAFT_GL(glPixelStorei) void glPixelStorei(GLenum pname, GLint param);
+GRIDCRAFT_GL(glGetError) GLenum glGetError(void);
+
+/* Shaders, and the programs made of them. */
+GRIDCRAFT_GL(glCreateShader) GLuint glCreateShader(GLenum type);
+GRIDCRAFT_GL(glShaderSource) void glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length);
+GRIDCRAFT_GL(glCompileShader) void glCompileShader(GLuint shader);
+GRIDCRAFT_GL(glGetShaderiv) void glGetShaderiv(GLuint shader, GLenum pname, GLint *params);
+GRIDCRAFT_GL(glGetShaderInfoLog) void glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
+GRIDCRAFT_GL(glDeleteShader) void glDeleteShader(GLuint shader);
+GRIDCRAFT_GL(glCreateProgram) GLuint glCreateProgram(void);
+GRIDCRAFT_GL(glAttachShader) void glAttachShader(GLuint program, GLuint shader);
+GRIDCRAFT_GL(glBindAttribLocation) void glBindAttribLocation(GLuint program, GLuint index, const GLchar *name);
+GRIDCRAFT_GL(glLinkProgram) void glLinkProgram(GLuint program);
+GRIDCRAFT_GL(glGetProgramiv) void glGetProgramiv(GLuint program, GLenum pname, GLint *params);
+GRIDCRAFT_GL(glGetProgramInfoLog) void glGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
+GRIDCRAFT_GL(glUseProgram) void glUseProgram(GLuint program);
+GRIDCRAFT_GL(glDeleteProgram) void glDeleteProgram(GLuint program);
+GRIDCRAFT_GL(glGetAttribLocation) GLint glGetAttribLocation(GLuint program, const GLchar *name);
+GRIDCRAFT_GL(glGetUniformLocation) GLint glGetUniformLocation(GLuint program, const GLchar *name);
+
+/* What a shader is told. */
+GRIDCRAFT_GL(glUniform1i) void glUniform1i(GLint location, GLint v0);
+GRIDCRAFT_GL(glUniform1f) void glUniform1f(GLint location, GLfloat v0);
+GRIDCRAFT_GL(glUniform2f) void glUniform2f(GLint location, GLfloat v0, GLfloat v1);
+GRIDCRAFT_GL(glUniform3f) void glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
+GRIDCRAFT_GL(glUniform4f) void glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+GRIDCRAFT_GL(glUniform3fv) void glUniform3fv(GLint location, GLsizei count, const GLfloat *value);
+GRIDCRAFT_GL(glUniform4fv) void glUniform4fv(GLint location, GLsizei count, const GLfloat *value);
+GRIDCRAFT_GL(glUniformMatrix3fv) void glUniformMatrix3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+GRIDCRAFT_GL(glUniformMatrix4fv) void glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
+
+/* What is drawn: buffers of numbers, and how they are read. */
+GRIDCRAFT_GL(glGenBuffers) void glGenBuffers(GLsizei n, GLuint *buffers);
+GRIDCRAFT_GL(glBindBuffer) void glBindBuffer(GLenum target, GLuint buffer);
+GRIDCRAFT_GL(glBufferData) void glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
+GRIDCRAFT_GL(glBufferSubData) void glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void *data);
+GRIDCRAFT_GL(glDeleteBuffers) void glDeleteBuffers(GLsizei n, const GLuint *buffers);
+GRIDCRAFT_GL(glGenVertexArrays) void glGenVertexArrays(GLsizei n, GLuint *arrays);
+GRIDCRAFT_GL(glBindVertexArray) void glBindVertexArray(GLuint array);
+GRIDCRAFT_GL(glDeleteVertexArrays) void glDeleteVertexArrays(GLsizei n, const GLuint *arrays);
+GRIDCRAFT_GL(glEnableVertexAttribArray) void glEnableVertexAttribArray(GLuint index);
+GRIDCRAFT_GL(glDisableVertexAttribArray) void glDisableVertexAttribArray(GLuint index);
+GRIDCRAFT_GL(glVertexAttribPointer) void glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);
+GRIDCRAFT_GL(glDrawArrays) void glDrawArrays(GLenum mode, GLint first, GLsizei count);
+GRIDCRAFT_GL(glDrawElements) void glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices);
+
+/* Pictures to draw with. */
+GRIDCRAFT_GL(glGenTextures) void glGenTextures(GLsizei n, GLuint *textures);
+GRIDCRAFT_GL(glBindTexture) void glBindTexture(GLenum target, GLuint texture);
+GRIDCRAFT_GL(glActiveTexture) void glActiveTexture(GLenum texture);
+GRIDCRAFT_GL(glTexImage2D) void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);
+GRIDCRAFT_GL(glTexSubImage2D) void glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
+GRIDCRAFT_GL(glTexParameteri) void glTexParameteri(GLenum target, GLenum pname, GLint param);
+GRIDCRAFT_GL(glGenerateMipmap) void glGenerateMipmap(GLenum target);
+GRIDCRAFT_GL(glDeleteTextures) void glDeleteTextures(GLsizei n, const GLuint *textures);
+
+#undef GRIDCRAFT_GL
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+"#;
+/// Where the kit's own headers are put for a build, inside the folder the compiler works in.
+const KIT_HEADERS: &str = "kit";
+
 /// `[c]` as it is written.
 #[derive(Deserialize)]
 pub(crate) struct Raw {
@@ -728,6 +919,11 @@ mod host {
         name: &str,
     ) -> Result<(), String> {
         let real_cache = fs::canonicalize(cache).map_err(|e| format!("The build's folder can't be read ({e})."))?;
+        // The kit's own headers, written for this build: what a program asks of the loader by name.
+        let kit_headers = work.join(KIT_HEADERS);
+        let written = fs::create_dir_all(kit_headers.join("GLES3")).and_then(|()| fs::write(kit_headers.join("GLES3").join("gl3.h"), GL_HEADER));
+        written.map_err(|e| format!("{name} was not built: the build's folder can't be written ({e})."))?;
+        let real_kit = fs::canonicalize(&kit_headers).map_err(|e| format!("The build's folder can't be read ({e})."))?;
         let one = |index: usize, source: &String| -> Result<(), String> {
             let mut cmd = zig_cc(compiler, work, cache);
             cmd.arg(recipe.optimize.flag());
@@ -741,6 +937,8 @@ mod host {
             for folder in &recipe.include {
                 cmd.arg("-I").arg(dir.join(folder));
             }
+            // After the project's own folders: a header of the project's own name wins.
+            cmd.arg("-I").arg(&kit_headers);
             for definition in &recipe.define {
                 cmd.arg(format!("-D{definition}"));
             }
@@ -757,7 +955,7 @@ mod host {
                 let inside = fs::canonicalize(path).ok().and_then(|real| real.strip_prefix(real_dir).ok().map(Path::to_path_buf));
                 let in_project =
                     inside.is_some_and(|inner| !inner.components().any(|part| part.as_os_str().to_str().is_none_or(manifest::kept_by_git)));
-                if !in_project && !within(path, &compiler.lib) && !within(path, &real_cache) {
+                if !in_project && !within(path, &compiler.lib) && !within(path, &real_cache) && !within(path, &real_kit) {
                     return Err(format!(
                         "{name} was not built: {source} reads a file that is not the project's, {file}. A project is built from its own files and the compiler's."
                     ));
@@ -1036,6 +1234,31 @@ mod host {
             assert_eq!((again.sources, again.program.clone()), (2, program_for(&at.settings, "blink", &changed)), "every .c file in src");
             assert!(!program_for(&at.settings, "blink", &print).exists(), "what was built from the files before is gone");
             assert_eq!(standing(&at.settings, "blink", Some(&changed)), Standing::Built { bytes: again.bytes });
+        }
+
+        #[test]
+        fn a_program_that_draws_is_built_with_the_kits_own_header() {
+            let Some(zig) = zig() else { return };
+            let t = TempDir::new("c-draw");
+            let at = places(&t);
+            let made = crate::triangle::create(&at.projects).unwrap();
+            trust(&at, crate::triangle::ID);
+            let built = build(&at, crate::triangle::ID, &zig).unwrap();
+            // What it asks of whoever runs it is drawing calls, by their own names, and no file of
+            // the kit's was left in the project.
+            let program = fs::read(&built.program).unwrap();
+            let asks = |name: &str| program.windows(name.len()).any(|part| part == name.as_bytes());
+            assert!(asks("glDrawArrays") && asks("glCompileShader") && !asks("glBegin"), "what it imports");
+            assert_eq!(project::load(&at.projects.join(crate::triangle::ID)).files, made.files);
+            assert!(!at.projects.join(crate::triangle::ID).join("kit").exists());
+            // A project's own header of that name wins: here one that declares nothing.
+            starter::create_in(&at.projects, &kit::C, "Own", None).unwrap();
+            t.write("projects/own/src/GLES3/gl3.h", "#define OWN_HEADER 7\n");
+            t.write("projects/own/src/main.c", "#include <GLES3/gl3.h>\nint main(void) { return OWN_HEADER; }\n");
+            let manifest = fs::read_to_string(at.projects.join("own/project.toml")).unwrap();
+            t.write("projects/own/project.toml", &manifest.replace("\n[c]\n", "\n[c]\ninclude = [\"src\"]\n"));
+            trust(&at, "own");
+            build(&at, "own", &zig).unwrap();
         }
 
         #[test]

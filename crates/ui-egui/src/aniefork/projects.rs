@@ -160,6 +160,15 @@ pub(super) fn create_showcase() -> Result<String, String> {
     Ok(format!("{} was created. It is not trusted yet: review and trust it in Projects.", created.name()))
 }
 
+/// Creates the C kit's showcase, the turning triangle. Like any project it is not trusted until
+/// the user says, and being of the C kit it is built before its panel has anything to run.
+pub(super) fn create_triangle() -> Result<String, String> {
+    let at = places().ok_or(UNAVAILABLE)?;
+    std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
+    let created = gridcraft_aniefork_dev::triangle::create(&at.projects)?;
+    Ok(format!("{} was created. It is not trusted yet: review and trust it in its own part, then build it.", created.name()))
+}
+
 /// Remembers which Python to use and says whether it answers.
 pub(super) fn check_python(python: &str) -> Result<String, String> {
     let at = places().ok_or(UNAVAILABLE)?;
