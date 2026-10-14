@@ -792,6 +792,13 @@ included.
 
 Newest first.
 
+- **2026-10-14 (A docked panel that stops answering):** On the owner's word, after they asked
+  whether a kit's crash takes the whole application down (it does not: the kits' code runs in
+  processes of its own). GridCraft asks the docked page a question every two seconds; silent for
+  ten, a bar over the panel says so with Reload Panel; its web view gone, the pane says so.
+  Reloading is by hand. Seen in the isolated copy with a program in an endless loop, its page's
+  process killed, and the web view's own process killed: GridCraft answered throughout, and
+  each was loaded again. No hook in an upstream file changed.
 - **2026-10-14 (A network for a C program, stage N2):** On the owner's word ("Then on to
   networking"). A C program sends and takes in packets (`<gridcraft/net.h>`: `net_send`,
   `net_receive`, `net_status`); the loader swaps them with GridCraft once a frame; the bridge

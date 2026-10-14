@@ -13,6 +13,10 @@
 //! project that wasn't granted `network` is kept to its own address, opens no other window and
 //! downloads nothing.
 //!
+//! The page runs in the web view's own processes, not GridCraft's. Every two seconds the page
+//! is asked a question; when it has not answered for ten, or its web view has gone, the UI is
+//! told ([`dock::answering`]), and says so over the panel with a way to load it again.
+//!
 //! Windows only so far (WebView2, through `wry`). Elsewhere there is no host: the UI is never
 //! told there is one, and panels open in the browser as before.
 
@@ -39,17 +43,66 @@ pub fn frame(app: &mut gridcraft_ui_egui::SheetApp, ctx: &egui::Context, window:
 #[cfg(target_os = "windows")]
 mod host {
     use std::cell::RefCell;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use gridcraft_ui_egui::SheetApp;
-    use gridcraft_ui_egui::aniefork::dock::{self, Docked};
+    use gridcraft_ui_egui::aniefork::dock::{self, Answer, Docked};
     use wry::dpi::{PhysicalPosition, PhysicalSize};
 
     /// The view on screen, and what it was made for.
     struct Shown {
         address: String,
+        /// The reload it was made for: a new one is a new view.
+        reloads: u32,
         view: wry::WebView,
         bounds: [i32; 4],
         visible: bool,
+        watch: Watch,
+    }
+
+    /// How often the page is asked whether it answers, and how long it may take before it is
+    /// said not to (milliseconds). A page busy for longer than that is said to be silent too,
+    /// and its view stays: it may answer yet.
+    const ASK_EVERY: f64 = 2_000.0;
+    const SILENT_AFTER: f64 = 10_000.0;
+    /// The question, and the one answer that counts: a page that crashed answers nothing, or
+    /// nothing like this.
+    const QUESTION: &str = "'answering'";
+    const ANSWER: &str = "\"answering\"";
+
+    /// Whether the page answers: one question at a time, asked every [`ASK_EVERY`].
+    struct Watch {
+        /// When the question not yet answered was asked, while one is.
+        out: Option<f64>,
+        /// When the last question was asked.
+        asked: Option<f64>,
+        /// Set by the answer, when it comes (on whatever thread the web view calls back on).
+        heard: Arc<AtomicBool>,
+    }
+
+    impl Watch {
+        fn new() -> Watch {
+            Watch { out: None, asked: None, heard: Arc::new(AtomicBool::new(false)) }
+        }
+
+        /// Whether a question is to be asked now: none is out, and the last was long enough ago.
+        fn due(&mut self, now: f64) -> bool {
+            if self.heard.swap(false, Ordering::SeqCst) {
+                self.out = None;
+            }
+            self.out.is_none() && self.asked.is_none_or(|asked| now - asked >= ASK_EVERY)
+        }
+
+        fn asking(&mut self, now: f64) {
+            self.out = Some(now);
+            self.asked = Some(now);
+        }
+
+        /// Whether the page answers, as far as can be said now.
+        fn answer(&self, now: f64) -> Answer {
+            if self.out.is_some_and(|since| now - since >= SILENT_AFTER) { Answer::Silent } else { Answer::Yes }
+        }
     }
 
     struct Host {
@@ -111,9 +164,31 @@ mod host {
                 return;
             };
             let place = dock::wanted(ctx).and_then(|wanted| bounds(&wanted, ctx.pixels_per_point()));
-            // Another panel than the one shown: its view is made anew, with its own limits.
-            if self.shown.as_ref().is_some_and(|shown| shown.address != docked.address) {
+            // Another panel than the one shown, or the same loaded again: its view is made anew.
+            if self.shown.as_ref().is_some_and(|shown| shown.address != docked.address || shown.reloads != docked.reloads) {
                 self.shown = None;
+            }
+            // Whether its page answers.
+            if let Some(shown) = self.shown.as_mut() {
+                let now = gridcraft_ui_egui::now_ms();
+                if shown.watch.due(now) {
+                    let heard = shown.watch.heard.clone();
+                    let asked = shown.view.evaluate_script_with_callback(QUESTION, move |said| {
+                        if said == ANSWER {
+                            heard.store(true, Ordering::SeqCst);
+                        }
+                    });
+                    if asked.is_err() {
+                        // What showed it is gone: there is nothing to ask, and nothing to show.
+                        log::warn!("the docked panel's web view is gone");
+                        self.shown = None;
+                        dock::answering(ctx, Answer::Gone);
+                        return;
+                    }
+                    shown.watch.asking(now);
+                }
+                dock::answering(ctx, shown.watch.answer(now));
+                ctx.request_repaint_after(std::time::Duration::from_millis(ASK_EVERY as u64));
             }
             let Some(place) = place else {
                 // Covered, or its place not yet known: hidden, not gone.
@@ -135,7 +210,16 @@ mod host {
                     }
                 }
                 None => match self.make(&docked, place, window) {
-                    Ok(view) => self.shown = Some(Shown { address: docked.address.clone(), view, bounds: place, visible: true }),
+                    Ok(view) => {
+                        self.shown = Some(Shown {
+                            address: docked.address.clone(),
+                            reloads: docked.reloads,
+                            view,
+                            bounds: place,
+                            visible: true,
+                            watch: Watch::new(),
+                        })
+                    }
                     Err(why) => {
                         dock::undock(ctx);
                         app.message = Some((
@@ -190,6 +274,28 @@ mod host {
         }
 
         #[test]
+        fn the_page_is_asked_one_question_at_a_time_and_is_silent_when_it_goes_unanswered() {
+            let mut watch = Watch::new();
+            // Asked at once, and not again while the question is out.
+            assert!(watch.due(1_000.0));
+            watch.asking(1_000.0);
+            assert!(!watch.due(5_000.0) && watch.answer(5_000.0) == Answer::Yes);
+            // Ten seconds without an answer: silent.
+            assert_eq!(watch.answer(10_999.0), Answer::Yes);
+            assert_eq!(watch.answer(11_000.0), Answer::Silent);
+            // It answers, late: it answers again, and is asked again.
+            watch.heard.store(true, Ordering::SeqCst);
+            assert!(watch.due(12_000.0));
+            assert_eq!(watch.answer(12_000.0), Answer::Yes);
+            watch.asking(12_000.0);
+            watch.heard.store(true, Ordering::SeqCst);
+            // Not sooner than two seconds after the last question.
+            assert!(!watch.due(13_000.0) && watch.due(14_000.0));
+            // Only the one answer counts: the question and the answer are what a page says of a string.
+            assert_eq!((QUESTION, ANSWER), ("'answering'", "\"answering\""));
+        }
+
+        #[test]
         fn the_views_place_is_the_panes_in_the_windows_own_pixels() {
             let pane = |rect| Docked {
                 project: "m".into(),
@@ -198,6 +304,8 @@ mod host {
                 network: false,
                 rect,
                 covered: false,
+                answer: Answer::Yes,
+                reloads: 0,
             };
             let place = egui::Rect::from_min_max(egui::pos2(800.0, 120.5), egui::pos2(1200.0, 700.0));
             assert_eq!(bounds(&pane(Some(place)), 1.0), Some([800, 121, 400, 579]));

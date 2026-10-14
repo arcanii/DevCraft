@@ -13,6 +13,12 @@
 //! saying so; the panel can always be opened in the browser instead.
 //!
 //! Docking a panel is opening it: the person's alone to do, as [`super::panels::open`] is.
+//!
+//! **A panel's page runs in processes of the web view's own**, not GridCraft's: a page that
+//! crashes, or a program in it that never stops, can't take the window down. The shell asks the
+//! page a question every few seconds; when it has not answered for a while, or its web view has
+//! gone, it says so ([`answering`]), and the pane says so over the panel and offers to load it
+//! again ([`reload`]), which is the person's to do.
 
 use egui::{Rect, vec2};
 
@@ -38,7 +44,30 @@ pub struct Docked {
     /// Something of the window's own is drawn over the pane's place (a dialog, a menu, the File
     /// view): the web view, which would hide it, is to be hidden instead.
     pub covered: bool,
+    /// Whether its page answers, as the shell last said.
+    pub answer: Answer,
+    /// How many times the person has loaded it again: a new number is a new web view.
+    pub reloads: u32,
 }
+
+/// Whether a docked panel's page answers the shell's question.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Answer {
+    /// It answers, or has not been asked long enough to say.
+    #[default]
+    Yes,
+    /// It has not answered for a while: its page may have crashed, or a program in it is stuck.
+    /// Its view stays, in case it was only busy.
+    Silent,
+    /// What showed it is gone. Nothing is shown until it is loaded again.
+    Gone,
+}
+
+/// Said over a panel whose page has not answered for a while.
+pub const SILENT: &str =
+    "This panel has not answered for a while: its page may have crashed, or its program is stuck. GridCraft and your workbook are not affected.";
+/// Said in place of a panel whose web view is gone.
+pub const GONE: &str = "This panel stopped: what showed it has closed. GridCraft and your workbook are not affected.";
 
 fn id() -> egui::Id {
     egui::Id::new("aniefork.dock")
@@ -70,9 +99,34 @@ pub fn docked(ctx: &egui::Context) -> Option<Docked> {
 }
 
 /// What the shell's web view is to show, and where: the docked panel, once its place is known
-/// and while nothing of the window's own covers it.
+/// and while nothing of the window's own covers it, and not when what showed it is gone.
 pub fn wanted(ctx: &egui::Context) -> Option<Docked> {
-    docked(ctx).filter(|docked| docked.rect.is_some() && !docked.covered)
+    docked(ctx).filter(|docked| docked.rect.is_some() && !docked.covered && docked.answer != Answer::Gone)
+}
+
+/// The shell says whether the docked panel's page answers.
+pub fn answering(ctx: &egui::Context, answer: Answer) {
+    let Some(mut now) = docked(ctx) else { return };
+    if now.answer != answer {
+        now.answer = answer;
+        ctx.data_mut(|d| d.insert_temp(id(), now));
+        ctx.request_repaint();
+    }
+}
+
+/// Loads the docked panel again, in a new web view: what a page that crashed or is stuck needs.
+/// Opening a panel is the person's to do, and so is this.
+pub fn reload(ctx: &egui::Context) -> Result<String, String> {
+    if super::presence::driven(ctx) {
+        return Err(super::presence::BY_HAND.to_string());
+    }
+    let Some(mut now) = docked(ctx) else { return Err("No panel is docked.".into()) };
+    now.answer = Answer::Yes;
+    now.reloads = now.reloads.wrapping_add(1);
+    let said = format!("{} is loaded again.", now.name);
+    ctx.data_mut(|d| d.insert_temp(id(), now));
+    ctx.request_repaint();
+    Ok(said)
 }
 
 /// Docks the panel of the project `id` in the window. Refused unless the user trusts the project
@@ -88,7 +142,8 @@ pub fn dock(_app: &SheetApp, ctx: &egui::Context, id: &str) -> Result<String, St
     let name = found.and_then(|m| m["name"].as_str()).unwrap_or(id).to_string();
     // Where the page may go is the page's own `network`: never the kind GridCraft carries.
     let network = found.is_some_and(|m| m["pageNetwork"] == true);
-    let docked = Docked { project: id.to_string(), name: name.clone(), address, network, rect: None, covered: false };
+    let docked =
+        Docked { project: id.to_string(), name: name.clone(), address, network, rect: None, covered: false, answer: Answer::Yes, reloads: 0 };
     ctx.data_mut(|d| d.insert_temp(self::id(), docked));
     ctx.request_repaint();
     Ok(format!("{name} is docked in the window."))
@@ -126,6 +181,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     let t = Tokens::get(&ctx);
     let mut close = false;
     let mut in_browser = false;
+    let mut again = false;
     let mut place = None;
     egui::Panel::right("aniefork.dock").default_size(400.0).size_range(260.0..=900.0).resizable(true).frame(egui::Frame::NONE.fill(t.ribbon)).show(
         ui,
@@ -145,16 +201,33 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                     });
                 });
             });
+            // A page that does not answer, or is gone: said over the panel, with the way back.
+            if now.answer != Answer::Yes {
+                egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
+                    ui.label(egui::RichText::new(if now.answer == Answer::Gone { GONE } else { SILENT }).color(t.text));
+                    if ui.button("Reload Panel").on_hover_text("Load this panel again, in a new web view").clicked() {
+                        again = true;
+                    }
+                });
+            }
             // The rest is the web view's. Until it has drawn (and where there is none), say so.
             let body = ui.available_rect_before_wrap();
             ui.painter().rect_filled(body, 0.0, t.ribbon);
-            ui.painter().text(body.center(), egui::Align2::CENTER_CENTER, "The panel is shown here.", crate::theme::ui_font(12.5), t.text_dim);
+            let waiting = if now.answer == Answer::Gone { "" } else { "The panel is shown here." };
+            ui.painter().text(body.center(), egui::Align2::CENTER_CENTER, waiting, crate::theme::ui_font(12.5), t.text_dim);
             ui.allocate_rect(body, egui::Sense::hover());
             place = Some(body);
         },
     );
     if close {
         undock(&ctx);
+        return;
+    }
+    if again {
+        match reload(&ctx) {
+            Ok(said) => app.toast = Some((said, crate::now_ms())),
+            Err(why) => app.message = Some(("Development".into(), why)),
+        }
         return;
     }
     if in_browser {
@@ -281,6 +354,62 @@ mod tests {
         panels::stop(&ctx, "clean-data");
         h.run_steps(3);
         assert!(docked(&ctx).is_none());
+    }
+
+    #[test]
+    fn a_panel_whose_page_does_not_answer_says_so_and_is_loaded_again_by_the_person() {
+        use egui_kittest::kittest::Queryable;
+        let _s = Sandbox::new("dock-answer");
+        let (app, _) = trusted();
+        let mut h = harness(app);
+        let ctx = h.ctx.clone();
+        host_is_here(&ctx);
+        dock(h.state(), &ctx, "clean-data").unwrap();
+        h.run_steps(3);
+        let whole = wanted(&ctx).unwrap().rect.unwrap();
+        assert!(h.query_by_label("Reload Panel").is_none(), "nothing to say while it answers");
+        // Silent: said over the panel, which keeps a place below it, in case it was only busy.
+        answering(&ctx, Answer::Silent);
+        h.run_steps(3);
+        h.get_by_label(SILENT);
+        let below = wanted(&ctx).unwrap().rect.unwrap();
+        assert!(below.top() > whole.top() + 10.0 && (below.bottom() - whole.bottom()).abs() < 1.0, "{whole:?} {below:?}");
+        // It answers again: nothing more is said.
+        answering(&ctx, Answer::Yes);
+        h.run_steps(3);
+        assert!(h.query_by_label(SILENT).is_none() && h.query_by_label("Reload Panel").is_none());
+        // Gone: no web view is wanted, and the pane says why.
+        answering(&ctx, Answer::Gone);
+        h.run_steps(3);
+        h.get_by_label(GONE);
+        assert!(wanted(&ctx).is_none() && docked(&ctx).is_some());
+        // Not loaded again by the control channel.
+        drive(&mut h);
+        h.get_by_label("Reload Panel").click();
+        h.run_steps(3);
+        assert_eq!(h.state_mut().message.take().map(|(_, text)| text).as_deref(), Some(crate::aniefork::presence::BY_HAND));
+        assert_eq!(docked(&ctx).unwrap().reloads, 0);
+        assert!(reload(&ctx).is_err());
+    }
+
+    #[test]
+    fn a_panel_that_stopped_is_loaded_again_by_hand_in_a_new_web_view() {
+        use egui_kittest::kittest::Queryable;
+        let _s = Sandbox::new("dock-reload");
+        let (app, _) = trusted();
+        let mut h = harness(app);
+        let ctx = h.ctx.clone();
+        host_is_here(&ctx);
+        dock(h.state(), &ctx, "clean-data").unwrap();
+        h.run_steps(3);
+        answering(&ctx, Answer::Gone);
+        h.run_steps(3);
+        h.get_by_label("Reload Panel").click();
+        h.run_steps(3);
+        let now = wanted(&ctx).unwrap();
+        assert_eq!((now.answer, now.reloads), (Answer::Yes, 1), "wanted again, and a new view for it");
+        assert!(h.query_by_label(GONE).is_none());
+        assert_eq!(h.state_mut().toast.take().map(|(text, _)| text).as_deref(), Some("Clean Data is loaded again."));
     }
 
     #[test]

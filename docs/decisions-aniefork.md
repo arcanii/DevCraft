@@ -3301,6 +3301,52 @@ this computer's own address was used. IPv6 is carried and was not tried. **Quake
 network (N3) is not done**: its own network part, written on these calls, and two GridCrafts
 playing each other.
 
+### A docked panel that stops answering: said, and loaded again by hand (built 2026-10-14)
+
+**What the owner asked.** "For the devkit process - is this a separate process from the
+gridcraft main process? eg if it crashes, will that take down the whole application?" Told what
+runs where (below), and that a docked page that crashed would most likely leave a blank pane
+with nothing said and no way back, they said yes to handling it, and to trying it.
+
+**Where each part runs.** A PythonCraft script: a Python process of its own, killed when it
+runs too long. The C kit's compiler: zig processes, one a file, each with a time limit. A C
+program, its OpenGL and its packets' page side: the panel's page, in the browser's processes or
+the system web view's (`msedgewebview2.exe`), never GridCraft's; a fault in the program is
+caught by the loader, which says the program stopped. In GridCraft's own process: the bridge (a
+thread a request; release builds unwind on a panic, and the fork's code may not panic at all),
+the build's bookkeeping, and the windows.
+
+**What is new.** GridCraft asks the docked page a question every two seconds (a script that
+gives back a string; only that answer counts, so a crashed page that answers nothing, or
+nothing like it, does not pass).
+
+- **No answer for ten seconds** (its page crashed, or a program in it is stuck): a bar over the
+  panel says so, that GridCraft and the workbook are not affected, and offers **Reload Panel**.
+  The view stays below the bar, in case it was only busy; if it answers again, the bar goes.
+- **Its web view gone** (the web view's own process ended, so a question can't even be put):
+  the pane says the panel stopped, with **Reload Panel**, and GridCraft notes it in its log.
+- **Reload Panel** makes a new web view and loads the panel again. Opening a panel is the
+  person's to do, and so is this: not from the control channel.
+
+Where: `dock.rs` (`Answer`, `answering`, `reload`, the pane's bar) and the shell's
+`aniefork.rs` (`Watch`, the question). No hook in an upstream file changed.
+
+**Checked.** The pane: nothing said while the page answers; the bar, with the view's place
+below it, when silent; gone, with no view wanted; loaded again by hand in a new view, and not by
+the control channel. The watch: one question at a time; silent after ten seconds unanswered;
+answering again when a late answer comes; not asked again sooner than two seconds.
+
+**Seen, in the isolated copy.** A sandbox project, Stuck, whose program goes into an endless
+loop three seconds after its page loads: ten seconds later the bar was over it, while GridCraft
+answered the control channel in 40 ms and set a cell; Reload Panel loaded it again, and the
+stuck page's process ended with its view (no web view process of the copy used the processor
+afterwards). Its page's process killed: the panel went white, and within ten seconds the bar was
+over it; reloaded. The web view's own process killed: the pane said the panel had stopped, the
+log said the web view was gone, GridCraft answered in 6 ms; reloaded, in a new web view.
+
+**Not handled**: the Development window, when it is a page (its own web view), is not watched
+so; a panel opened in the browser is the browser's to look after.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.
