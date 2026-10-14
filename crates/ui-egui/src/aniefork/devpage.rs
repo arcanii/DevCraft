@@ -373,8 +373,9 @@ pub fn state(app: &mut SheetApp, ctx: &egui::Context) -> Option<String> {
     if !page.wanted {
         return None;
     }
-    // While a project is being built the page is told again, to show how long it has taken.
-    if gridcraft_aniefork_dev::c::Builder::global().building() > 0 {
+    // While a project is being built the page is told again, to show how long it has taken;
+    // and while a game is being set up, to show how far its downloads have got.
+    if gridcraft_aniefork_dev::c::Builder::global().building() > 0 || gridcraft_aniefork_dev::setup::Runner::global().running() > 0 {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
     let at_ms = crate::now_ms();
@@ -579,6 +580,17 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         "pickCompiler" => Some(Act::PickCompiler),
         "removeKit" => project_id(&message).map(Act::RemoveKit),
         "createShowcase" => Some(Act::CreateShowcase),
+        // A setup by its project's id, one of the C kit's; the data chosen by its key, one it offers.
+        "setUp" => {
+            let one = message.get("id").and_then(Json::as_str).and_then(gridcraft_aniefork_dev::setup::named);
+            let key = message.get("data").and_then(Json::as_str);
+            one.zip(key)
+                .filter(|(one, key)| one.data_named(key).is_some())
+                .map(|(one, key)| Act::SetUp { setup: one.id.to_string(), data: key.to_string() })
+        }
+        "stopSetUp" => {
+            message.get("id").and_then(Json::as_str).and_then(gridcraft_aniefork_dev::setup::named).map(|one| Act::StopSetUp(one.id.to_string()))
+        }
         "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
         // A project's panel, docked in GridCraft's window or in the browser: the project by its id.
         "showPanel" => {

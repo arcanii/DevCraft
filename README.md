@@ -132,12 +132,24 @@ Its third challenge was **GLQuake**, Quake as it draws with OpenGL:
 </p>
 
 **Still not our Quake.** It is id Software's own release of GLQuake, under the GPL, on the same
-shareware data, built by the C Development Kit with five places of its code changed for today's
-compiler and one file of glue. It is drawn by the graphics card: a C program can draw on a
+shareware data, built by the C Development Kit with eight places of its code changed (for today's
+compiler, and for a page, which can't wait) and its glue. It is drawn by the graphics card: a C program can draw on a
 canvas its page names, with **OpenGL ES 3** (`<GLES3/gl3.h>`), or with **OpenGL 1**
 (`<GL/gl.h>`) as games of the nineties did, which the kit makes of OpenGL ES 3 and builds into a
 program that includes it. The kit builds GLQuake in about three seconds, and a picture takes it
-a few dozen draws. **Neither its code nor its data is in this repository.**
+a few dozen draws. **Neither its code nor its data is in this repository.** And it plays
+another GridCraft over the network: one hosts a deathmatch, the other joins it.
+
+**Any of the three can be yours in a few clicks.** In the C Development Kit's part, under
+Setups, each game has a Set Up button. Your operating system's own question names every address
+GridCraft will download from, and every size; on yes, GridCraft downloads the game's code (one
+pinned commit of doomgeneric, of quakegeneric, or of id Software's release) and its shareware
+data (for Doom, Debian's copy of the shareware episode, or Freedoom) from those addresses
+alone, checks every file it keeps against the SHA-256 DevCraft holds for it, and writes the
+project, with the C and the panel DevCraft wrote for the game, untrusted. Then you review it,
+trust it, build it and dock it, as any other. What DevCraft wrote for the games is its own, under
+this repository's licence, and holds none of id Software's code; the games' code and data stay
+theirs, fetched from their own places each time.
 
 ### Kits from packages
 
@@ -182,6 +194,7 @@ cargo run --release -p gridcraft -- --sample sales
 4. Dock its panel or open it in your browser, and select some cells.
 
 Scripts need a Python on your machine (GridCraft finds it, or you name it). The C kit needs zig.
+To see what it can build, open the C Development Kit's part and Set Up one of the games.
 
 ## Where it stands
 

@@ -3406,6 +3406,131 @@ on every address; a game played by hand over the network. **Known**: Quake looks
 the network as it joins (a second and a half, finding none here, since GridCraft calls out to
 no one); a host that quits waits up to five seconds for its players to be told.
 
+### Setups in the C kit: Doom, Quake and GLQuake as projects in a few clicks (built 2026-10-14)
+
+**What the owner decided.** "Add these setups to the C DevKit so people can get them working
+quickly", and then, on the plan put to them: the glue written for the three games goes into
+DevCraft as the kit's own text, with every line that came from id Software's code rewritten
+first; GridCraft downloads the games' code and the shareware data itself, pinned and checked by
+hash, after a question that names every address and size, on the person's click alone; the
+projects it makes are untrusted, like the showcases. Asked four things: Doom's data, "Offer
+both, shareware first"; the HTTPS client, "ureq with rustls"; the code, "one zip per commit";
+and "Yes - download while building".
+
+**A setup** (`setup.rs`) names where each part of its game comes from:
+
+| Setup | Its code | Its data |
+|---|---|---|
+| Doom | doomgeneric (`github.com/ozkl/doomgeneric`), commit `e257a09527062bfb986b6e5e0780839b6cbd5b71`: 178 files kept (177 of `doomgeneric/`, and `LICENSE`), 1,553,565 bytes | the shareware Doom 1.9 as Debian keeps it (`deb.debian.org/…/doom-wad-shareware_1.9.fixed.orig.tar.gz`, 1,756,095 bytes): `doom1.wad`; or Freedoom 0.13.0 (`github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip`, 24,143,781 bytes): `freedoom1.wad`, as `panel/doom1.wad`, and its `COPYING.txt` |
+| Quake | quakegeneric (`github.com/erysdren/quakegeneric`), commit `13052102577c629650cf07a46151a4b6e1b19c3c`: 113 files (112 of `source/`, and `LICENSE`), 1,051,844 bytes | the shareware Quake 1.06 as the Internet Archive keeps it (`archive.org/download/msdos_Quake106_shareware/msdos_Quake106_shareware.zip`, 9,050,608 bytes): `ID1/PAK0.PAK` and `SLICNSE.TXT` |
+| GLQuake | id Software's release (`github.com/id-Software/Quake`), commit `bf4ac424ce754894ac8f1dae6a3981954bc9852d`: 89 files (88 of `WinQuake/`, and `gnu.txt` as `LICENSE`), 1,007,106 bytes | the same as Quake's |
+
+- **The code comes as one zip GitHub packs of the commit** (`codeload.github.com/<owner>/<repo>/zip/<commit>`).
+  GitHub does not promise that zip's bytes stay the same, so the zip is not pinned: each file
+  kept of it is, by size and SHA-256, and the zip is taken only up to half as much again as it
+  measured when it was pinned (3,239,384, 412,967 and 3,413,501 bytes). The data is pinned whole
+  and file by file. Of each download only the files named are kept; the rest (the DOS release's
+  programs among them) is never written anywhere.
+- **The hashes** were taken from the files as downloaded that day, each first checked against
+  the git object id the release's own tree gives for it; and they are the files the projects
+  outside the repository were built from (`G:\gridcraft-doom`, `-quake`, `-glquake`: the same
+  bytes, apart from the lines changed).
+- **The lines of a game's code that are changed** are named by file, line number and the
+  SHA-256 of the line as released, never by its text; the lines put in are DevCraft's own. Quake's
+  two (the build's date and time, which the kit's compiler refuses) and GLQuake's eight (those
+  two, two variables made `extern`, a line at the end of `quakedef.h`, the poll procedures'
+  call, connect's wait, `connect` in `host_cmd.c`). A line that does not hash as pinned keeps
+  nothing.
+- **What DevCraft writes** for each game is in `setup_files.rs`: its recipe, its C, its panel,
+  its README and a `.gitignore` that leaves the game's data out. Text inside Rust, as the loader
+  and OpenGL 1 are. The projects are 0.4.0.
+
+**The glue, rewritten.** Every line of the glue was compared with every file of the three
+releases (id Software's whole repository, QuakeWorld's too, and the ports' own example ports),
+then read. What had come from id Software's code, and is now written in DevCraft's own way, to
+the same effect:
+
+- GLQuake's `gridcraft_glquake.c`: the file handling and `Sys_Error`/`Sys_Printf` (from
+  `sys_null.c`), the start-up of `Host_Init` (from its `main`), `VID_Init`'s settings, the
+  console's size and the state OpenGL starts in (from `gl_vidlinux.c`), the palette table and
+  the brightening (GLQuake's gamma; the new arithmetic gives the same 256 bytes, checked), the
+  mouse look (`IN_MouseMove`). Three settings no file built here reads (`maxwarpwidth`,
+  `maxwarpheight`, `fullbright`) are no longer set.
+- `gridcraft_glquake.h`: the declarations, by their types alone, grouped by what they are for.
+- `net_gridcraft.c` was the project's own; the driver tables (laid out as `net_bsd.c`'s) are now
+  designated initialisers, and the request to join, whose header was written as `net_dgrm.c`
+  writes it, is built a byte at a time.
+- Doom's `gridcraft_doom.c`: the walk over the game's thinkers (Doom's own idiom, as in
+  `p_enemy.c`). Quake's `gridcraft_quake.c` held nothing of theirs but the port's interface.
+- Their licence notes: the glue is DevCraft's, MIT OR Apache-2.0; a program built from a project
+  holds the game's code too, and is under the GPL as a whole.
+
+What still matches a line of theirs is the ports' interface: the functions and variables a game
+needs by name, single calls of OpenGL with the values GLQuake needs, single calls into the game.
+A copied block shows as consecutive lines that are consecutive lines of theirs: before the
+rewrite GLQuake's glue had 58 runs of three; after it, none in any of the three, and a test says
+so whenever the downloads are at hand.
+
+**The download** (`setup_fetch.rs`, and `download` in `setup.rs`): HTTPS only, with ureq 3.4.2
+over rustls (ring) and Mozilla's roots built in; ureq follows no redirect itself, and GridCraft
+follows one only to a host the question named (`*.archive.org` for the Internet Archive,
+`*.githubusercontent.com` for a release on GitHub), five at most. A response is refused when it
+says it is longer than its limit, and stopped when it sends more; a stop by the person keeps
+nothing. Nothing decompresses a response. A proxy the person set (`HTTPS_PROXY`) is used. It is
+GridCraft's one way to download, and nothing else uses it.
+
+**The project is put together beside the settings** (`setups/<id>`), then moved into the projects
+folder whole, so that a project half written is never listed; never over a folder that is
+there (the owner's real projects folder has the 0.3.0 projects under these names: there Set Up
+says so and touches nothing). It is untrusted. Each step is said in the Developer console under
+the project's id.
+
+**The windows.** The C kit's part (both windows) has Setups under its showcase: each game, what
+it is, every address in full with its size, what is kept, whose it is, and where else its host
+may hand it over from; Set Up (Doom: "Set Up with Shareware Doom…", "Set Up with Freedoom…").
+Pressed, the operating system's question names every address and size; while it runs, how far
+it has got, and Stop; once there, the project's state and Show Project. **Set Up is the person's
+alone**: only their click reaches it, in GridCraft's window or in the page; it is refused when
+the window is driven, and no command or agent has a way to it. Stop is anyone's: it only ends a download. Agents are told the setups exist,
+and that setting one up is not theirs.
+
+**A new dependency**, on the owner's word: `ureq` (and `flate2`, which `zip` already brought in)
+in the fork's own `crates/aniefork-dev/Cargo.toml`, not for the web build. Fifteen entries more
+in `Cargo.lock`: ureq, ureq-proto, rustls, rustls-webpki, rustls-pki-types, ring, untrusted,
+webpki-roots, subtle, zeroize, httparse, utf8-zero, and second versions of base64, getrandom
+(0.2, for ring) and wasi. `Cargo.lock` is upstream's file: a merge may conflict there.
+
+**Checked.** With a stand-in for the network: a project put together from a zip and a gzipped
+tar handed over to another host, its lines changed where named, written untrusted and holding
+exactly the files named, nothing left beside the settings; a file not the one pinned, a file
+missing, a data archive whose hash differs, or what is not a zip at all: nothing kept; handed
+over to a host the question did not name, or to an address that is not HTTPS, or six times:
+refused; more than the limit, said or sent: refused; stopped: nothing; a line changed only
+where its number and hash say; a folder that is there: nothing downloaded. The setups
+themselves: every path once and one a project may hold, every change in a file kept, the
+question names every address, size and file kept, what DevCraft writes makes a sound C-kit
+project for each game and data. The runner: one at a time, stopped, then run to its end. The
+windows: the C kit's part lists them, the question is the setup's, a no downloads nothing,
+driven is refused, the page's message names only a setup and data there are. **With the real
+downloads** (`GRIDCRAFT_TEST_SETUPS`, and zig): each of the four put together, every pin held,
+no copied run, and each built by the kit (Doom 81 sources, Quake 69, GLQuake 48).
+
+**Seen, in two isolated copies** (debug builds, settings of their own), with the real addresses:
+Set Up pressed in the page for each game, the system's question as shown (read off the
+message box, every address and size), answered yes; "Downloading from archive.org: 1.7 MB so
+far, of no more than 8.6 MB", with Stop; each project made, untrusted, its files checked (179,
+115, 91, and 180 with Freedoom). Then, trusted and built in each copy's own settings: Doom
+docked and playing its demo, linked to a sheet that filled (on E1M5, 79 monsters alive and 12
+killed of 91, 3 in sight: the rewritten count adds up); Doom on Freedoom's data, playing
+Freedoom's demo; Quake docked, printing "This Quake was built by DevCraft's C Development Kit."
+(the line changed by number); GLQuake docked and drawing; and GLQuake hosting in one copy and
+joined from the other, both status bars listing two players.
+
+**Not seen**: Set Up in GridCraft's own window (drawn where there is no web view; its test
+reads it); a download stopped by the person (the test stops one); a download through a proxy;
+macOS or Linux, where rustls's ring and the roots are the same but nothing was built; any
+game played by hand.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

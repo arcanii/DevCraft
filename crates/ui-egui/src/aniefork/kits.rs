@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::bridge::Places;
 use gridcraft_aniefork_dev::kit::{self, Kit, ProjectKind};
-use gridcraft_aniefork_dev::{Project, TrustStore, c, describe, highlight, manifest, project, rebuilt, settings, showcase, vba};
+use gridcraft_aniefork_dev::{Project, TrustStore, c, describe, highlight, manifest, project, rebuilt, settings, setup, showcase, vba};
 use serde_json::{Value as Json, json};
 
 use super::{agents, card, macros, projects};
@@ -958,7 +958,107 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
             "canBrowse": app.services.open_url.is_some(),
         });
     }
+    // The C kit's setups: the games it was tried with, made into projects of the person's.
+    if kit.id == kit::C.id {
+        told["setups"] = setups_says(&found, &at);
+    }
     told
+}
+
+/// What the C kit's part says of its setups, above them.
+pub(super) const SETUPS_SAY: &str = "The games this kit was tried with, made into projects of yours in a few clicks. Set Up downloads a game's code and its data from the addresses shown here and from nowhere else, after a question that names them; every file kept is checked against the SHA-256 DevCraft holds for it, and DevCraft adds the C and the panel it wrote for the game. The project is not trusted until you have reviewed it, trusted it and built it.";
+
+/// One download of a setup, as the window lists it.
+fn fetch_says(source: &setup::Source) -> Json {
+    json!({
+        "address": source.url,
+        "says": format!("{}: {}. It keeps {} of it.", source.what, setup::size_says(source), setup::keeps_says(source)),
+        "whose": source.whose,
+        "other": setup::handed_over_says(source),
+    })
+}
+
+/// Megabytes, to one place.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
+/// Each setup: what it is, what it downloads, and where it stands. A setup whose project is in
+/// the projects folder has nothing more to do: the project's own part goes on from there.
+fn setups_says(found: &Found, at: &Places) -> Json {
+    let list: Vec<Json> = setup::ALL
+        .iter()
+        .map(|one| {
+            let project = found.projects.iter().find(|project| project["id"] == one.id);
+            let (stands, text) = match (setup::Runner::global().progress(&at.projects, one.id), project) {
+                (Some(setup::Progress::Fetching { from, got, of }), _) => {
+                    ("running", format!("Downloading from {from}: {} so far, of no more than {}.", megabytes(got), megabytes(of)))
+                }
+                (Some(setup::Progress::Checking), _) => {
+                    ("running", "Checking every file kept against its SHA-256, and writing the project…".to_string())
+                }
+                (_, Some(project)) if project["status"] == "trusted" => ("made", format!("{} is in your projects, trusted.", text(project, "name"))),
+                (_, Some(project)) => (
+                    "made",
+                    format!("{} is in your projects, not trusted yet: review and trust it in its own part, then build it.", text(project, "name")),
+                ),
+                (Some(setup::Progress::Done(Err(why))), None) => ("failed", why),
+                _ => ("none", String::new()),
+            };
+            let several = one.data.len() > 1;
+            json!({
+                "id": one.id,
+                "game": one.game,
+                "says": one.says,
+                "stands": stands,
+                "text": text,
+                "code": fetch_says(&one.code),
+                "choices": one.data.iter().map(|data| {
+                    let mut said = fetch_says(&data.source);
+                    said["key"] = json!(data.key);
+                    said["name"] = json!(data.name);
+                    said["button"] = json!(if several { format!("Set Up with {}…", data.name) } else { "Set Up…".to_string() });
+                    said
+                }).collect::<Vec<Json>>(),
+                "go": project.and_then(|_| Pane::parse(&format!("project:{}", one.id))).map(|pane| pane.code()),
+            })
+        })
+        .collect();
+    json!({"title": "Setups", "says": SETUPS_SAY, "list": list})
+}
+
+/// Sets a game up: the operating system's question first, naming every address and size; then
+/// the downloads, beside the window. The person's alone to ask, and only for a project folder
+/// that is not there.
+pub(super) fn set_up(app: &SheetApp, ctx: &egui::Context, id: &str, key: &str) -> Result<String, String> {
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+    let one = setup::named(id).ok_or("That is not one of the C kit's setups.")?;
+    let data = one.data_named(key).ok_or("That is not data this setup offers.")?;
+    if at.projects.join(one.id).exists() {
+        return Err(format!("There is already a project folder named {}: Set Up writes over nothing.", one.id));
+    }
+    if matches!(setup::Runner::global().progress(&at.projects, one.id), Some(setup::Progress::Fetching { .. } | setup::Progress::Checking)) {
+        return Err(format!("{} is being set up already.", one.game));
+    }
+    let Some(confirm) = &app.services.confirm else {
+        return Err("This copy of GridCraft can't ask your operating system to confirm, so nothing is downloaded.".into());
+    };
+    if !confirm(&format!("Set up {}?", one.game), &setup::question(one, data)) {
+        return Ok(format!("Nothing was downloaded for {}.", one.game));
+    }
+    let again = ctx.clone();
+    setup::Runner::global().start(&at, one, data, move || again.request_repaint())?;
+    Ok(format!("Setting {} up: its part under Setups says how far it has got.", one.game))
+}
+
+/// Stops a setup that is running. Anyone's to ask: it only ends a download.
+pub(super) fn stop_set_up(id: &str) -> Result<String, String> {
+    let at = projects::places().ok_or(projects::UNAVAILABLE)?;
+    let one = setup::named(id).ok_or("That is not one of the C kit's setups.")?;
+    Ok(match setup::Runner::global().stop(&at.projects, one.id) {
+        true => format!("Stopping {}'s setup: nothing of it is kept.", one.game),
+        false => format!("{} is not being set up.", one.game),
+    })
 }
 
 /// What a network that is on does, said under it.

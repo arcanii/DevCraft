@@ -59,4 +59,15 @@ rules.
   (0.1.0 since 2026-10-14). It is the fork's, and is changed only when the owner says a
   version is made. GridCraft's version (the workspace's) is upstream's and is never changed
   here: a merge brings it.
+- **GridCraft downloads for the C kit's setups, and for nothing else** (the owner, 2026-10-14).
+  `crates/aniefork-dev/src/setup.rs` and `setup_fetch.rs` are its one way to download: HTTPS,
+  only from the addresses a setup pins and the hosts it names, only on the person's Set Up after
+  the operating system's question has named every address and size, and every file kept checked
+  against the SHA-256 the setup holds. A new download is a new setup, on the owner's word, with
+  its pins taken from files checked against their release's own record. **Doom's and Quake's
+  code and their data never go into the repository**: a setup holds where to fetch them, what
+  they must hash to, and the lines it changes by number and hash, never their text. The glue in
+  `setup_files.rs` is DevCraft's own, and holds nothing of id Software's code or any port's: a
+  change to it keeps it so (the test with the real downloads, `GRIDCRAFT_TEST_SETUPS`, says
+  whether a run of three lines matches theirs).
 - **Syncing with upstream:** `ROADMAP-aniefork.md` lists the steps and what can still conflict.

@@ -55,7 +55,7 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::{c, manifest, settings, showcase, starter};
+use gridcraft_aniefork_dev::{c, manifest, settings, setup, showcase, starter};
 use serde_json::{Value as Json, json};
 
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
@@ -115,6 +115,14 @@ pub(super) enum Act {
     Build(String),
     /// Create the Svelte showcase project (untrusted, like any new project).
     CreateShowcase,
+    /// Set a game up as a project of the C kit: its setup by the project's id, and the data
+    /// chosen, by its key. It downloads, after the operating system's question: the person's alone.
+    SetUp {
+        setup: String,
+        data: String,
+    },
+    /// Stop a setup that is running.
+    StopSetUp(String),
     /// Show the showcase's panel: docked in the window, or in the browser.
     ShowShowcase {
         docked: bool,
@@ -1054,35 +1062,115 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         }
         None => state.new_for = false,
     }
-    // The showcase: a panel written with a web toolkit, shown inside the window. It is the
-    // first kit's.
+    // The showcase: a panel written with a web toolkit, shown inside the window. Each kit that
+    // has one has its own.
     let showcase = &told["showcase"];
-    if !showcase.is_object() {
+    if showcase.is_object() {
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Showcase").strong());
+            ui.label(said(showcase, "text"));
+            match said(showcase, "stands") {
+                "none" => {
+                    if ui
+                        .button("Create Showcase")
+                        .on_hover_text("Creates the Svelte Showcase project. It does nothing until you trust it.")
+                        .clicked()
+                    {
+                        *action = Some(Act::CreateShowcase);
+                    }
+                }
+                "trusted" => {
+                    if showcase["canDock"] == true
+                        && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
+                    {
+                        *action = Some(Act::ShowShowcase { docked: true });
+                    }
+                    if showcase["canBrowse"] == true && ui.button("Open in Browser").clicked() {
+                        *action = Some(Act::ShowShowcase { docked: false });
+                    }
+                }
+                _ => {}
+            }
+        });
+    }
+    setups_part(ui, &told["setups"], action);
+}
+
+/// One download of a setup: its address, what it is and what is kept of it, whose it is, and
+/// where else its host may hand it over from.
+fn setup_fetch(ui: &mut egui::Ui, fetch: &Json, label: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(16.0);
+        if !label.is_empty() {
+            ui.label(small(format!("{label}:")));
+        }
+        ui.add(egui::Label::new(egui::RichText::new(said(fetch, "address")).monospace().small()).wrap());
+    });
+    for line in [said(fetch, "says"), said(fetch, "whose"), fetch["other"].as_str().unwrap_or_default()] {
+        if !line.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(16.0);
+                ui.label(small(line));
+            });
+        }
+    }
+}
+
+/// The C kit's setups: each game, what it downloads and from where, and Set Up, which asks first.
+fn setups_part(ui: &mut egui::Ui, setups: &Json, action: &mut Option<Act>) {
+    if !setups.is_object() {
         return;
     }
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("Showcase").strong());
-        ui.label(said(showcase, "text"));
-        match said(showcase, "stands") {
-            "none" => {
-                if ui.button("Create Showcase").on_hover_text("Creates the Svelte Showcase project. It does nothing until you trust it.").clicked() {
-                    *action = Some(Act::CreateShowcase);
-                }
-            }
-            "trusted" => {
-                if showcase["canDock"] == true
-                    && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
-                {
-                    *action = Some(Act::ShowShowcase { docked: true });
-                }
-                if showcase["canBrowse"] == true && ui.button("Open in Browser").clicked() {
-                    *action = Some(Act::ShowShowcase { docked: false });
-                }
-            }
-            _ => {}
+    heading(ui, said(setups, "title"));
+    ui.label(small(said(setups, "says")));
+    for one in setups["list"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(said(one, "game")).strong());
+            ui.label(small(said(one, "says")));
+        });
+        let choices = one["choices"].as_array().map(Vec::as_slice).unwrap_or_default();
+        setup_fetch(ui, &one["code"], if choices.len() > 1 { "Its code" } else { "" });
+        for choice in choices {
+            setup_fetch(ui, choice, if choices.len() > 1 { said(choice, "name") } else { "" });
         }
-    });
+        let id = said(one, "id");
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(16.0);
+            match said(one, "stands") {
+                "running" => {
+                    ui.label(small(said(one, "text")));
+                    if ui.button("Stop").on_hover_text("Stops the downloads: nothing of them is kept").clicked() {
+                        *action = Some(Act::StopSetUp(id.to_string()));
+                    }
+                }
+                "made" => {
+                    ui.label(small(said(one, "text")));
+                    if let Some(to) = one["go"].as_str().and_then(Pane::parse)
+                        && ui
+                            .button("Show Project")
+                            .on_hover_text("Its own part: what it asks, what is in it, and the way to trust and build it")
+                            .clicked()
+                    {
+                        *action = Some(Act::Go(to));
+                    }
+                }
+                stands => {
+                    if stands == "failed" {
+                        ui.label(small(said(one, "text")));
+                    }
+                    for choice in choices {
+                        let hint =
+                            "Asks first, naming every address and size; then downloads, checks every file kept and makes the project, not trusted";
+                        if ui.button(said(choice, "button")).on_hover_text(hint).clicked() {
+                            *action = Some(Act::SetUp { setup: id.to_string(), data: said(choice, "key").to_string() });
+                        }
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// A file's lines as they are drawn: each with its number, and each piece in the colour of
@@ -1405,6 +1493,10 @@ pub fn ui(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool
     if !now.waiting.is_empty() || now.plans.iter().any(|plan| plan.ended.is_none()) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
+    // And while a game is being set up: how far its downloads have got is shown.
+    if setup::Runner::global().running() > 0 {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
     // So does it while a project is being built: the time it has taken is shown.
     if c::Builder::global().building() > 0 {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
@@ -1446,6 +1538,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             | Act::AskAgain(..)
             | Act::StopPlan(_)
             | Act::CreateShowcase
+            | Act::StopSetUp(_)
             | Act::CreateProject { .. }
             | Act::CloseFile
             | Act::StopTrusting(_)
@@ -1639,6 +1732,8 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             Ok(String::new())
         }
         // Each kit that has a showcase has its own: which is meant is the kit whose part is shown.
+        Act::SetUp { setup, data } => kits::set_up(app, ctx, &setup, &data),
+        Act::StopSetUp(id) => kits::stop_set_up(&id),
         Act::CreateShowcase => match &state.pane {
             Pane::Kit(id) if *id == gridcraft_aniefork_dev::kit::C.id => projects::create_triangle(),
             _ => projects::create_showcase(),
@@ -1810,6 +1905,9 @@ mod tests {
     /// listed. The list down the side stops at the kits.
     fn go_project(h: &mut Harness, kit: &str, project: &str) {
         go(h, kit);
+        // A kit's part as tall as the C kit's (its setups) sizes the window again over a few
+        // frames, and the window is centred: the link is clicked where it settles.
+        h.run_steps(4);
         h.get_by_role_and_label(Role::Button, project).click();
         h.run_steps(4);
     }
@@ -3984,6 +4082,107 @@ mod tests {
         assert_eq!(kits::project_pane(h.state_mut(), &ctx2, "clean-data").unwrap()["network"], Json::Null);
         let none = super::act(h.state_mut(), &ctx, &mut state, Act::SetNetwork { project: "clean-data".into(), on: true }, false, &mut open);
         assert!(none.unwrap_err().contains("asks for no network"));
+    }
+
+    #[test]
+    fn the_c_kits_part_offers_its_setups_each_by_hand_after_the_systems_question() {
+        use gridcraft_aniefork_dev::setup;
+        let s = Sandbox::new("dev-setups");
+        let asked = yes();
+        asked.says(false);
+        let mut h = harness(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        let setups = |h: &mut Harness| {
+            let ctx = h.ctx.clone();
+            kits::forget();
+            kits::kit_pane(h.state_mut(), &ctx, &kit::C)["setups"].clone()
+        };
+        // The C kit's part lists the three games, each with what it downloads and from where; the
+        // first kit's part has none.
+        let said = setups(&mut h);
+        assert_eq!(said["says"], kits::SETUPS_SAY);
+        let list = said["list"].as_array().unwrap();
+        assert_eq!(list.iter().map(|one| one["game"].as_str().unwrap()).collect::<Vec<_>>(), ["Doom", "Quake", "GLQuake"]);
+        assert!(list.iter().all(|one| one["stands"] == "none" && one["go"].is_null()));
+        assert_eq!(list[0]["code"]["address"], setup::DOOM.code.url);
+        assert_eq!(
+            list[0]["choices"].as_array().unwrap().iter().map(|c| (c["key"].as_str().unwrap(), c["button"].as_str().unwrap())).collect::<Vec<_>>(),
+            [("shareware", "Set Up with Shareware Doom…"), ("freedoom", "Set Up with Freedoom…")]
+        );
+        assert_eq!(list[1]["choices"][0]["button"], "Set Up…");
+        assert!(list[2]["choices"][0]["other"].as_str().unwrap().contains("*.archive.org"));
+        assert!(kits::kit_pane(h.state_mut(), &ctx, &kit::PYTHONCRAFT)["setups"].is_null());
+        // Drawn in the C kit's part, every address in full.
+        open_top(&mut h);
+        go(&mut h, "C Development Kit");
+        for address in [setup::DOOM.code.url, setup::DOOM.data[1].source.url, setup::GLQUAKE.code.url] {
+            h.get_by_label(address);
+        }
+        // Set Up is the person's alone: what drives the window can't, and nothing is asked.
+        let (mut state, mut open) = (State { pane: Pane::kit(&kit::C), ..State::default() }, true);
+        let doom = || Act::SetUp { setup: setup::DOOM.id.into(), data: "shareware".into() };
+        assert_eq!(super::act(h.state_mut(), &ctx, &mut state, doom(), true, &mut open), Err(presence::BY_HAND.to_string()));
+        assert!(asked.questions().is_empty());
+        // By hand, the operating system's question names every address and size; a no downloads nothing.
+        // (The setups are below the part's first screenful: clicked as the system's reader of the screen would.)
+        h.get_by_label("Set Up with Shareware Doom…").click_accesskit();
+        h.run_steps(4);
+        let questions = asked.questions();
+        assert_eq!(questions, [setup::question(&setup::DOOM, &setup::DOOM.data[0])]);
+        for named in [setup::DOOM.code.url, setup::DOOM.data[0].source.url, "1,756,095 bytes", "178 files, 1,553,565 bytes", "not trusted"] {
+            assert!(questions[0].contains(named), "{named}");
+        }
+        assert_eq!(setup::Runner::global().progress(&s.0.join("projects"), setup::DOOM.id), None, "nothing was started");
+        assert!(!s.0.join("projects").join(setup::DOOM.id).exists());
+        // What is not one of the kit's setups, or data it does not offer, is refused.
+        for (one, data) in [("gridcraft-doom", "pak"), ("gridcraft-hexen", "shareware"), ("../gridcraft-doom", "shareware")] {
+            let refused = super::act(h.state_mut(), &ctx, &mut state, Act::SetUp { setup: one.into(), data: data.into() }, false, &mut open);
+            assert!(refused.is_err(), "{one} {data}");
+        }
+        // A folder of that name is never written over: Set Up says so before it asks anything.
+        std::fs::create_dir_all(s.0.join("projects/gridcraft-quake")).unwrap();
+        std::fs::write(s.0.join("projects/gridcraft-quake/notes.txt"), "mine").unwrap();
+        let there =
+            super::act(h.state_mut(), &ctx, &mut state, Act::SetUp { setup: setup::QUAKE.id.into(), data: "shareware".into() }, false, &mut open);
+        assert_eq!(there.unwrap_err(), "There is already a project folder named gridcraft-quake: Set Up writes over nothing.");
+        assert_eq!(asked.questions().len(), 1);
+        // Stopping is anyone's: it only ends a download, and there is none.
+        let stopped = super::act(h.state_mut(), &ctx, &mut state, Act::StopSetUp(setup::GLQUAKE.id.into()), true, &mut open).unwrap();
+        assert_eq!(stopped, "GLQuake is not being set up.");
+    }
+
+    #[test]
+    fn the_pages_set_up_goes_the_same_way_and_names_only_a_setup_and_data_there_are() {
+        use gridcraft_aniefork_dev::setup;
+        let s = Sandbox::new("devpage-setups");
+        let asked = yes();
+        asked.says(false);
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(NAME, json!({}));
+        h.run_steps(3);
+        assert!(devpage::wanted(&ctx));
+        let _first = told(&mut h);
+        page(&mut h, json!({"act": "go", "to": "kit:c"}));
+        let shown = told(&mut h);
+        assert_eq!(shown["pane"]["setups"]["list"][2]["game"], "GLQuake");
+        // A click on Set Up with Freedom: the question for that data, and, answered no, nothing.
+        page(&mut h, json!({"act": "setUp", "id": "gridcraft-doom", "data": "freedoom"}));
+        assert_eq!(asked.questions(), [setup::question(&setup::DOOM, &setup::DOOM.data[1])]);
+        assert!(!s.0.join("projects/gridcraft-doom").exists());
+        // What names no setup there is, or no data it offers, is not taken as a click on Set Up.
+        for bad in [
+            json!({"act": "setUp", "id": "gridcraft-doom", "data": "anything"}),
+            json!({"act": "setUp", "id": "gridcraft-hexen", "data": "shareware"}),
+            json!({"act": "setUp", "id": "gridcraft-doom"}),
+            json!({"act": "setUp", "id": 7, "data": "shareware"}),
+        ] {
+            page(&mut h, bad);
+        }
+        assert_eq!(asked.questions().len(), 1);
+        page(&mut h, json!({"act": "stopSetUp", "id": "gridcraft-quake"}));
+        assert_eq!(asked.questions().len(), 1);
     }
 
     #[test]

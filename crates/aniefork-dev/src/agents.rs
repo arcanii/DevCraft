@@ -3077,6 +3077,14 @@ calls net_listen() once a frame until it says 1 (or -1): GridCraft then takes in
 port the project names ([network] listen = 26000) from the hosts it names, and sends from it. program.network() tells the
 page the same as net_status.
 
+The C kit's part offers setups of three games: Doom, Quake and GLQuake (the projects
+gridcraft-doom, gridcraft-quake, gridcraft-glquake). The person presses Set Up; GridCraft
+downloads the game's code and its data from pinned addresses, after a question that names
+them, checks every file it keeps, and makes the project, untrusted. Setting one up is the
+person's alone: no tool of yours does it. Once one is there it is a project like any other,
+and a working example of a C program that draws, takes keys and the mouse, and (GLQuake) plays
+over the network.
+
 The typings follow, with every command by id."#;
 
     const REFERENCE_PYTHON: &str = r#"A script is a .py file in the project's scripts folder, with a function main(data).

@@ -26,6 +26,8 @@
 //! - [`highlight`]: how a project's files are read for showing, from what its kit describes.
 //! - [`starter`]: "New Project".
 //! - [`showcase`]: a project whose panel is a Svelte app, to show a web toolkit at work.
+//! - [`setup`]: Doom, Quake and GLQuake as projects of the C kit, downloaded, pinned and checked,
+//!   on the person's Set Up alone ([`setup_fetch`]: the HTTPS it downloads with).
 //! - [`paths`], [`settings`]: where projects, decisions and the subsystem's settings are kept.
 //! - [`vba`]: looking inside a workbook's VBA project, to read it. Nothing of it is ever run.
 //! - [`rebuilt`]: a project's note of what it rebuilds of a workbook's macros.
@@ -54,6 +56,10 @@ pub mod project;
 pub mod python;
 pub mod rebuilt;
 pub mod settings;
+pub mod setup;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod setup_fetch;
+mod setup_files;
 pub mod sha256;
 pub mod showcase;
 mod showcase_files;
