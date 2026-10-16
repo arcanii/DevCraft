@@ -93,6 +93,7 @@ Investigations recorded for later, each meant to end in upstream pull requests.
 
 | Topic | Record | State |
 |---|---|---|
+| **The ribbon next to WordCraft's** | [`docs/ribbon-aniefork.md`](docs/ribbon-aniefork.md) | Compared on 2026-10-16 (code surveys and renders of both). Twelve gaps listed; four are already open upstream by others. The owner chose Customize Ribbon and the Quick Access Toolbar first: offered as [#1641](https://github.com/storytold/gridcraft/pull/1641) from the branch `customize-ribbon-and-toolbar` (from `upstream/main`) |
 | **Memory use** | [`docs/memory-aniefork.md`](docs/memory-aniefork.md), with the measuring tools in `docs/memory-aniefork/` | Measured and traced on macOS on upstream `bb685e3` (2026-10-16), as the sister fork did for WordCraft. Three fixes offered upstream on 2026-10-16, each from a branch cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/1629) from `undo-shares-picture-bytes` (a 19 MB picture and 50 edits: 992 → 22 MB), [#1630](https://github.com/storytold/gridcraft/pull/1630) from `font-bytes-shared-with-egui` (empty workbook, interface settled: 258 → 158 MB) and [#1631](https://github.com/storytold/gridcraft/pull/1631) from `picture-textures-bounded` (12 large pictures scrolled through: textures 258 → 40 MB, none after closing; also fixes two workbooks showing each other's picture). Undo after commands over whole ranges (about 110–140 MB a step on 2 M cells) is upstream's #1263. The real app and Windows are not measured yet |
 
 ## The fork's settings on the Options page
@@ -804,6 +805,17 @@ included.
 
 Newest first.
 
+- **2026-10-16 (the ribbon next to WordCraft's; Customize Ribbon and the toolbar):** Asked whether
+  GridCraft's ribbon can be brought up to WordCraft's. Compared both apps' ribbon code on the same
+  fifteen points, and rendered both windows. The gaps are in `docs/ribbon-aniefork.md`: WordCraft
+  leads in customisation, group titles and launchers, contextual tabs, ScreenTips, screen-reader
+  names and a sign when the ribbon doesn't fit; GridCraft leads in KeyTips. Of 340 commands, 319 are
+  enabled whenever a workbook is open, so greying buttons by their command would change little yet.
+  The owner chose Customize Ribbon and the Quick Access Toolbar ("Customize Ribbon + QAT").
+  Built in GridCraft's own code on the branch `customize-ribbon-and-toolbar` from `upstream/main`
+  (`f1894c6`): the layout in `ui.json`, the toolbar the user fills, right-click menus on every ribbon
+  control, the Customize dialog, custom tabs and groups, two commands for agents, and eleven tests.
+  On the owner's word, committed (`bd2153a`), pushed and offered as [storytold/gridcraft#1641](https://github.com/storytold/gridcraft/pull/1641).
 - **2026-10-16 (the three memory fixes offered upstream):** On the owner's word ("Commit the
   three fix branches and the fork's memory record, push the branches to origin, and open the
   three pull requests"). Committed each branch (`a09d3f6`, `c5baa82`, `3684349`), pushed them to
