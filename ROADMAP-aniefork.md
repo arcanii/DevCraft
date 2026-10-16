@@ -94,7 +94,7 @@ Investigations recorded for later, each meant to end in upstream pull requests.
 | Topic | Record | State |
 |---|---|---|
 | **The ribbon next to WordCraft's** | [`docs/ribbon-aniefork.md`](docs/ribbon-aniefork.md) | Compared on 2026-10-16 (code surveys and renders of both). Twelve gaps listed; four are already open upstream by others. The owner chose Customize Ribbon and the Quick Access Toolbar first: offered as [#1641](https://github.com/storytold/gridcraft/pull/1641) from the branch `customize-ribbon-and-toolbar` (from `upstream/main`) |
-| **Memory use** | [`docs/memory-aniefork.md`](docs/memory-aniefork.md), with the measuring tools in `docs/memory-aniefork/` | Measured and traced on macOS on upstream `bb685e3` (2026-10-16), as the sister fork did for WordCraft. Three fixes offered upstream on 2026-10-16, each from a branch cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/1629) from `undo-shares-picture-bytes` (a 19 MB picture and 50 edits: 992 → 22 MB), [#1630](https://github.com/storytold/gridcraft/pull/1630) from `font-bytes-shared-with-egui` (empty workbook, interface settled: 258 → 158 MB) and [#1631](https://github.com/storytold/gridcraft/pull/1631) from `picture-textures-bounded` (12 large pictures scrolled through: textures 258 → 40 MB, none after closing; also fixes two workbooks showing each other's picture). Undo after commands over whole ranges (about 110–140 MB a step on 2 M cells) is upstream's #1263. The real app and Windows are not measured yet |
+| **Memory use** | [`docs/memory-aniefork.md`](docs/memory-aniefork.md), with the measuring tools in `docs/memory-aniefork/` | Measured and traced on macOS on upstream `bb685e3` (2026-10-16), as the sister fork did for WordCraft. Three fixes offered upstream on 2026-10-16, each from a branch cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/1629) from `undo-shares-picture-bytes` (a 19 MB picture and 50 edits: 992 → 22 MB), [#1630](https://github.com/storytold/gridcraft/pull/1630) from `font-bytes-shared-with-egui` (empty workbook, interface settled: 258 → 158 MB) and [#1631](https://github.com/storytold/gridcraft/pull/1631) from `picture-textures-bounded` (12 large pictures scrolled through: textures 258 → 40 MB, none after closing; also fixes two workbooks showing each other's picture). A fourth, [#1643](https://github.com/storytold/gridcraft/pull/1643) from `undo-shares-sheet-parts` (a typed cell no longer copies the sheet's spills, row heights, notes, links, rules, validations, names or styles: 100,000 spilled cells and 50 edits, 343 → 18 MB). Undo after commands over whole ranges (about 110–140 MB a step on 2 M cells) is upstream's #1263. The real app and Windows are not measured yet |
 
 ## The fork's settings on the Options page
 
@@ -805,6 +805,16 @@ included.
 
 Newest first.
 
+- **2026-10-16 (undo shares a sheet's other parts, on a branch):** The memory record's item 6, on
+  the owner's word ("Do this task here"). Measured first, with a new generator
+  (`docs/memory-aniefork/make_parts.py`): one workbook per part, 50 cell edits each. A typed cell
+  copied into its undo step 6.5 MB for 100,000 spilled cells, 2.7 MB for 50,000 row heights,
+  2.3 MB for 5,000 styles, 2.2 MB for 10,000 notes, and less for links, rules, names and
+  validations. On the branch `undo-shares-sheet-parts` from `upstream/main` (`f1894c6`): a
+  copy-on-write `Shared<T>` in the model holds those parts, and two writes that copied on every
+  edit (calc's spill bookkeeping, Paste) now read first. Every part now costs 0.02–0.04 MB an
+  edit. A new engine test. On the owner's word, committed (`5b3600d`), pushed and offered as
+  [storytold/gridcraft#1643](https://github.com/storytold/gridcraft/pull/1643), with Auto-fix on.
 - **2026-10-16 (the ribbon next to WordCraft's; Customize Ribbon and the toolbar):** Asked whether
   GridCraft's ribbon can be brought up to WordCraft's. Compared both apps' ribbon code on the same
   fifteen points, and rendered both windows. The gaps are in `docs/ribbon-aniefork.md`: WordCraft

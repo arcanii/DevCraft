@@ -3,7 +3,7 @@
 Status: measured 2026-10-16 on macOS, on upstream `bb685e3` (GridCraft 0.7.0), the way the sister
 fork measured WordCraft ([arcanii/wordcraft `docs/memory-aniefork.md`](https://github.com/arcanii/wordcraft/blob/main/docs/memory-aniefork.md),
 whose first fix is storytold/wordcraft#2345). Three fixes are offered upstream, each from a branch
-cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/1629), [#1630](https://github.com/storytold/gridcraft/pull/1630) and [#1631](https://github.com/storytold/gridcraft/pull/1631) (2026-10-16). Changes made from this record go upstream as pull requests, as
+cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/1629), [#1630](https://github.com/storytold/gridcraft/pull/1630) and [#1631](https://github.com/storytold/gridcraft/pull/1631) (2026-10-16). A fourth, sharing a sheet's other parts between undo steps, is [#1643](https://github.com/storytold/gridcraft/pull/1643). Changes made from this record go upstream as pull requests, as
 [`AGENTS-aniefork.md`](../AGENTS-aniefork.md) says.
 
 ## Summary
@@ -27,6 +27,9 @@ cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/16
   - **Pictures were copied into every step.** One 20 MB picture and 50 cells typed on its sheet
     kept 992 MB. **Offered as #1629:** 22 MB. #1263's estimate counts cells only, so it would
     not have caught this.
+  - **Typing copied the sheet's other parts too:** spilled values, row heights, notes, links,
+    rules and validations, and the workbook's names and styles, into every step. 100,000 spilled
+    cells cost 6.5 MB a typed cell; 10,000 notes 2.2 MB. **Offered as #1643:** 0.02–0.04 MB.
 - **Floating pictures on screen were cached for good:** decoded at full size, in one cache for
   the whole app with no limit, kept after their workbook closed. 12 large pictures scrolled
   through kept 258 MB of textures, still there after the workbook closed. **Offered as #1631:**
@@ -102,6 +105,23 @@ otherwise; with the cache on, the savings were about the same or larger):
 
 Inserting the same pictures one by one instead peaks at 7 GB for 24, before and after this fix
 alike: each insert's undo step copies every picture already there (the undo fix above).
+
+**What a cell edit copies besides the cells.** One workbook per part, built with
+[`make_parts.py`](memory-aniefork/make_parts.py) through `gridcraft-cli run` and saved as `.xlsx`, then
+opened and given 50 cell edits on the same sheet (`edits-50.jsonl`); kernel peak, upstream
+`f1894c6` → the branch `undo-shares-sheet-parts` (the size at open varies by a few MB from run to run):
+
+| Part | Open → 50 edits, before | After | Per edit, before |
+|---|---|---|---|
+| Spilled values, 100,000 cells | 17 → 343 MB | 17 → 18 MB | 6.5 MB |
+| Custom row heights, 50,000 rows | 7 → 140 MB | 7 → 8 MB | 2.7 MB |
+| Distinct styles (workbook), 5,000 | 22 → 138 MB | 22 → 24 MB | 2.3 MB |
+| Notes, 10,000 | 58 → 170 MB | 58 → 58 MB | 2.2 MB |
+| Hyperlinks, 10,000 | 20 → 101 MB | 20 → 22 MB | 1.6 MB |
+| Conditional-format rules, 2,000 | 6 → 39 MB | 6 → 7 MB | 0.7 MB |
+| Defined names (workbook), 5,000 | 5 → 36 MB | 5 → 6 MB | 0.6 MB |
+| Validations, 2,000 | 5 → 27 MB | 5 → 6 MB | 0.4 MB |
+| Merges, 5,000 | 4 → 8 MB | unchanged | 0.1 MB |
 
 **Caveats:**
 - **The peaks are the harness's.** Rendering the picture costs about 450 MB for a moment, as
@@ -231,8 +251,22 @@ numbers will drift as upstream moves. Sizes marked "est." are estimates, not mea
 4. **Workbook fonts read only when needed:** check whether a face's key is bound before reading
    its file, and bind one copy per file.
 5. **One copy of a media part** shown by several pictures, now that picture bytes are shared.
-6. **The touched sheet's other fields shared** (spill map, comments, conditional formats…) behind
-   `Arc`, so typing in a cell doesn't copy them into the undo step.
+6. **The touched sheet's other parts shared.** Offered as [storytold/gridcraft#1643](https://github.com/storytold/gridcraft/pull/1643), from
+   the branch `undo-shares-sheet-parts` (`5b3600d`, from `upstream/main` `f1894c6`).
+   - **What changed:** a copy-on-write wrapper, `gridcraft_model::Shared<T>`: reads go straight
+     through, the first write to a copy that shares the part gives that copy its own
+     (`Arc::make_mut`). It holds the sheet's `rows`, `cols`, `spill`, `spill_ranges`, `comments`,
+     `hyperlinks`, `cond_formats` and `validations`, and the workbook's `names` and `styles`. JSON
+     and XLSX are unchanged. Code that reads or writes these parts compiles as before; the change
+     outside the model is a handful of `.into()`s and two reads moved before writes.
+   - **Two writes made conditional,** because each forced a copy on every edit: calc removed the
+     edited cell from `spill_ranges` whether it had a spill or not, and Paste rewrote the spill maps
+     and the notes whether the block held any.
+   - **Measured:** the table in Measurements; every part now costs 0.02–0.04 MB a cell edit.
+   - **Test:** `undo_steps_share_the_parts_an_edit_leaves_alone` (engine): a cell edit shares every
+     part with the step before; a new note separates the notes only; undo gives the workbook back.
+   - **Left as it was:** merges, tables, charts, shapes, pivots and the other small parts (merges
+     measured at 0.1 MB an edit for 5,000).
 
 ### Trade-offs: candidates for an option or a decision upstream
 
@@ -264,6 +298,7 @@ numbers will drift as upstream moves. Sizes marked "est." are estimates, not mea
 | #1629 | open (PR, ours) | undo steps share picture and macro bytes |
 | #1630 | open (PR, ours) | interface fonts read once and shared with egui |
 | #1631 | open (PR, ours) | floating pictures' textures bounded and kept per workbook |
+| #1643 | open (PR, ours) | undo steps share a sheet's other parts and the workbook's names and styles |
 
 ## Still open
 
