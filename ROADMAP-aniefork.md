@@ -87,6 +87,14 @@ The fork no longer carries these. They are kept here as the record of what happe
   turns `animations` from a switch into a choice of three. Measuring Excel's glide is still
   upstream's to take up.
 
+## Open work
+
+Investigations recorded for later, each meant to end in upstream pull requests.
+
+| Topic | Record | State |
+|---|---|---|
+| **Memory use** | [`docs/memory-aniefork.md`](docs/memory-aniefork.md), with the measuring tools in `docs/memory-aniefork/` | Measured and traced on macOS on upstream `bb685e3` (2026-10-16), as the sister fork did for WordCraft. Three fixes offered upstream on 2026-10-16, each from a branch cut from `upstream/main`: [#1629](https://github.com/storytold/gridcraft/pull/1629) from `undo-shares-picture-bytes` (a 19 MB picture and 50 edits: 992 → 22 MB), [#1630](https://github.com/storytold/gridcraft/pull/1630) from `font-bytes-shared-with-egui` (empty workbook, interface settled: 258 → 158 MB) and [#1631](https://github.com/storytold/gridcraft/pull/1631) from `picture-textures-bounded` (12 large pictures scrolled through: textures 258 → 40 MB, none after closing; also fixes two workbooks showing each other's picture). Undo after commands over whole ranges (about 110–140 MB a step on 2 M cells) is upstream's #1263. The real app and Windows are not measured yet |
+
 ## The fork's settings on the Options page
 
 Upstream's Options page (File ▸ Options) holds the display theme, the interface language, the
@@ -795,6 +803,35 @@ included.
 ## Log
 
 Newest first.
+
+- **2026-10-16 (the three memory fixes offered upstream):** On the owner's word ("Commit the
+  three fix branches and the fork's memory record, push the branches to origin, and open the
+  three pull requests"). Committed each branch (`a09d3f6`, `c5baa82`, `3684349`), pushed them to
+  origin and opened [storytold/gridcraft#1629](https://github.com/storytold/gridcraft/pull/1629) (undo shares picture and macro bytes),
+  [#1630](https://github.com/storytold/gridcraft/pull/1630) (interface fonts shared with egui) and [#1631](https://github.com/storytold/gridcraft/pull/1631) (floating pictures'
+  textures bounded). Each PR names its overlaps: #1263 for undo, #1238 for fonts, and the rows
+  all three add to `ROADMAP.md`.
+- **2026-10-16 (floating pictures' textures bounded, on a branch):** The third item of the memory
+  plan, on the owner's word ("Do this task here"), as the branch `picture-textures-bounded` cut
+  from `upstream/main` (`bb685e3`). A new `floating_pictures.rs` beside upstream's
+  `cell_pictures.rs`: a cache per egui context, bounded by bytes but keeping what is on screen,
+  dropped with its workbook, decoding with limits to about the size drawn. Measured with a
+  throwaway example that scrolls through pictures in an opened `.xlsx`: 12 pictures, textures
+  258 → 40 MB and footprint 738 → 509 MB; after closing, 504 → 236 MB. Found on the way: the
+  old cache's key let a second workbook show the first one's picture; a new UI test fails on
+  upstream's code for it. Not committed or pushed.
+- **2026-10-16 (memory use measured):** Asked whether the sister fork's memory work on WordCraft
+  (storytold/wordcraft#2345 and its record) applies here. Measured upstream `bb685e3` on macOS
+  through the CLI and the offscreen `snapshot`, with wordcraft's sampler and a new generator,
+  `docs/memory-aniefork/make_books.py`, and traced the code. The same kind of cause as
+  WordCraft's font fallback: script fallback fonts are loaded at startup whatever the workbook
+  holds (about 170 MB of the interface's 258 MB), and egui holds a second copy of every system
+  font. Undo is the other cost: a picture's bytes were copied into every undo step, and commands
+  over whole ranges keep a copy of every cell (upstream's #1263 is on that). Two fixes are on
+  branches cut from `upstream/main`, in worktrees outside the checkout, each with a test and
+  upstream's progress rows, and `cargo xtask ci` passing on each; neither is committed or pushed:
+  offering them upstream is the owner's call. Recorded in `docs/memory-aniefork.md`. Nothing in
+  the fork's code changed.
 
 - **2026-10-14 (Setups in the C kit):** On the owner's word ("add these setups to the C DevKit
   so people can get them working quickly"; then "Offer both, shareware first", "ureq with
