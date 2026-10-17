@@ -13,12 +13,16 @@
 //! project that wasn't granted `network` is kept to its own address, opens no other window and
 //! downloads nothing.
 //!
-//! The page runs in the web view's own processes, not GridCraft's. Every two seconds the page
-//! is asked a question; when it has not answered for ten, or its web view has gone, the UI is
-//! told ([`dock::answering`]), and says so over the panel with a way to load it again.
+//! The page runs in the web view's own processes, not GridCraft's. Once it has loaded, every two
+//! seconds the page is asked a question; when it has not answered for ten (or not loaded in
+//! ten), or its web view has gone, the UI is told ([`dock::answering`]), and says so over the
+//! panel with a way to load it again.
 //!
-//! Windows only so far (WebView2, through `wry`). Elsewhere there is no host: the UI is never
-//! told there is one, and panels open in the browser as before.
+//! The docked panel is shown on Windows (WebView2) and macOS (WKWebView), through `wry`; the
+//! Development window as a page on Windows only, since it runs a window loop of its own on a
+//! second thread, which macOS doesn't allow (AppKit's windows belong to the main thread, and
+//! eframe's loop is already there). Elsewhere there is no host: the UI is never told there is
+//! one, and panels open in the browser as before.
 
 #[cfg(target_os = "windows")]
 mod icon;
@@ -29,8 +33,15 @@ mod window;
 
 /// Hook of the shell's `ui`, after the app has drawn: the docked panel's web view, and the
 /// Development window when it is shown as a page.
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn frame(_app: &mut gridcraft_ui_egui::SheetApp, _ctx: &egui::Context, _window: &eframe::Frame) {}
+
+/// Hook of the shell's `ui`, after the app has drawn: the docked panel's web view. The
+/// Development window stays GridCraft's own here (see above).
+#[cfg(target_os = "macos")]
+pub fn frame(app: &mut gridcraft_ui_egui::SheetApp, ctx: &egui::Context, window: &eframe::Frame) {
+    host::frame(app, ctx, window);
+}
 
 /// Hook of the shell's `ui`, after the app has drawn: the docked panel's web view, and the
 /// Development window when it is shown as a page.
@@ -40,7 +51,7 @@ pub fn frame(app: &mut gridcraft_ui_egui::SheetApp, ctx: &egui::Context, window:
     self::window::keep_up(app, ctx);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 mod host {
     use std::cell::RefCell;
     use std::sync::Arc;
@@ -71,8 +82,15 @@ mod host {
     const QUESTION: &str = "'answering'";
     const ANSWER: &str = "\"answering\"";
 
-    /// Whether the page answers: one question at a time, asked every [`ASK_EVERY`].
+    /// Whether the page answers: one question at a time, asked every [`ASK_EVERY`] once the page
+    /// has loaded. Not before: until its first page has loaded, macOS's web view keeps a script
+    /// for later and drops what it would have answered, so a question asked then is never
+    /// answered and the page would be said to be silent while it works.
     struct Watch {
+        /// When the view was made.
+        made: f64,
+        /// Set when its page has loaded (on whatever thread the web view calls back on).
+        loaded: Arc<AtomicBool>,
         /// When the question not yet answered was asked, while one is.
         out: Option<f64>,
         /// When the last question was asked.
@@ -82,16 +100,21 @@ mod host {
     }
 
     impl Watch {
-        fn new() -> Watch {
-            Watch { out: None, asked: None, heard: Arc::new(AtomicBool::new(false)) }
+        fn new(now: f64) -> Watch {
+            Watch { made: now, loaded: Arc::new(AtomicBool::new(false)), out: None, asked: None, heard: Arc::new(AtomicBool::new(false)) }
         }
 
-        /// Whether a question is to be asked now: none is out, and the last was long enough ago.
+        fn has_loaded(&self) -> bool {
+            self.loaded.load(Ordering::SeqCst)
+        }
+
+        /// Whether a question is to be asked now: the page has loaded, none is out, and the last
+        /// was long enough ago.
         fn due(&mut self, now: f64) -> bool {
             if self.heard.swap(false, Ordering::SeqCst) {
                 self.out = None;
             }
-            self.out.is_none() && self.asked.is_none_or(|asked| now - asked >= ASK_EVERY)
+            self.has_loaded() && self.out.is_none() && self.asked.is_none_or(|asked| now - asked >= ASK_EVERY)
         }
 
         fn asking(&mut self, now: f64) {
@@ -99,9 +122,11 @@ mod host {
             self.asked = Some(now);
         }
 
-        /// Whether the page answers, as far as can be said now.
+        /// Whether the page answers, as far as can be said now. A page that hasn't loaded in
+        /// [`SILENT_AFTER`] is silent too.
         fn answer(&self, now: f64) -> Answer {
-            if self.out.is_some_and(|since| now - since >= SILENT_AFTER) { Answer::Silent } else { Answer::Yes }
+            let waited = if self.has_loaded() { self.out } else { Some(self.made) };
+            if waited.is_some_and(|since| now - since >= SILENT_AFTER) { Answer::Silent } else { Answer::Yes }
         }
     }
 
@@ -209,32 +234,35 @@ mod host {
                         shown.visible = true;
                     }
                 }
-                None => match self.make(&docked, place, window) {
-                    Ok(view) => {
-                        self.shown = Some(Shown {
-                            address: docked.address.clone(),
-                            reloads: docked.reloads,
-                            view,
-                            bounds: place,
-                            visible: true,
-                            watch: Watch::new(),
-                        })
+                None => {
+                    let watch = Watch::new(gridcraft_ui_egui::now_ms());
+                    match self.make(&docked, place, window, watch.loaded.clone()) {
+                        Ok(view) => {
+                            self.shown =
+                                Some(Shown { address: docked.address.clone(), reloads: docked.reloads, view, bounds: place, visible: true, watch })
+                        }
+                        Err(why) => {
+                            dock::undock(ctx);
+                            app.message = Some((
+                                "Development".into(),
+                                format!("{} could not be shown in the window ({why}). Open its panel in your browser instead.", docked.name),
+                            ));
+                        }
                     }
-                    Err(why) => {
-                        dock::undock(ctx);
-                        app.message = Some((
-                            "Development".into(),
-                            format!("{} could not be shown in the window ({why}). Open its panel in your browser instead.", docked.name),
-                        ));
-                    }
-                },
+                }
             }
         }
 
-        fn make(&mut self, docked: &Docked, place: [i32; 4], window: &eframe::Frame) -> Result<wry::WebView, String> {
+        fn make(&mut self, docked: &Docked, place: [i32; 4], window: &eframe::Frame, loaded: Arc<AtomicBool>) -> Result<wry::WebView, String> {
             let (own, anywhere) = (own_addresses(&docked.address), docked.network);
             wry::WebViewBuilder::new_with_web_context(&mut self.context)
                 .with_url(&docked.address)
+                // Its page is asked whether it answers only once it has loaded (see `Watch`).
+                .with_on_page_load_handler(move |event, _| {
+                    if matches!(event, wry::PageLoadEvent::Finished) {
+                        loaded.store(true, Ordering::SeqCst);
+                    }
+                })
                 .with_bounds(rect(place))
                 .with_focused(false)
                 .with_devtools(false)
@@ -275,7 +303,8 @@ mod host {
 
         #[test]
         fn the_page_is_asked_one_question_at_a_time_and_is_silent_when_it_goes_unanswered() {
-            let mut watch = Watch::new();
+            let mut watch = Watch::new(0.0);
+            watch.loaded.store(true, Ordering::SeqCst);
             // Asked at once, and not again while the question is out.
             assert!(watch.due(1_000.0));
             watch.asking(1_000.0);
@@ -293,6 +322,20 @@ mod host {
             assert!(!watch.due(13_000.0) && watch.due(14_000.0));
             // Only the one answer counts: the question and the answer are what a page says of a string.
             assert_eq!((QUESTION, ANSWER), ("'answering'", "\"answering\""));
+        }
+
+        #[test]
+        fn the_page_is_asked_nothing_until_it_has_loaded_and_is_silent_if_it_never_does() {
+            // Until its page has loaded, macOS's web view drops the answer to a question.
+            let mut watch = Watch::new(1_000.0);
+            assert!(!watch.due(1_000.0) && !watch.due(5_000.0), "nothing is asked before the page has loaded");
+            assert_eq!(watch.answer(10_999.0), Answer::Yes);
+            assert_eq!(watch.answer(11_000.0), Answer::Silent, "ten seconds without loading: silent");
+            // It loads: asked at once, and it answers again.
+            watch.loaded.store(true, Ordering::SeqCst);
+            assert!(watch.due(11_500.0));
+            watch.asking(11_500.0);
+            assert_eq!(watch.answer(12_000.0), Answer::Yes);
         }
 
         #[test]

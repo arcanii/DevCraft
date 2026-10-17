@@ -31,11 +31,14 @@ arboard = { workspace = true }
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 arboard = { workspace = true, features = ["wayland-data-control"] }
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# The system web view (WebView2 on Windows, WKWebView on macOS), which shows a project's panel
+# docked in the window (aniefork).
+wry = { version = "0.57", default-features = false }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # Blocks on the start-up DirectX 12 adapter probe (`graphics.rs`); already in the tree via eframe.
 pollster = "1"
-# The system web view (WebView2), which shows a project's panel docked in the window (aniefork).
-wry = { version = "0.57", default-features = false }
 # A second window, with a message loop of its own, for the Development window shown as a page (aniefork).
 tao = { version = "0.37", default-features = false, features = ["rwh_06"] }
 

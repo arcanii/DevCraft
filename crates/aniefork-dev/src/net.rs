@@ -473,6 +473,18 @@ impl Carrier {
 mod tests {
     use super::*;
 
+    /// A sender on another of this machine's own addresses, 127.0.0.2: a host the program does
+    /// not name. Windows and Linux take all of 127.0.0.0/8 as their own; macOS sets up 127.0.0.1
+    /// alone (others need `ifconfig lo0 alias`), so there it can't be made, and the check that
+    /// needs it is left out.
+    fn stranger() -> Option<UdpSocket> {
+        match UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)) {
+            Ok(socket) => Some(socket),
+            Err(_) if cfg!(target_os = "macos") => None,
+            Err(why) => panic!("127.0.0.2 is this machine's own everywhere but macOS: {why}"),
+        }
+    }
+
     fn named(texts: &[&str]) -> Vec<Address> {
         texts.iter().map(|text| Address::parse(text).unwrap()).collect()
     }
@@ -578,8 +590,9 @@ mod tests {
         // A host it did not send to writes to it (another of this machine's own numbers): dropped.
         carrier.exchange(vec![(format!("127.0.0.1:{port}"), b"ping".to_vec())], &system_lookup);
         let ours = answer_one(&far);
-        let stranger = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
-        stranger.send_to(b"let me in", ours).unwrap();
+        if let Some(stranger) = stranger() {
+            stranger.send_to(b"let me in", ours).unwrap();
+        }
         let back = collect(&mut carrier, &system_lookup);
         std::thread::sleep(Duration::from_millis(100));
         let later = carrier.exchange(Vec::new(), &system_lookup);
@@ -662,10 +675,11 @@ mod tests {
         let (length, from) = player.recv_from(&mut buffer).unwrap();
         assert_eq!((&buffer[..length], from.port()), (b"welcome".as_slice(), port));
         // A host it does not name is not let in (another of this machine's own numbers).
-        let stranger = UdpSocket::bind((Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
-        stranger.send_to(b"let me in", (Ipv4Addr::LOCALHOST, port)).unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(host.exchange(Vec::new(), &system_lookup).is_empty());
+        if let Some(stranger) = stranger() {
+            stranger.send_to(b"let me in", (Ipv4Addr::LOCALHOST, port)).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(host.exchange(Vec::new(), &system_lookup).is_empty());
+        }
         // The port is taken: a second carrier can't listen there, and says so.
         let mut second = Carrier::new(named(&[&format!("127.0.0.1:{port}")]), Some(port));
         assert!(second.listen(&system_lookup).unwrap_err().contains(&format!("did not listen on port {port}")));

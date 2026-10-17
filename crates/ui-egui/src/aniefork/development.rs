@@ -1906,10 +1906,11 @@ mod tests {
     fn go_project(h: &mut Harness, kit: &str, project: &str) {
         go(h, kit);
         // A kit's part as tall as the C kit's (its setups) sizes the window again over a few
-        // frames, and the window is centred: the link is clicked where it settles.
-        h.run_steps(4);
+        // frames, and the window is centred: the link is clicked where it settles. With macOS's
+        // fonts it takes more frames than on Windows.
+        h.run_steps(10);
         h.get_by_role_and_label(Role::Button, project).click();
-        h.run_steps(4);
+        h.run_steps(10);
     }
 
     fn click(h: &mut Harness, label: &str) {

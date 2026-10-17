@@ -45,7 +45,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **An agent rebuilds a workbook's macros as a project** (phase V1 of bringing macros into GridCraft): a project can name the workbook it is the code of, and keep a note of which VBA procedure became which script (`rebuilt.toml`); the agent's `list_macros` reports the note, and `reference` has a topic on rebuilding; Developer ▸ Macros shows it beside the macros. | `crates/aniefork-dev/src/rebuilt.rs`, `kit.rs`, changes in `manifest.rs`, `starter.rs`, `agents.rs`; `crates/ui-egui/src/aniefork/macros.rs` | Not offered; a direction of the fork's own |
 | **Macros (VBA), to read** (the first step of bringing what a workbook's macros do into GridCraft): Developer ▸ Macros shows the modules of the VBA project a workbook carries and their source; `developer.macros` reports them; an agent reads them through two tools of the Development server. Nothing is run, and nothing in the project is changed. | `crates/aniefork-dev/src/vba.rs`, `crates/ui-egui/src/aniefork/macros.rs`, a button in `developer.rs` | Could be offered: the reader depends on nothing of the fork's. Not offered yet |
 | **The Development window as a Svelte page, in a window of its own** (phase 2d, second slice, on Windows): Developer ▸ Development opens a second window that stays beside the sheet, showing the same window as a page in the system's web view. What a card says is said once (`card.rs`) and drawn by both; a click in the page goes through the same `act`. Elsewhere, and by the user's choice, it is GridCraft's own dialog. | `crates/ui-egui/src/aniefork/` (`card.rs`, `devpage.rs`), `apps/gridcraft/src/aniefork/` (`window.rs`, `page.rs`), a line in `apps/gridcraft/Cargo.toml` | Not offered: fork-only (Svelte source and a built script as text, a second windowing crate) |
-| **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows): a trusted project's panel is shown beside the sheet in the system's web view (WebView2), over the same bridge; a project without `network` is kept to its own address there. Developer ▸ Development creates a showcase project whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
+| **A panel docked in the window, and the Svelte showcase** (the Development subsystem, phase 2d, on Windows and macOS): a trusted project's panel is shown beside the sheet in the system's web view (WebView2 on Windows, WKWebView on macOS), over the same bridge; a project without `network` is kept to its own address there. Developer ▸ Development creates a showcase project whose panel is a Svelte app and, once the user has trusted it, docks it. | `crates/ui-egui/src/aniefork/dock.rs`, `apps/gridcraft/src/aniefork.rs`, `crates/aniefork-dev/src/` (`showcase.rs`, `showcase_files.rs`), hooks in `lib.rs`, `apps/gridcraft/src/main.rs` and `apps/gridcraft/Cargo.toml` | Not offered: fork-only (it carries Svelte source and a built script as text, against upstream's "Rust only") |
 | **The Developer tab**, hidden until Options turns it on: the entry to the Development subsystem designed in [ADR-0001](docs/decisions-aniefork.md). | `crates/ui-egui/src/aniefork/developer.rs`, hooks in `ribbon.rs` | Not offered; a direction of the fork's own |
 | **Projects, trust, Python, panels, events, a console and the workbook as objects** (the Development subsystem, phases 1a to 2b): projects are folders the user installs; each has a manifest saying what it asks to be allowed and a fingerprint of its contents; the user trusts a project or not, in Developer ▸ Projects, confirmed by the operating system; a trusted project's Python scripts run in a process of their own, and its panel opens in the browser, calls GridCraft over a local bridge and is told what happens there; Developer ▸ Console shows what projects print and log; a script can work on the sheet itself, and panels and scripts share one set of objects for the workbook. | The crate `crates/aniefork-dev`; `crates/ui-egui/src/aniefork/` (`projects.rs`, `panels.rs`, `console.rs`, `presence.rs`); hooks in `xtask/src/layers.rs`, `crates/ui-egui/Cargo.toml`, `crates/ui-egui/src/lib.rs`, `dialogs.rs` and `apps/gridcraft/src/main.rs` | Not offered; fork-only until proven (ADR-0001) |
 
@@ -597,7 +597,7 @@ own.
 - **`network` is only partly enforced in a browser.** The policy stops a panel's requests, but
   not the page sending the user to another address, which can carry data. A panel docked in
   the window is kept to its own address; a panel opened in the browser is not.
-- **Docked panels are Windows only**, one at a time, and are not docked again at the next
+- **Docked panels are Windows and macOS only** (not Linux yet), one at a time, and are not docked again at the next
   start. The web view is hidden while anything of GridCraft's own is drawn over its place.
 - The showcase's built script is 55 KB of generated text in `showcase_files.rs`. To change the
   showcase: change its source, build it with npm outside the repository, and regenerate the
@@ -669,7 +669,11 @@ own.
   done in Projects. Its panel can be shown from either.
 - **The page's own code is run by no test of the repository.** A part that changes has to be
   looked at in a copy with settings of its own.
-- **The Development window as a page is Windows only**, and a second thing to keep alike:
+- **The Development window as a page is Windows only.** On macOS it can't have a window of its own:
+  it runs a window loop on a second thread, which AppKit doesn't allow (its windows belong to
+  the main thread, which eframe's loop holds), and eframe doesn't hand out a second window's
+  native handle. On a Mac the Development window stays GridCraft's own (the owner's choice,
+  2026-10-17). It is a second thing to keep alike:
   what the two windows say is shared, how they are laid out is not. Its place and size are
   not remembered. To change the page: `cargo test -p gridcraft -- --ignored
   write_the_pages_source`, change and build it with npm in `target/development-page`, then
@@ -708,7 +712,7 @@ still there:
 | `crates/ui-egui/src/lib.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a project's docked panel, before the grid takes what is left |
 | `apps/gridcraft/src/main.rs`, the `mod` lines | `mod aniefork;`: the fork's part of the shell |
 | `apps/gridcraft/src/main.rs`, `App::ui`, after `self.0.ui(ui);` | `aniefork::frame(&mut self.0, ui.ctx(), _frame);` puts the docked panel's web view in its place |
-| `apps/gridcraft/Cargo.toml`, the Windows dependencies | `wry = { version = "0.57", default-features = false }`: the system web view |
+| `apps/gridcraft/Cargo.toml`, the Windows and macOS dependencies | `wry = { version = "0.57", default-features = false }`: the system web view, under `cfg(any(target_os = "windows", target_os = "macos"))` |
 | `apps/gridcraft/Cargo.toml`, the Windows dependencies | `tao = { version = "0.37", default-features = false, features = ["rwh_06"] }`: a second window with a message loop of its own, for the Development window as a page |
 | `crates/ui-egui/src/control.rs`, `handle`, first thing | `if let Some(why) = crate::aniefork::control_refuses(p) { return err(why); }`: GridCraft's own settings folder is out of the control channel's reach |
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
@@ -805,6 +809,24 @@ included.
 
 Newest first.
 
+- **2026-10-17 (docked panels on macOS):** On the owner's word ("Do this task here", from the
+  proposal to bring phase 2d to macOS). A trusted project's panel now docks beside the sheet on
+  macOS too, in WKWebView through `wry` (already the fork's dependency on Windows): the same host
+  code, which used only `wry`'s calls for every platform; `wry` places the child view in the
+  window's own points and flips it to AppKit's origin itself. One thing was Windows' alone: until
+  the first page has loaded, macOS's web view keeps a script for later and drops its answer, so
+  the host's first "are you answering?" went unheard and the panel was said to have stopped
+  answering while it worked. The page is asked now only once it has loaded (`wry`'s page-load
+  event), and a page that hasn't loaded in ten seconds is silent; two tests. **Seen** on the
+  owner's MacBook Pro, in a copy with a scratch settings folder: the Svelte Showcase, created and
+  then trusted by the owner (the system's confirmation), docked beside the sheet, following the
+  selection, its "Fill sample data" writing to the sheet, no false alarm. **The Development
+  window as a page stays Windows only** (above, in Open); the owner chose GridCraft's own window
+  for the Mac. **Two kinds of test made to pass on macOS**, which had never run there: the
+  network tests sent as a stranger from 127.0.0.2, which macOS doesn't set up as its own (the
+  check is left out there alone); and two Development window tests clicked before the window had
+  settled, which takes more frames with macOS's fonts. `cargo xtask ci` passes on macOS. Not
+  tried: Doom and the other C projects docked on a Mac (zig isn't installed there), Linux.
 - **2026-10-16 (undo shares a sheet's other parts, on a branch):** The memory record's item 6, on
   the owner's word ("Do this task here"). Measured first, with a new generator
   (`docs/memory-aniefork/make_parts.py`): one workbook per part, 50 cell edits each. A typed cell
