@@ -766,6 +766,8 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     context_menu(app, ui);
     let track_x = if rtl { (available.left(), rect.left()) } else { (rect.right(), available.right()) };
     vertical_scrollbar(app, ui, sh, &geo, track_x, max_y, &t);
+    // The scrollbar's column beside the headings and frozen rows, painted (aniefork).
+    crate::aniefork::scrollbar::above_the_track(ui.painter(), track_x, available.top(), geo.cells.top(), geo.cells.top() + geo.frozen_h, &t);
     if app.session.clipboard.is_some() {
         // By the clock, not per frame: a gliding outline repaints more often than the ants step.
         app.grid.marching_phase = crate::selection_glide::ants_phase(now);

@@ -22,6 +22,7 @@ pub mod panels;
 pub mod prefs;
 pub mod presence;
 pub mod projects;
+pub(crate) mod scrollbar;
 pub mod selection;
 
 pub use prefs::Prefs;

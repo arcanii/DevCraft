@@ -69,6 +69,12 @@ pub const SILENT: &str =
 /// Said in place of a panel whose web view is gone.
 pub const GONE: &str = "This panel stopped: what showed it has closed. GridCraft and your workbook are not affected.";
 
+/// The strip, in points, between the sheet and the web view, which is the splitter's own: the
+/// web view is a window of its own over the pane, and took every press at the pane's edge, so
+/// the splitter was hard to grab (the owner, 2026-10-19). The splitter is grabbed this far either
+/// side of the pane's edge, and the strip inside it is kept clear of the web view.
+pub const GUTTER: f32 = 6.0;
+
 fn id() -> egui::Id {
     egui::Id::new("aniefork.dock")
 }
@@ -183,6 +189,9 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     let mut in_browser = false;
     let mut again = false;
     let mut place = None;
+    // The splitter is grabbed across the gutter, not only at the pane's very edge.
+    let grab = ui.style().interaction.resize_grab_radius_side;
+    ui.style_mut().interaction.resize_grab_radius_side = GUTTER;
     egui::Panel::right("aniefork.dock").default_size(400.0).size_range(260.0..=900.0).resizable(true).frame(egui::Frame::NONE.fill(t.ribbon)).show(
         ui,
         |ui| {
@@ -210,15 +219,22 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
                     }
                 });
             }
-            // The rest is the web view's. Until it has drawn (and where there is none), say so.
+            // The rest is the web view's, but for the gutter along the pane's edge, which is the
+            // splitter's: three dots in it say it can be dragged. Until the web view has drawn
+            // (and where there is none), its place says so.
             let body = ui.available_rect_before_wrap();
             ui.painter().rect_filled(body, 0.0, t.ribbon);
+            let view = Rect::from_min_max(egui::pos2((body.left() + GUTTER).min(body.right()), body.top()), body.max);
+            for step in [-6.0, 0.0, 6.0] {
+                ui.painter().circle_filled(egui::pos2(body.left() + GUTTER / 2.0, body.center().y + step), 1.25, t.text_dim);
+            }
             let waiting = if now.answer == Answer::Gone { "" } else { "The panel is shown here." };
-            ui.painter().text(body.center(), egui::Align2::CENTER_CENTER, waiting, crate::theme::ui_font(12.5), t.text_dim);
-            ui.allocate_rect(body, egui::Sense::hover());
-            place = Some(body);
+            ui.painter().text(view.center(), egui::Align2::CENTER_CENTER, waiting, crate::theme::ui_font(12.5), t.text_dim);
+            ui.allocate_rect(view, egui::Sense::hover());
+            place = Some(view);
         },
     );
+    ui.style_mut().interaction.resize_grab_radius_side = grab;
     if close {
         undock(&ctx);
         return;
@@ -306,6 +322,9 @@ mod tests {
         assert!(now.address.starts_with("http://127.0.0.1:") && now.address.ends_with('/'));
         let place = now.rect.unwrap();
         let window = ctx.content_rect();
+        // The gutter along the pane's edge is the splitter's: the web view begins past it.
+        let edge = h.state().grid.rect.unwrap().right() + 14.0;
+        assert!(place.left() >= edge + GUTTER - 0.5, "{place:?} from {edge}");
         assert!(place.width() > 250.0 && place.height() > 300.0, "{place:?}");
         assert!(place.right() <= window.right() + 0.5 && place.left() > window.center().x, "on the right: {place:?}");
         // The address holds the project's token: it is for the web view, and shown nowhere.
@@ -318,6 +337,38 @@ mod tests {
         assert!(dock(h.state(), &ctx, "other").unwrap_err().contains("not trusted"));
         assert!(dock(h.state(), &ctx, "nowhere").is_err());
         assert_eq!(docked(&ctx).unwrap().project, "clean-data");
+    }
+
+    #[test]
+    fn the_splitter_is_grabbed_in_the_gutter_the_web_view_leaves_beside_the_sheet() {
+        let _s = Sandbox::new("dock-splitter");
+        let (app, _) = trusted();
+        let mut h = harness(app);
+        let ctx = h.ctx.clone();
+        host_is_here(&ctx);
+        dock(h.state(), &ctx, "clean-data").unwrap();
+        h.run_steps(3);
+        let before = wanted(&ctx).unwrap().rect.unwrap();
+        // Pressed in the gutter, further from the pane's edge than egui's own grip reaches (and
+        // where, in the window, no web view lies over it), and dragged 100 points to the left.
+        let at = egui::pos2(before.left() - 1.5, before.center().y);
+        assert!(at.x - (before.left() - GUTTER) > h.ctx.global_style().interaction.resize_grab_radius_side, "past the usual grip");
+        h.hover_at(at);
+        h.run_steps(1);
+        h.drag_at(at);
+        h.run_steps(1);
+        for step in 1..=10 {
+            h.hover_at(at - vec2(10.0 * step as f32, 0.0));
+            h.run_steps(1);
+        }
+        h.drop_at(at - vec2(100.0, 0.0));
+        h.run_steps(3);
+        // The pane is wider by the drag, less the few points from its edge to where it was
+        // grabbed (egui puts the edge under the pointer), and the web view's place with it.
+        let after = wanted(&ctx).unwrap().rect.unwrap();
+        let wider = after.width() - before.width();
+        assert!(wider > 100.0 - GUTTER - 1.0 && wider <= 100.5, "{before:?} then {after:?}");
+        assert_eq!(after.right(), before.right());
     }
 
     #[test]

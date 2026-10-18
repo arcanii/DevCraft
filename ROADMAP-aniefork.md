@@ -22,7 +22,7 @@ logged in this file instead.
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
 | Last merge of upstream | 2026-10-18, upstream `c30fa3f` (15 commits since the merge before: releases 0.7.0 and 0.8.0) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 17 changes upstream lacks (below) |
+| Fork carries | 18 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -34,6 +34,7 @@ merged; delete the row once a merge of upstream brings it back.
 | **On upstream's Options page:** the user name (the author of comments and notes) and whether the ribbon shows the Developer tab, with a command for each (`app.userName`, `developer.tab`); and an Animations section holding upstream's switch for the selection glide, as wordcraft's Options has. | `crates/ui-egui/src/aniefork/options.rs`, a hook in `backstage.rs` | Not offered |
 | **Options for the selection:** the weight of its outline (thin by default, which is Excel's; standard is upstream's; hairline), and hiding it while another window is the active one, as Excel does, which is off until chosen. On the Options page's Selection section. | `crates/ui-egui/src/aniefork/` (`selection.rs`, `prefs.rs`, `options.rs`), hooks in `grid.rs` and `lib.rs` | Not offered |
 | **The selection's outline lies on the gridlines.** Upstream centres it half a point outside the cells, which puts its bottom and right sides a point past the gridlines they should cover; on a display at 125% or 150% a grey line shows inside them. Here each side covers its gridline and reaches outward from it, a whole number of device pixels wide, which is where Excel was measured to put it. | `Bars` and `paint_outline` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open), its second commit |
+| **The scrollbar's column is painted beside the headings.** Upstream paints the vertical scrollbar's track from the first row that scrolls and nothing above it, so beside the column headings (and beside frozen rows) the sheet's white showed through: a white square at the top of the scrollbar, plain in the dark theme. Here that part of the column is the headings' colour, and the track's beside frozen rows. | `crates/ui-egui/src/aniefork/scrollbar.rs`, a hook in `grid.rs` | Not offered yet: it is upstream's to have too |
 | **The fill handle is sized to the outline**: three times its weight, set on the outline's inner corner, which is how Excel's measured. Upstream's is always six points, a heavy square beside a thin outline. | `fill_handle` and `paint_fill_handle` in `crates/ui-egui/src/aniefork/selection.rs`, a hook in `grid.rs` | Not offered: it follows the fork's choice of weight, and upstream has one weight |
 | **The highlight stays where it is while typing.** Upstream draws the border of a cell being edited half a point further out than the selection's outline, makes the editor a few points taller than a default row, and stretches the border round the text as it grows: the box left the gridlines the moment typing began, and then followed the text. Here the highlight neither moves nor grows. Text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as Excel does. | `editor_size` and `paint_editor` in `crates/ui-egui/src/aniefork/selection.rs`, hooks in `grid.rs` | Offered: [storytold/gridcraft#549](https://github.com/storytold/gridcraft/pull/549) (open) |
 | **The Development server and the Development window** (the Development subsystem, phase 2e): a second MCP server, inside the running app, for agents that help with development work. Off until the user turns it on, in Developer ▸ Development, where they set how far agents may go (read only, ask each time, build and ask before running, full control until GridCraft closes). What an agent asks for is shown on a card, with the lines a change to a file would take out and put in, and answered there. | `crates/aniefork-dev/src/` (`agents.rs`, `http.rs`), `crates/ui-egui/src/aniefork/` (`agents.rs`, `development.rs`, `diff.rs`), a hook in `control.rs` | Not offered; a direction of the fork's own |
@@ -706,6 +707,7 @@ still there:
 | `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill handle | `crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);` in place of upstream's three lines that size and paint it |
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's size | `let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);` in place of upstream's `w` and `h`, and `Rect::from_min_size(rect.min, grown)` for `erect` |
 | `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
+| `crates/ui-egui/src/grid.rs`, `show`, after `vertical_scrollbar(...)` | `crate::aniefork::scrollbar::above_the_track(ui.painter(), track_x, available.top(), geo.cells.top(), geo.cells.top() + geo.frozen_h, &t);` paints the scrollbar's column beside the headings and frozen rows |
 | `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls projects' panels made, and sees to what agents asked of the Development server |
@@ -818,6 +820,13 @@ included.
 
 Newest first.
 
+- **2026-10-19 (the scrollbar's corner, and the docked panel's splitter):** On the owner's word
+  ("the white square at the top of the scrollbar"; "The splitter should be a bit wider since it
+  is hard to grab"). The scrollbar's column beside the headings is painted the headings' colour
+  (upstream left the sheet's white there; a hook in `grid.rs`). A docked panel's web view now
+  starts six points in from the pane's edge, a gutter with three dots that is the splitter's
+  own, and the splitter is grabbed six points either side of the edge (egui's grip is three, and
+  the web view covered its inner half).
 - **2026-10-18 (the Mandelbrot showcase):** On the owner's word ("Can we produce a mandelbrot
   demo", then "build it in C with the workbook link"). The C kit's part offers a second
   showcase, **Mandelbrot**: one file of C works out the set a band of rows at a time, in its
