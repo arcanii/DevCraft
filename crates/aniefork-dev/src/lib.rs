@@ -44,6 +44,7 @@ pub mod c;
 pub mod c_program;
 pub mod console;
 pub mod gl1;
+pub mod gles3;
 pub mod highlight;
 #[cfg(not(target_arch = "wasm32"))]
 mod http;

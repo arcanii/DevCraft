@@ -134,7 +134,7 @@ Its third challenge was **GLQuake**, Quake as it draws with OpenGL:
 **Still not our Quake.** It is id Software's own release of GLQuake, under the GPL, on the same
 shareware data, built by the C Development Kit with eight places of its code changed (for today's
 compiler, and for a page, which can't wait) and its glue. It is drawn by the graphics card: a C program can draw on a
-canvas its page names, with **OpenGL ES 3** (`<GLES3/gl3.h>`), or with **OpenGL 1**
+canvas its page names, with **OpenGL ES 3.0**, the whole of it (`<GLES3/gl3.h>`), or with **OpenGL 1**
 (`<GL/gl.h>`) as games of the nineties did, which the kit makes of OpenGL ES 3 and builds into a
 program that includes it. The kit builds GLQuake in about three seconds, and a picture takes it
 a few dozen draws. **Neither its code nor its data is in this repository.** And it plays

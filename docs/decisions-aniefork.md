@@ -3637,6 +3637,128 @@ the picture had once gone 1.7 billion times closer, which it drew in 4.4 s.) Nor
 in GridCraft's own (egui) Development window, which only its tests have drawn; Open in Browser;
 macOS and Linux.
 
+### OpenGL ES 3.0 for a C program, the whole of it (built 2026-10-19)
+
+**What the owner asked.** Of the 3D backends the kit could hand a program ("Vulcan? DirectX12? a
+more advanced OpenGL?"), told that a program is WebAssembly in the panel's web view and reaches
+only what its page hands it, so that Vulkan and DirectX 12 would mean leaving WebAssembly while
+WebGPU is their kind made safe for a page: **"Let's do the graphics work first : Filler OpenGL ES,
+then a plan for WebGPU"**.
+
+**What it is** (`crates/aniefork-dev/src/gles3.rs`; the loader's GL part in `c_program.rs`):
+
+- `<GLES3/gl3.h>` declares every call of OpenGL ES 3.0, 246 of them, where it held 78: 241 are
+  answered by the loader with the canvas's WebGL 2, by name, as before; five hand back a pointer
+  into the program's memory (`glGetString`, `glGetStringi`, `glMapBufferRange`, `glUnmapBuffer`,
+  `glFlushMappedBufferRange`), and the loader has none of the program's memory to hand, so they are
+  done by the kit's own C (`gles3::SOURCE`), built into every program that includes the header, as
+  the kit's OpenGL 1 is into one that includes `<GL/gl.h>`. That C asks the loader under names of
+  the kit's own (`gridcraft_glString`, `gridcraft_glMap`...). A mapped buffer is a copy in the
+  program's memory, read from the buffer when mapped for reading (or when it is not to be thrown
+  away), written back when unmapped or flushed; OpenGL can be asked of it (`GL_BUFFER_MAPPED`...).
+- Every number of OpenGL ES 3.0: 594, read from WebGL 2 itself in the web view a docked panel is
+  shown in (a probe project in an isolated copy logged them), and the 50 or so OpenGL ES 3.0 has
+  that WebGL does not (`GL_FALSE`, `GL_TRUE`, the mapping bits, the binary formats, ETC2...), from
+  the specification. The header is the fork's own text; the names and numbers are OpenGL's.
+- What a page can't do is said where it is declared and answered with OpenGL's own errors, which
+  the loader tells before WebGL's: no binaries of programs or shaders (`GL_INVALID_ENUM`), vertex
+  data and indices from buffers only, a fence waited for no longer than the page allows, a query's
+  answer a while after it is asked. `GL_VERSION` begins "OpenGL ES 3.0", as code that reads it
+  expects, and says WebGL's own after it.
+- **Extensions**: the loader turns on thirteen where the canvas has them, and `glGetString` and
+  `glGetStringi` name them as OpenGL does: float and half-float pictures drawn into, float
+  blending and filtering, anisotropic filtering, 16-bit channels, S3TC, RGTC and BPTC compression,
+  depth clamping, mirror-clamp, and ETC2 (OpenGL ES 3.0's own) where it is there. Their numbers
+  are in the header. Not turned on: those that bring calls of their own (multi-draw, clip
+  control...), the GPU's name, and timer queries.
+- **Pictures** of every format and type are handed over as WebGL takes them (16-bit, 32-bit,
+  float, packed), laid out as `glPixelStorei` says (row length, rows and dots skipped, images),
+  and taken from a buffer bound for pictures to come from (or go to).
+- **Printing** from a program that keeps running (its page calls what it exports) now comes line
+  by line. The loader told the program its output could be sought in, so the C library held up
+  to a kilobyte back until it filled; it is now a terminal to the program.
+- OpenGL 1 (`gl1.rs`) reads the new header: its own `glReadBuffer` is renamed as its other shared
+  calls are, and the types and nine numbers it declared twice are gone from it.
+
+**Checked.** Tests: the header declares each call once, the loader answers each and no other, the
+kit's C asks only under its own names and is answered; with zig, a program that takes every call's
+address asks each by name, one that calls `glGetString` and `glMapBufferRange` is built with the
+kit's C, one that includes nothing of the kit's is built without it, and the Turning Triangle, the
+Mandelbrot and OpenGL 1 build. **Seen**, in an isolated copy, a check program of 49 checks, every
+one passed in the docked panel's web view (WebView2 155): the strings and numbers OpenGL gives,
+its own errors told once, a texture drawn into through a framebuffer with a renderbuffer, two
+pictures drawn at once, a uniform block in a buffer, a 3D texture read with a sampler, whole
+numbers and half floats drawn into, four instances placed and coloured by their own numbers, a
+buffer mapped written and read back, transform feedback read through a mapped buffer, four
+samples a dot blitted to one, a part of a larger picture handed over, a copy from what was drawn,
+a query's answer and a fence told later; and its picture shown on the canvas. Doom, Quake and
+GLQuake build from the downloads with it (the setups' test with the real files), and GLQuake was
+seen playing in the copy. **Not seen**: macOS (WKWebView) and Linux; compressed pictures uploaded;
+every call one by one (the check covers each area, not each of the 246).
+
+### WebGPU for the C kit: a plan (2026-10-19)
+
+The owner asked for a plan after OpenGL ES ("then a plan for WebGPU"). Not built.
+
+**What it would be.** WebGPU is what a page has of Vulkan, Direct3D 12 and Metal: explicit
+pipelines, bind groups, compute shaders, storage buffers. The browser runs it on Direct3D 12 on
+Windows and Metal on macOS, inside its own sandbox, so a program would still reach nothing but
+its canvas. **It is there**: the probe in the docked panel found `navigator.gpu` and an adapter
+(WebView2 155, with BC compression, 16-bit floats in shaders, timestamp queries, subgroups). Not
+checked: WKWebView on macOS (WebKit turned WebGPU on with Safari 26).
+
+**The C side** would be the standard `webgpu.h`, the header the webgpu-headers project keeps
+(BSD-3-Clause) and Dawn, wgpu-native and Emscripten all implement, so that C written for WebGPU
+elsewhere reads the same. Shaders are WGSL, as text. The loader answers its calls with the page's
+WebGPU, as it answers OpenGL with WebGL 2, under the import module `webgpu`; a program draws with
+one or the other on a canvas (a canvas has one kind of context).
+
+**What makes it harder than OpenGL.**
+
+1. **Descriptors.** WebGPU's calls take nested structures by pointer (a render pipeline's
+   descriptor holds its shaders, buffers' layouts, targets, blend states; chained extensions;
+   strings as pointer and length). The loader must read each from the program's memory at the
+   offsets the header lays them out at for 32-bit WebAssembly: some fifty kinds. Written by
+   hand they would drift from the header, so both would be generated from one description: the
+   project's `webgpu.yml`, from which `webgpu.h` itself is made.
+2. **Asking and waiting.** Getting an adapter and a device, mapping a buffer, popping an error
+   scope and knowing work is done all answer later, by a callback. A page can't block, so the
+   program is called back at the next frame: the loader calls the program's function by its
+   index in the program's table of functions, which the kit would then export at link time (a
+   named setting of the build, for a program that includes the header).
+3. **Churn.** `webgpu.h` changed shape through 2024 and 2025 (string views, futures, callback
+   infos). A pinned commit would be followed, as the setups pin theirs.
+
+**Stages.**
+
+- **W0, to decide and look**: the owner's decisions below; a probe like OpenGL's in WKWebView on
+  the owner's Mac; the pinned commit of webgpu-headers read.
+- **W1, drawing and computing with a device handed ready.** The page gets the adapter and the
+  device before the program starts, and the program takes them by a call of the kit's own (as
+  Emscripten's `emscripten_webgpu_get_device` does): no callbacks yet. Buffers (written with
+  `wgpuQueueWriteBuffer`), textures, samplers, WGSL shader modules, render and compute pipelines,
+  bind groups, command encoders, render and compute passes, submit, and the canvas as the surface
+  (`wgpuSurfaceConfigure`, `wgpuSurfaceGetCurrentTexture`, presented when the frame returns). The
+  header and the loader's readers generated from `webgpu.yml`.
+- **W2, what answers later**: buffers mapped (`wgpuBufferMapAsync`), work done, error scopes,
+  the adapter and device asked for by the program itself; callbacks at the next frame, and
+  `wgpuInstanceProcessEvents`.
+- **W3, seen and shown**: a check program like OpenGL's; a showcase that does what OpenGL can't,
+  such as particles moved by a compute shader, or the Mandelbrot worked out on the GPU; what
+  agents are told; the README.
+
+**The owner's to decide.**
+
+- Whether `webgpu.h` comes in as it is, from a pinned commit, with its licence (BSD-3-Clause,
+  kept with it, as the fork's exception for another's code), or the fork writes a header of its
+  own with the same names and layouts. Recommended: as it is, so that code written for it builds
+  unchanged.
+- Leave to download webgpu-headers at a pinned commit, to read it and to generate from it.
+- Whether a program may have both OpenGL ES and WebGPU, on two canvases.
+- Not to be done, and why: Vulkan or Direct3D 12 themselves. They would need a program that is
+  not WebAssembly, with the GPU's driver within its reach: the opposite of what holds a C project
+  to what it asked for (the owner's decision of 2026-10-13, WebAssembly first).
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

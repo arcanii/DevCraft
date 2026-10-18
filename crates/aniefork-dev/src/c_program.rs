@@ -4,8 +4,8 @@
 //! A C project is built as one WebAssembly program ([`crate::c`]). A WebAssembly program can do
 //! nothing by itself: it asks whoever runs it for everything. The loader hands it the little of
 //! a system a C program asks for (a clock, a place to print, random numbers, its arguments, and
-//! files kept in memory), and, when the page names a canvas, a part of OpenGL ES 3 to draw on
-//! that canvas with (the owner, 2026-10-14; the header for it is [`crate::c::GL_HEADER`]). And
+//! files kept in memory), and, when the page names a canvas, OpenGL ES 3.0 to draw on that
+//! canvas with (the owner, 2026-10-14 and 2026-10-19; the header is [`crate::c::GL_HEADER`]). And
 //! nothing else: no way to the spreadsheet or to the computer's files, and none to the network
 //! but GridCraft's, which carries the packets of a program whose project names where it would
 //! reach, once the person has turned its network on ([`crate::net`]). What the program is to do
@@ -184,8 +184,12 @@ const CProgram = (() => {
         const v = view();
         v.setBigUint64(at, 0n, true);
         v.setUint8(at, kind);
-        v.setBigUint64(at + 8, 0xffffffffffffffffn, true);
-        v.setBigUint64(at + 16, 0xffffffffffffffffn, true);
+        // What is printed goes to a terminal, as the program sees it: it can't be sought in or
+        // asked where it is. So the program's C library sends each line as it is printed, and a
+        // program that keeps running (its page calls what it exports) holds none back.
+        const rights = fd < 3 ? 0xffffffffffffffdbn : 0xffffffffffffffffn;
+        v.setBigUint64(at + 8, rights, true);
+        v.setBigUint64(at + 16, rights, true);
         return OK;
       },
       fd_fdstat_set_flags() {
@@ -308,20 +312,68 @@ const CProgram = (() => {
       },
     };
 
-    // OpenGL ES 3, for a program whose page names a canvas to draw on: each call the program
-    // makes is answered with that canvas's WebGL 2, which is OpenGL ES 3 as a page has it.
+    // OpenGL ES 3.0, for a program whose page names a canvas to draw on: each call the program
+    // makes is answered with that canvas's WebGL 2, which is OpenGL ES 3.0 as a page has it.
     // What OpenGL names by number (a buffer, a shader, a texture) is kept here under that
     // number; 0 is none. It draws on the one canvas and reaches nothing else of the page.
     const drawing = canvas ? canvas.getContext("webgl2", { alpha: false, antialias: true }) : null;
-    const made = { buffer: [null], shader: [null], program: [null], texture: [null], array: [null], place: [null] };
+    // The extensions of WebGL turned on for the program: those of these the canvas offers, and no
+    // others. Each is told the program under the name OpenGL gives it (glGetString); ETC2, which
+    // OpenGL ES 3.0 has of its own, is turned on where the canvas has it and named nowhere.
+    const glExtensions = [];
+    if (drawing) {
+      for (const [webgl, named] of [
+        ["EXT_color_buffer_float", "GL_EXT_color_buffer_float"],
+        ["EXT_color_buffer_half_float", "GL_EXT_color_buffer_half_float"],
+        ["EXT_float_blend", "GL_EXT_float_blend"],
+        ["OES_texture_float_linear", "GL_OES_texture_float_linear"],
+        ["EXT_texture_filter_anisotropic", "GL_EXT_texture_filter_anisotropic"],
+        ["EXT_texture_norm16", "GL_EXT_texture_norm16"],
+        ["EXT_render_snorm", "GL_EXT_render_snorm"],
+        ["EXT_texture_mirror_clamp_to_edge", "GL_EXT_texture_mirror_clamp_to_edge"],
+        ["EXT_depth_clamp", "GL_EXT_depth_clamp"],
+        ["WEBGL_compressed_texture_s3tc", "GL_EXT_texture_compression_s3tc"],
+        ["WEBGL_compressed_texture_s3tc_srgb", "GL_EXT_texture_compression_s3tc_srgb"],
+        ["EXT_texture_compression_rgtc", "GL_EXT_texture_compression_rgtc"],
+        ["EXT_texture_compression_bptc", "GL_EXT_texture_compression_bptc"],
+        ["WEBGL_compressed_texture_etc", null],
+      ]) {
+        if (drawing.getExtension(webgl) && named) glExtensions.push(named);
+      }
+    }
+    const made = {
+      buffer: [null], shader: [null], program: [null], texture: [null], array: [null], place: [null],
+      framebuffer: [null], renderbuffer: [null], sampler: [null], query: [null], feedback: [null], sync: [null],
+    };
     const keep = (kind, object) => (object ? made[kind].push(object) - 1 : 0);
+    // An error the loader found itself (a call WebGL has no way to make), told before WebGL's own.
+    let glOwnError = 0;
+    const glFail = (error) => {
+      if (!glOwnError) glOwnError = error;
+    };
     const glText = (at) => {
       const all = bytes();
       let end = at;
       while (end < all.length && all[end] !== 0) end++;
       return decoder.decode(all.subarray(at, end));
     };
-    const glFloats = (at, count) => new Float32Array(memory.buffer, at, count);
+    /** So many texts, from a list of pointers to them. */
+    const glTexts = (at, count) => Array.from({ length: Math.max(0, count) }, (_, i) => glText(view().getUint32(at + i * 4, true)));
+    /** So many numbers of the program's, as the kind of array WebGL takes them in: a look at its memory, or a copy where they are not aligned for it. */
+    const glArray = (Kind, at, count) => {
+      const size = Math.max(0, count) * Kind.BYTES_PER_ELEMENT;
+      if (!at || size === 0) return new Kind(0);
+      return at % Kind.BYTES_PER_ELEMENT === 0 ? new Kind(memory.buffer, at, count) : new Kind(memory.buffer.slice(at, at + size));
+    };
+    const glFloats = (at, count) => glArray(Float32Array, at, count);
+    /** Numbers written into the program's memory, as the kind it asked for. */
+    const glPut = {
+      i: (at, values) => at && values.forEach((each, i) => view().setInt32(at + i * 4, Number(each) | 0, true)),
+      u: (at, values) => at && values.forEach((each, i) => view().setUint32(at + i * 4, Number(each) >>> 0, true)),
+      f: (at, values) => at && values.forEach((each, i) => view().setFloat32(at + i * 4, Number(each), true)),
+      b: (at, values) => at && values.forEach((each, i) => view().setUint8(at + i, each ? 1 : 0)),
+      l: (at, values) => at && values.forEach((each, i) => view().setBigInt64(at + i * 8, BigInt(Math.trunc(Number(each) || 0)), true)),
+    };
     /** Writes what OpenGL had to say into the program's own room for it, closed with a zero. */
     const glSaid = (log, room, lengthAt, at) => {
       const held = encoder.encode(log || "").subarray(0, Math.max(0, room - 1));
@@ -341,17 +393,14 @@ const CProgram = (() => {
         if (id) made[kind][id] = null;
       }
     };
-    /** Where each row of a picture begins, as the program said with glPixelStorei: a multiple of so many bytes. */
-    const glAlign = { unpack: 4, pack: 4 };
-    /** How many bytes a picture of so many dots takes: so many a dot, each row but the last made up to the alignment. */
-    const glBytes = (width, height, format, align) => {
-      const each = { 0x1908: 4, 0x1907: 3, 0x190a: 2, 0x1909: 1, 0x1906: 1 }[format] || 4;
-      const row = width * each;
-      return width > 0 && height > 0 ? Math.ceil(row / align) * align * (height - 1) + row : 0;
+    /** Whether a number names a thing of that kind that is still there. */
+    const glIs = (kind, id, check) => (made[kind][id] && check(made[kind][id]) ? 1 : 0);
+    /** The program or shader a number names; a number that names none is the program's error. */
+    const glHeld = (kind, id) => {
+      const held = made[kind][id];
+      if (!held) glFail(0x0501);
+      return held;
     };
-    /** The dots of a picture handed over as bytes. */
-    const glDots = (at, width, height, format, type) =>
-      at && type === 0x1401 ? new Uint8Array(memory.buffer, at, glBytes(width, height, format, glAlign.unpack)) : null;
     /** The number OpenGL names a thing of the page's by (a buffer, a texture), or 0. */
     const glNumber = (object) => {
       for (const kind of Object.keys(made)) {
@@ -360,45 +409,189 @@ const CProgram = (() => {
       }
       return 0;
     };
+    /** What WebGL answered, as numbers: a thing (a buffer, a texture) as the number the program knows it by. */
+    const glValues = (value) => {
+      if (value === null || value === undefined) return [0];
+      if (typeof value === "object") return "length" in value ? Array.from(value, (each) => (each && typeof each === "object" ? glNumber(each) : Number(each))) : [glNumber(value)];
+      return [Number(value)];
+    };
+    /** What OpenGL says of itself under a name: WebGL's answer, and the few WebGL does not give. */
+    const glParameter = (name) => {
+      switch (name) {
+        case 0x821b: // GL_MAJOR_VERSION
+          return 3;
+        case 0x821c: // GL_MINOR_VERSION
+          return 0;
+        case 0x821d: // GL_NUM_EXTENSIONS
+          return glExtensions.length;
+        case 0x86a2: // GL_NUM_COMPRESSED_TEXTURE_FORMATS
+          return (drawing.getParameter(0x86a3) || []).length;
+        case 0x87fe: // GL_NUM_PROGRAM_BINARY_FORMATS, GL_NUM_SHADER_BINARY_FORMATS: there are none
+        case 0x8df9:
+          return 0;
+        case 0x87ff: // and which they are
+        case 0x8df8:
+          return [];
+        case 0x8dfa: // GL_SHADER_COMPILER
+          return true;
+        default:
+          return drawing.getParameter(name);
+      }
+    };
+    /** The name OpenGL asks which buffer is bound to a target under. */
+    const glBinding = (target) =>
+      ({ 0x8892: 0x8894, 0x8893: 0x8895, 0x8f36: 0x8f36, 0x8f37: 0x8f37, 0x88eb: 0x88ed, 0x88ec: 0x88ef, 0x8c8e: 0x8c8f, 0x8a11: 0x8a28 })[target] || 0;
+    /** The buffer bound to a target, and what the kit's C mapped of it (glMapBufferRange). */
+    const glBound = (target) => {
+      const binding = glBinding(target);
+      return binding ? drawing.getParameter(binding) : null;
+    };
+    // How pictures are laid out in the program's memory, as glPixelStorei said: rows made up to
+    // a multiple of the alignment, and where a picture begins in a larger one.
+    const glStore = { 0x0cf5: 4, 0x0cf2: 0, 0x0cf3: 0, 0x0cf4: 0, 0x806e: 0, 0x806d: 0, 0x0d05: 4, 0x0d02: 0, 0x0d03: 0, 0x0d04: 0 };
+    // Whether a buffer is bound for pictures to come from, or to go to: then a picture's place is
+    // where in that buffer it is, and not in the program's memory.
+    let glUnpacking = false;
+    let glPacking = false;
+    /** How many bytes a dot takes, by its format and its type. */
+    const glDotBytes = (format, type) => {
+      const packed = { 0x8363: 2, 0x8033: 2, 0x8034: 2, 0x8368: 4, 0x8c3b: 4, 0x8c3e: 4, 0x84fa: 4, 0x8dad: 8 }[type];
+      if (packed) return packed;
+      const parts = { 0x1903: 1, 0x8227: 2, 0x1907: 3, 0x1908: 4, 0x1909: 1, 0x190a: 2, 0x1906: 1, 0x1902: 1, 0x8d94: 1, 0x8228: 2, 0x8d98: 3, 0x8d99: 4 }[format] || 4;
+      return parts * ({ 0x1400: 1, 0x1401: 1, 0x1402: 2, 0x1403: 2, 0x140b: 2, 0x1404: 4, 0x1405: 4, 0x1406: 4 }[type] || 1);
+    };
+    /** The kind of array WebGL takes a picture of this type in. */
+    const glDotArray = (type) =>
+      ({ 0x1400: Int8Array, 0x1402: Int16Array, 0x1403: Uint16Array, 0x140b: Uint16Array, 0x8363: Uint16Array, 0x8033: Uint16Array, 0x8034: Uint16Array, 0x1404: Int32Array, 0x1405: Uint32Array, 0x8368: Uint32Array, 0x8c3b: Uint32Array, 0x8c3e: Uint32Array, 0x84fa: Uint32Array, 0x1406: Float32Array })[type] || Uint8Array;
+    /** How many bytes a picture of so many dots takes in the program's memory, laid out as glPixelStorei said. */
+    const glImageBytes = (width, height, depth, format, type, unpack) => {
+      if (width <= 0 || height <= 0 || depth <= 0) return 0;
+      const each = glDotBytes(format, type);
+      const [align, rowLength, skipRows, skipPixels, imageHeight, skipImages] = unpack
+        ? [glStore[0x0cf5], glStore[0x0cf2], glStore[0x0cf3], glStore[0x0cf4], glStore[0x806e], glStore[0x806d]]
+        : [glStore[0x0d05], glStore[0x0d02], glStore[0x0d03], glStore[0x0d04], 0, 0];
+      const row = Math.ceil(((rowLength || width) * each) / align) * align;
+      const image = row * (imageHeight || height);
+      return (skipImages + depth - 1) * image + (skipRows + height - 1) * row + (skipPixels + width) * each;
+    };
+    /** A picture the program hands over: its dots in its memory, or, while a buffer is bound for pictures to come from, where in that buffer. */
+    const glPicture = (at, width, height, depth, format, type) => {
+      if (glUnpacking) return at;
+      if (!at || type === 0x8dad) return null;
+      const Kind = glDotArray(type);
+      return glArray(Kind, at, Math.ceil(glImageBytes(width, height, depth, format, type, true) / Kind.BYTES_PER_ELEMENT));
+    };
+    /** Compressed dots the program hands over, or where they are in the buffer bound for pictures to come from. */
+    const glPacked = (at, size) => (glUnpacking ? [size, at] : [new Uint8Array(memory.buffer, at, Math.max(0, size))]);
+    /** What WebGL says of an attribute, a uniform or a varying, written where the program asked. */
+    const glInfo = (info, room, lengthAt, sizeAt, typeAt, nameAt) => {
+      if (!info) return glFail(0x0501);
+      return [glSaid(info.name, room, lengthAt, nameAt), glPut.i(sizeAt, [info.size]), glPut.u(typeAt, [info.type])];
+    };
+    /** The longest of so many names, and the zero after it: what OpenGL says a program's longest name needs. */
+    const glLongest = (count, nameOf) => {
+      let most = 0;
+      for (let i = 0; i < count; i++) most = Math.max(most, (nameOf(i) || "").length + 1);
+      return most;
+    };
     const graphics = drawing && {
       glViewport: (x, y, width, height) => drawing.viewport(x, y, width, height),
       glScissor: (x, y, width, height) => drawing.scissor(x, y, width, height),
       glClearColor: (red, green, blue, alpha) => drawing.clearColor(red, green, blue, alpha),
       glClearDepthf: (depth) => drawing.clearDepth(depth),
+      glClearStencil: (value) => drawing.clearStencil(value),
       glClear: (mask) => drawing.clear(mask),
       glEnable: (what) => drawing.enable(what),
       glDisable: (what) => drawing.disable(what),
+      glIsEnabled: (what) => (drawing.isEnabled(what) ? 1 : 0),
       glDepthFunc: (how) => drawing.depthFunc(how),
       glDepthMask: (flag) => drawing.depthMask(!!flag),
+      glDepthRangef: (near, far) => drawing.depthRange(near, far),
       glCullFace: (mode) => drawing.cullFace(mode),
       glFrontFace: (mode) => drawing.frontFace(mode),
       glBlendFunc: (from, to) => drawing.blendFunc(from, to),
       glBlendFuncSeparate: (from, to, fromAlpha, toAlpha) => drawing.blendFuncSeparate(from, to, fromAlpha, toAlpha),
       glBlendEquation: (how) => drawing.blendEquation(how),
-      glDepthRangef: (near, far) => drawing.depthRange(near, far),
+      glBlendEquationSeparate: (how, howAlpha) => drawing.blendEquationSeparate(how, howAlpha),
+      glBlendColor: (red, green, blue, alpha) => drawing.blendColor(red, green, blue, alpha),
       glColorMask: (red, green, blue, alpha) => drawing.colorMask(!!red, !!green, !!blue, !!alpha),
       glPolygonOffset: (factor, units) => drawing.polygonOffset(factor, units),
       glLineWidth: (width) => drawing.lineWidth(width),
+      glSampleCoverage: (value, invert) => drawing.sampleCoverage(value, !!invert),
       glStencilFunc: (how, reference, mask) => drawing.stencilFunc(how, reference, mask),
+      glStencilFuncSeparate: (face, how, reference, mask) => drawing.stencilFuncSeparate(face, how, reference, mask),
       glStencilOp: (failed, depthFailed, passed) => drawing.stencilOp(failed, depthFailed, passed),
+      glStencilOpSeparate: (face, failed, depthFailed, passed) => drawing.stencilOpSeparate(face, failed, depthFailed, passed),
       glStencilMask: (mask) => drawing.stencilMask(mask),
-      glClearStencil: (value) => drawing.clearStencil(value),
+      glStencilMaskSeparate: (face, mask) => drawing.stencilMaskSeparate(face, mask),
+      glHint: (target, mode) => drawing.hint(target, mode),
       glPixelStorei(name, value) {
-        if (name === 0x0cf5) glAlign.unpack = value;
-        if (name === 0x0d05) glAlign.pack = value;
+        if (name in glStore) glStore[name] = value;
         drawing.pixelStorei(name, value);
       },
       glReadPixels(x, y, width, height, format, type, at) {
-        if (at && type === 0x1401) drawing.readPixels(x, y, width, height, format, type, new Uint8Array(memory.buffer, at, glBytes(width, height, format, glAlign.pack)));
+        if (glPacking) drawing.readPixels(x, y, width, height, format, type, at);
+        else if (at) {
+          const Kind = glDotArray(type);
+          drawing.readPixels(x, y, width, height, format, type, glArray(Kind, at, Math.ceil(glImageBytes(width, height, 1, format, type, false) / Kind.BYTES_PER_ELEMENT)));
+        }
       },
-      glGetIntegerv(name, at) {
-        const value = drawing.getParameter(name);
-        const values = value && typeof value === "object" ? ("length" in value ? Array.from(value, Number) : [glNumber(value)]) : [Number(value) || 0];
-        values.forEach((each, i) => view().setInt32(at + i * 4, each | 0, true));
-      },
+      glReadBuffer: (source) => drawing.readBuffer(source),
       glFinish: () => drawing.finish(),
       glFlush: () => drawing.flush(),
-      glGetError: () => drawing.getError(),
+      glGetError() {
+        const own = glOwnError;
+        glOwnError = 0;
+        return own || drawing.getError();
+      },
+
+      glGetBooleanv: (name, at) => glPut.b(at, glValues(glParameter(name))),
+      glGetFloatv: (name, at) => glPut.f(at, glValues(glParameter(name))),
+      glGetIntegerv: (name, at) => glPut.i(at, glValues(glParameter(name))),
+      glGetInteger64v: (name, at) => glPut.l(at, glValues(glParameter(name))),
+      glGetIntegeri_v: (target, index, at) => glPut.i(at, glValues(drawing.getIndexedParameter(target, index))),
+      glGetInteger64i_v: (target, index, at) => glPut.l(at, glValues(drawing.getIndexedParameter(target, index))),
+      glGetInternalformativ(target, format, name, room, at) {
+        const samples = drawing.getInternalformatParameter(target, format, 0x80a9);
+        const values = name === 0x9380 ? [samples ? samples.length : 0] : glValues(drawing.getInternalformatParameter(target, format, name));
+        glPut.i(at, values.slice(0, Math.max(0, room)));
+      },
+      // The text OpenGL says of itself, written into the room the kit's C keeps for it (glGetString).
+      gridcraft_glString(name, index, at, room) {
+        let said = null;
+        if (index < 0 && name === 0x1f03) said = glExtensions.join(" ");
+        else if (index < 0 && name === 0x1f02) said = "OpenGL ES 3.0 (" + drawing.getParameter(name) + ")";
+        else if (index < 0 && name === 0x8b8c) said = "OpenGL ES GLSL ES 3.00 (" + drawing.getParameter(name) + ")";
+        else if (index < 0 && (name === 0x1f00 || name === 0x1f01)) said = String(drawing.getParameter(name));
+        else if (index >= 0 && name === 0x1f03 && index < glExtensions.length) said = glExtensions[index];
+        if (said === null) {
+          glFail(index >= 0 && name === 0x1f03 ? 0x0501 : 0x0500);
+          return -1;
+        }
+        glSaid(said, room, 0, at);
+        return said.length;
+      },
+      // Mapping a buffer, done by the kit's C in the program's own memory (glMapBufferRange): what
+      // is mapped is kept with the buffer here, so that OpenGL can be asked of it.
+      gridcraft_glMap(target, offset, length, access, at) {
+        const held = glBound(target);
+        if (!held || held.gridcraftMapped) return 0x0502;
+        held.gridcraftMapped = { offset, length, access, at };
+        return 0;
+      },
+      gridcraft_glMapped(target, into) {
+        const held = glBound(target);
+        const mapped = held && held.gridcraftMapped;
+        if (!mapped) return 0;
+        glPut.i(into, [mapped.offset, mapped.length, mapped.access, mapped.at]);
+        return 1;
+      },
+      gridcraft_glUnmap(target) {
+        const held = glBound(target);
+        if (held) delete held.gridcraftMapped;
+      },
+      gridcraft_glReadBuffer: (target, offset, size, at) => drawing.getBufferSubData(target, offset, new Uint8Array(memory.buffer, at, Math.max(0, size))),
+      gridcraft_glFail: (error) => glFail(error),
 
       glCreateShader: (type) => keep("shader", drawing.createShader(type)),
       glShaderSource(shader, count, textsAt, lengthsAt) {
@@ -408,30 +601,56 @@ const CProgram = (() => {
           const length = lengthsAt ? view().getInt32(lengthsAt + i * 4, true) : -1;
           source += length < 0 ? glText(at) : decoder.decode(bytes().subarray(at, at + length));
         }
-        if (made.shader[shader]) drawing.shaderSource(made.shader[shader], source);
+        const held = glHeld("shader", shader);
+        if (held) drawing.shaderSource(held, source);
       },
       glCompileShader: (shader) => made.shader[shader] && drawing.compileShader(made.shader[shader]),
       glGetShaderiv(shader, name, at) {
-        const held = made.shader[shader];
+        const held = glHeld("shader", shader);
         let value = 0;
         if (held && name === 0x8b84) value = (drawing.getShaderInfoLog(held) || "").length + 1;
+        else if (held && name === 0x8b88) value = (drawing.getShaderSource(held) || "").length + 1;
         else if (held) value = Number(drawing.getShaderParameter(held, name));
         view().setInt32(at, value, true);
       },
       glGetShaderInfoLog: (shader, room, lengthAt, at) => glSaid(made.shader[shader] ? drawing.getShaderInfoLog(made.shader[shader]) : "", room, lengthAt, at),
+      glGetShaderSource: (shader, room, lengthAt, at) => glSaid(made.shader[shader] ? drawing.getShaderSource(made.shader[shader]) : "", room, lengthAt, at),
+      glGetShaderPrecisionFormat(kind, precision, rangeAt, precisionAt) {
+        const format = drawing.getShaderPrecisionFormat(kind, precision);
+        glPut.i(rangeAt, format ? [format.rangeMin, format.rangeMax] : [0, 0]);
+        glPut.i(precisionAt, [format ? format.precision : 0]);
+      },
       glDeleteShader(shader) {
         if (made.shader[shader]) drawing.deleteShader(made.shader[shader]);
         if (shader) made.shader[shader] = null;
       },
+      glIsShader: (shader) => glIs("shader", shader, (held) => drawing.isShader(held)),
+      glReleaseShaderCompiler: () => {},
+      glShaderBinary: () => glFail(0x0500),
       glCreateProgram: () => keep("program", drawing.createProgram()),
       glAttachShader: (program, shader) => made.program[program] && made.shader[shader] && drawing.attachShader(made.program[program], made.shader[shader]),
+      glDetachShader: (program, shader) => made.program[program] && made.shader[shader] && drawing.detachShader(made.program[program], made.shader[shader]),
+      glGetAttachedShaders(program, most, countAt, at) {
+        const held = glHeld("program", program);
+        const shaders = (held && drawing.getAttachedShaders(held)) || [];
+        const numbers = shaders.map(glNumber).slice(0, Math.max(0, most));
+        glPut.u(at, numbers);
+        glPut.i(countAt, [numbers.length]);
+      },
       glBindAttribLocation: (program, index, nameAt) => made.program[program] && drawing.bindAttribLocation(made.program[program], index, glText(nameAt)),
       glLinkProgram: (program) => made.program[program] && drawing.linkProgram(made.program[program]),
+      glValidateProgram: (program) => made.program[program] && drawing.validateProgram(made.program[program]),
       glGetProgramiv(program, name, at) {
-        const held = made.program[program];
+        const held = glHeld("program", program);
         let value = 0;
-        if (held && name === 0x8b84) value = (drawing.getProgramInfoLog(held) || "").length + 1;
-        else if (held) value = Number(drawing.getProgramParameter(held, name));
+        if (!held) value = 0;
+        else if (name === 0x8b84) value = (drawing.getProgramInfoLog(held) || "").length + 1;
+        else if (name === 0x8b87) value = glLongest(drawing.getProgramParameter(held, 0x8b86), (i) => drawing.getActiveUniform(held, i)?.name);
+        else if (name === 0x8b8a) value = glLongest(drawing.getProgramParameter(held, 0x8b89), (i) => drawing.getActiveAttrib(held, i)?.name);
+        else if (name === 0x8c76) value = glLongest(drawing.getProgramParameter(held, 0x8c83), (i) => drawing.getTransformFeedbackVarying(held, i)?.name);
+        else if (name === 0x8a35) value = glLongest(drawing.getProgramParameter(held, 0x8a36), (i) => drawing.getActiveUniformBlockName(held, i));
+        else if (name === 0x8741 || name === 0x8257) value = 0;
+        else value = Number(drawing.getProgramParameter(held, name));
         view().setInt32(at, value, true);
       },
       glGetProgramInfoLog: (program, room, lengthAt, at) => glSaid(made.program[program] ? drawing.getProgramInfoLog(made.program[program]) : "", room, lengthAt, at),
@@ -440,55 +659,282 @@ const CProgram = (() => {
         if (made.program[program]) drawing.deleteProgram(made.program[program]);
         if (program) made.program[program] = null;
       },
+      glIsProgram: (program) => glIs("program", program, (held) => drawing.isProgram(held)),
+      glGetProgramBinary(program, room, lengthAt) {
+        glPut.i(lengthAt, [0]);
+        glFail(0x0502);
+      },
+      glProgramBinary: () => glFail(0x0500),
+      glProgramParameteri: () => {},
       glGetAttribLocation: (program, nameAt) => (made.program[program] ? drawing.getAttribLocation(made.program[program], glText(nameAt)) : -1),
+      glGetActiveAttrib(program, index, room, lengthAt, sizeAt, typeAt, nameAt) {
+        const held = glHeld("program", program);
+        if (held) glInfo(drawing.getActiveAttrib(held, index), room, lengthAt, sizeAt, typeAt, nameAt);
+      },
+      glGetFragDataLocation: (program, nameAt) => (made.program[program] ? drawing.getFragDataLocation(made.program[program], glText(nameAt)) : -1),
+      glTransformFeedbackVaryings(program, count, namesAt, mode) {
+        const held = glHeld("program", program);
+        if (held) drawing.transformFeedbackVaryings(held, glTexts(namesAt, count), mode);
+      },
+      glGetTransformFeedbackVarying(program, index, room, lengthAt, sizeAt, typeAt, nameAt) {
+        const held = glHeld("program", program);
+        if (held) glInfo(drawing.getTransformFeedbackVarying(held, index), room, lengthAt, sizeAt, typeAt, nameAt);
+      },
+
       glGetUniformLocation(program, nameAt) {
         const place = made.program[program] ? drawing.getUniformLocation(made.program[program], glText(nameAt)) : null;
         return place ? keep("place", place) : -1;
       },
-
-      glUniform1i: (place, a) => drawing.uniform1i(made.place[place] || null, a),
+      glGetActiveUniform(program, index, room, lengthAt, sizeAt, typeAt, nameAt) {
+        const held = glHeld("program", program);
+        if (held) glInfo(drawing.getActiveUniform(held, index), room, lengthAt, sizeAt, typeAt, nameAt);
+      },
+      glGetUniformfv: (program, place, at) => made.program[program] && made.place[place] && glPut.f(at, glValues(drawing.getUniform(made.program[program], made.place[place]))),
+      glGetUniformiv: (program, place, at) => made.program[program] && made.place[place] && glPut.i(at, glValues(drawing.getUniform(made.program[program], made.place[place]))),
+      glGetUniformuiv: (program, place, at) => made.program[program] && made.place[place] && glPut.u(at, glValues(drawing.getUniform(made.program[program], made.place[place]))),
       glUniform1f: (place, a) => drawing.uniform1f(made.place[place] || null, a),
       glUniform2f: (place, a, b) => drawing.uniform2f(made.place[place] || null, a, b),
       glUniform3f: (place, a, b, c) => drawing.uniform3f(made.place[place] || null, a, b, c),
       glUniform4f: (place, a, b, c, d) => drawing.uniform4f(made.place[place] || null, a, b, c, d),
-      glUniform3fv: (place, count, at) => drawing.uniform3fv(made.place[place] || null, glFloats(at, count * 3)),
-      glUniform4fv: (place, count, at) => drawing.uniform4fv(made.place[place] || null, glFloats(at, count * 4)),
+      glUniform1i: (place, a) => drawing.uniform1i(made.place[place] || null, a),
+      glUniform2i: (place, a, b) => drawing.uniform2i(made.place[place] || null, a, b),
+      glUniform3i: (place, a, b, c) => drawing.uniform3i(made.place[place] || null, a, b, c),
+      glUniform4i: (place, a, b, c, d) => drawing.uniform4i(made.place[place] || null, a, b, c, d),
+      glUniform1ui: (place, a) => drawing.uniform1ui(made.place[place] || null, a),
+      glUniform2ui: (place, a, b) => drawing.uniform2ui(made.place[place] || null, a, b),
+      glUniform3ui: (place, a, b, c) => drawing.uniform3ui(made.place[place] || null, a, b, c),
+      glUniform4ui: (place, a, b, c, d) => drawing.uniform4ui(made.place[place] || null, a, b, c, d),
       glUniform1fv: (place, count, at) => drawing.uniform1fv(made.place[place] || null, glFloats(at, count)),
       glUniform2fv: (place, count, at) => drawing.uniform2fv(made.place[place] || null, glFloats(at, count * 2)),
+      glUniform3fv: (place, count, at) => drawing.uniform3fv(made.place[place] || null, glFloats(at, count * 3)),
+      glUniform4fv: (place, count, at) => drawing.uniform4fv(made.place[place] || null, glFloats(at, count * 4)),
+      glUniform1iv: (place, count, at) => drawing.uniform1iv(made.place[place] || null, glArray(Int32Array, at, count)),
+      glUniform2iv: (place, count, at) => drawing.uniform2iv(made.place[place] || null, glArray(Int32Array, at, count * 2)),
+      glUniform3iv: (place, count, at) => drawing.uniform3iv(made.place[place] || null, glArray(Int32Array, at, count * 3)),
+      glUniform4iv: (place, count, at) => drawing.uniform4iv(made.place[place] || null, glArray(Int32Array, at, count * 4)),
+      glUniform1uiv: (place, count, at) => drawing.uniform1uiv(made.place[place] || null, glArray(Uint32Array, at, count)),
+      glUniform2uiv: (place, count, at) => drawing.uniform2uiv(made.place[place] || null, glArray(Uint32Array, at, count * 2)),
+      glUniform3uiv: (place, count, at) => drawing.uniform3uiv(made.place[place] || null, glArray(Uint32Array, at, count * 3)),
+      glUniform4uiv: (place, count, at) => drawing.uniform4uiv(made.place[place] || null, glArray(Uint32Array, at, count * 4)),
+      glUniformMatrix2fv: (place, count, turned, at) => drawing.uniformMatrix2fv(made.place[place] || null, !!turned, glFloats(at, count * 4)),
       glUniformMatrix3fv: (place, count, turned, at) => drawing.uniformMatrix3fv(made.place[place] || null, !!turned, glFloats(at, count * 9)),
       glUniformMatrix4fv: (place, count, turned, at) => drawing.uniformMatrix4fv(made.place[place] || null, !!turned, glFloats(at, count * 16)),
+      glUniformMatrix2x3fv: (place, count, turned, at) => drawing.uniformMatrix2x3fv(made.place[place] || null, !!turned, glFloats(at, count * 6)),
+      glUniformMatrix3x2fv: (place, count, turned, at) => drawing.uniformMatrix3x2fv(made.place[place] || null, !!turned, glFloats(at, count * 6)),
+      glUniformMatrix2x4fv: (place, count, turned, at) => drawing.uniformMatrix2x4fv(made.place[place] || null, !!turned, glFloats(at, count * 8)),
+      glUniformMatrix4x2fv: (place, count, turned, at) => drawing.uniformMatrix4x2fv(made.place[place] || null, !!turned, glFloats(at, count * 8)),
+      glUniformMatrix3x4fv: (place, count, turned, at) => drawing.uniformMatrix3x4fv(made.place[place] || null, !!turned, glFloats(at, count * 12)),
+      glUniformMatrix4x3fv: (place, count, turned, at) => drawing.uniformMatrix4x3fv(made.place[place] || null, !!turned, glFloats(at, count * 12)),
+      glGetUniformBlockIndex: (program, nameAt) => (made.program[program] ? drawing.getUniformBlockIndex(made.program[program], glText(nameAt)) : 0xffffffff),
+      glGetActiveUniformBlockiv(program, index, name, at) {
+        const held = glHeld("program", program);
+        if (held && name === 0x8a41) glPut.i(at, [(drawing.getActiveUniformBlockName(held, index) || "").length + 1]);
+        else if (held) glPut.i(at, glValues(drawing.getActiveUniformBlockParameter(held, index, name)));
+      },
+      glGetActiveUniformBlockName: (program, index, room, lengthAt, at) =>
+        glSaid(made.program[program] ? drawing.getActiveUniformBlockName(made.program[program], index) : "", room, lengthAt, at),
+      glUniformBlockBinding: (program, index, binding) => made.program[program] && drawing.uniformBlockBinding(made.program[program], index, binding),
+      glGetUniformIndices(program, count, namesAt, at) {
+        const held = glHeld("program", program);
+        const indices = held ? drawing.getUniformIndices(held, glTexts(namesAt, count)) : null;
+        glPut.u(at, Array.from(indices || [], (each) => (each === null ? 0xffffffff : each)));
+      },
+      glGetActiveUniformsiv(program, count, indicesAt, name, at) {
+        const held = glHeld("program", program);
+        if (held) glPut.i(at, glValues(drawing.getActiveUniforms(held, Array.from(glArray(Uint32Array, indicesAt, count)), name)));
+      },
 
       glGenBuffers: glFresh("buffer", () => drawing.createBuffer()),
-      glBindBuffer: (target, buffer) => drawing.bindBuffer(target, made.buffer[buffer] || null),
+      glDeleteBuffers: glGone("buffer", (held) => drawing.deleteBuffer(held)),
+      glIsBuffer: (buffer) => glIs("buffer", buffer, (held) => drawing.isBuffer(held)),
+      glBindBuffer(target, buffer) {
+        drawing.bindBuffer(target, made.buffer[buffer] || null);
+        if (target === 0x88ec) glUnpacking = !!made.buffer[buffer];
+        if (target === 0x88eb) glPacking = !!made.buffer[buffer];
+      },
+      glBindBufferBase: (target, index, buffer) => drawing.bindBufferBase(target, index, made.buffer[buffer] || null),
+      glBindBufferRange: (target, index, buffer, offset, size) => drawing.bindBufferRange(target, index, made.buffer[buffer] || null, offset, size),
       glBufferData(target, size, at, usage) {
         if (at) drawing.bufferData(target, new Uint8Array(memory.buffer, at, size), usage);
         else drawing.bufferData(target, size, usage);
       },
       glBufferSubData: (target, offset, size, at) => drawing.bufferSubData(target, offset, new Uint8Array(memory.buffer, at, size)),
-      glDeleteBuffers: glGone("buffer", (held) => drawing.deleteBuffer(held)),
+      glCopyBufferSubData: (from, to, fromOffset, toOffset, size) => drawing.copyBufferSubData(from, to, fromOffset, toOffset, size),
+      glGetBufferParameteriv(target, name, at) {
+        const held = glBound(target);
+        const mapped = held && held.gridcraftMapped;
+        const own = { 0x88bc: mapped ? 1 : 0, 0x911f: mapped ? mapped.access : 0, 0x9120: mapped ? mapped.length : 0, 0x9121: mapped ? mapped.offset : 0 }[name];
+        glPut.i(at, [own === undefined ? Number(drawing.getBufferParameter(target, name)) : own]);
+      },
+      glGetBufferParameteri64v(target, name, at) {
+        const held = glBound(target);
+        const mapped = held && held.gridcraftMapped;
+        const own = { 0x88bc: mapped ? 1 : 0, 0x911f: mapped ? mapped.access : 0, 0x9120: mapped ? mapped.length : 0, 0x9121: mapped ? mapped.offset : 0 }[name];
+        glPut.l(at, [own === undefined ? Number(drawing.getBufferParameter(target, name)) : own]);
+      },
+      glGetBufferPointerv(target, name, at) {
+        const held = glBound(target);
+        if (name !== 0x88bd) glFail(0x0500);
+        else glPut.u(at, [held && held.gridcraftMapped ? held.gridcraftMapped.at : 0]);
+      },
+
       glGenVertexArrays: glFresh("array", () => drawing.createVertexArray()),
-      glBindVertexArray: (array) => drawing.bindVertexArray(made.array[array] || null),
       glDeleteVertexArrays: glGone("array", (held) => drawing.deleteVertexArray(held)),
+      glBindVertexArray: (array) => drawing.bindVertexArray(made.array[array] || null),
+      glIsVertexArray: (array) => glIs("array", array, (held) => drawing.isVertexArray(held)),
       glEnableVertexAttribArray: (index) => drawing.enableVertexAttribArray(index),
       glDisableVertexAttribArray: (index) => drawing.disableVertexAttribArray(index),
       glVertexAttribPointer: (index, size, type, normal, stride, offset) => drawing.vertexAttribPointer(index, size, type, !!normal, stride, offset),
+      glVertexAttribIPointer: (index, size, type, stride, offset) => drawing.vertexAttribIPointer(index, size, type, stride, offset),
+      glVertexAttribDivisor: (index, divisor) => drawing.vertexAttribDivisor(index, divisor),
+      glVertexAttrib1f: (index, x) => drawing.vertexAttrib1f(index, x),
+      glVertexAttrib2f: (index, x, y) => drawing.vertexAttrib2f(index, x, y),
+      glVertexAttrib3f: (index, x, y, z) => drawing.vertexAttrib3f(index, x, y, z),
       glVertexAttrib4f: (index, x, y, z, w) => drawing.vertexAttrib4f(index, x, y, z, w),
+      glVertexAttrib1fv: (index, at) => drawing.vertexAttrib1fv(index, glFloats(at, 1)),
+      glVertexAttrib2fv: (index, at) => drawing.vertexAttrib2fv(index, glFloats(at, 2)),
+      glVertexAttrib3fv: (index, at) => drawing.vertexAttrib3fv(index, glFloats(at, 3)),
+      glVertexAttrib4fv: (index, at) => drawing.vertexAttrib4fv(index, glFloats(at, 4)),
+      glVertexAttribI4i: (index, x, y, z, w) => drawing.vertexAttribI4i(index, x, y, z, w),
+      glVertexAttribI4ui: (index, x, y, z, w) => drawing.vertexAttribI4ui(index, x, y, z, w),
+      glVertexAttribI4iv: (index, at) => drawing.vertexAttribI4iv(index, glArray(Int32Array, at, 4)),
+      glVertexAttribI4uiv: (index, at) => drawing.vertexAttribI4uiv(index, glArray(Uint32Array, at, 4)),
+      glGetVertexAttribfv: (index, name, at) => glPut.f(at, glValues(drawing.getVertexAttrib(index, name))),
+      glGetVertexAttribiv: (index, name, at) => glPut.i(at, glValues(drawing.getVertexAttrib(index, name))),
+      glGetVertexAttribIiv: (index, name, at) => glPut.i(at, glValues(drawing.getVertexAttrib(index, name))),
+      glGetVertexAttribIuiv: (index, name, at) => glPut.u(at, glValues(drawing.getVertexAttrib(index, name))),
+      glGetVertexAttribPointerv: (index, name, at) => glPut.u(at, [drawing.getVertexAttribOffset(index, name)]),
       glDrawArrays: (mode, first, count) => drawing.drawArrays(mode, first, count),
       glDrawElements: (mode, count, type, offset) => drawing.drawElements(mode, count, type, offset),
+      glDrawRangeElements: (mode, start, end, count, type, offset) => drawing.drawRangeElements(mode, start, end, count, type, offset),
+      glDrawArraysInstanced: (mode, first, count, instances) => drawing.drawArraysInstanced(mode, first, count, instances),
+      glDrawElementsInstanced: (mode, count, type, offset, instances) => drawing.drawElementsInstanced(mode, count, type, offset, instances),
 
       glGenTextures: glFresh("texture", () => drawing.createTexture()),
+      glDeleteTextures: glGone("texture", (held) => drawing.deleteTexture(held)),
       glBindTexture: (target, texture) => drawing.bindTexture(target, made.texture[texture] || null),
+      glIsTexture: (texture) => glIs("texture", texture, (held) => drawing.isTexture(held)),
       glActiveTexture: (unit) => drawing.activeTexture(unit),
       glTexImage2D: (target, level, kind, width, height, border, format, type, at) =>
-        drawing.texImage2D(target, level, kind, width, height, border, format, type, glDots(at, width, height, format, type)),
+        drawing.texImage2D(target, level, kind, width, height, border, format, type, glPicture(at, width, height, 1, format, type)),
+      glTexImage3D: (target, level, kind, width, height, depth, border, format, type, at) =>
+        drawing.texImage3D(target, level, kind, width, height, depth, border, format, type, glPicture(at, width, height, depth, format, type)),
       glTexSubImage2D(target, level, x, y, width, height, format, type, at) {
-        const dots = glDots(at, width, height, format, type);
-        if (dots) drawing.texSubImage2D(target, level, x, y, width, height, format, type, dots);
+        const dots = glPicture(at, width, height, 1, format, type);
+        if (dots !== null) drawing.texSubImage2D(target, level, x, y, width, height, format, type, dots);
       },
-      glTexParameteri: (target, name, value) => drawing.texParameteri(target, name, value),
+      glTexSubImage3D(target, level, x, y, z, width, height, depth, format, type, at) {
+        const dots = glPicture(at, width, height, depth, format, type);
+        if (dots !== null) drawing.texSubImage3D(target, level, x, y, z, width, height, depth, format, type, dots);
+      },
+      glTexStorage2D: (target, levels, kind, width, height) => drawing.texStorage2D(target, levels, kind, width, height),
+      glTexStorage3D: (target, levels, kind, width, height, depth) => drawing.texStorage3D(target, levels, kind, width, height, depth),
+      glCopyTexImage2D: (target, level, kind, x, y, width, height, border) => drawing.copyTexImage2D(target, level, kind, x, y, width, height, border),
+      glCopyTexSubImage2D: (target, level, toX, toY, x, y, width, height) => drawing.copyTexSubImage2D(target, level, toX, toY, x, y, width, height),
+      glCopyTexSubImage3D: (target, level, toX, toY, toZ, x, y, width, height) => drawing.copyTexSubImage3D(target, level, toX, toY, toZ, x, y, width, height),
+      glCompressedTexImage2D: (target, level, kind, width, height, border, size, at) =>
+        drawing.compressedTexImage2D(target, level, kind, width, height, border, ...glPacked(at, size)),
+      glCompressedTexImage3D: (target, level, kind, width, height, depth, border, size, at) =>
+        drawing.compressedTexImage3D(target, level, kind, width, height, depth, border, ...glPacked(at, size)),
+      glCompressedTexSubImage2D: (target, level, x, y, width, height, format, size, at) =>
+        drawing.compressedTexSubImage2D(target, level, x, y, width, height, format, ...glPacked(at, size)),
+      glCompressedTexSubImage3D: (target, level, x, y, z, width, height, depth, format, size, at) =>
+        drawing.compressedTexSubImage3D(target, level, x, y, z, width, height, depth, format, ...glPacked(at, size)),
       glTexParameterf: (target, name, value) => drawing.texParameterf(target, name, value),
+      glTexParameterfv: (target, name, at) => drawing.texParameterf(target, name, glFloats(at, 1)[0] || 0),
+      glTexParameteri: (target, name, value) => drawing.texParameteri(target, name, value),
+      glTexParameteriv: (target, name, at) => drawing.texParameteri(target, name, glArray(Int32Array, at, 1)[0] || 0),
+      glGetTexParameterfv: (target, name, at) => glPut.f(at, glValues(drawing.getTexParameter(target, name))),
+      glGetTexParameteriv: (target, name, at) => glPut.i(at, glValues(drawing.getTexParameter(target, name))),
       glGenerateMipmap: (target) => drawing.generateMipmap(target),
-      glDeleteTextures: glGone("texture", (held) => drawing.deleteTexture(held)),
+
+      glGenSamplers: glFresh("sampler", () => drawing.createSampler()),
+      glDeleteSamplers: glGone("sampler", (held) => drawing.deleteSampler(held)),
+      glIsSampler: (sampler) => glIs("sampler", sampler, (held) => drawing.isSampler(held)),
+      glBindSampler: (unit, sampler) => drawing.bindSampler(unit, made.sampler[sampler] || null),
+      glSamplerParameteri: (sampler, name, value) => made.sampler[sampler] && drawing.samplerParameteri(made.sampler[sampler], name, value),
+      glSamplerParameteriv: (sampler, name, at) => made.sampler[sampler] && drawing.samplerParameteri(made.sampler[sampler], name, glArray(Int32Array, at, 1)[0] || 0),
+      glSamplerParameterf: (sampler, name, value) => made.sampler[sampler] && drawing.samplerParameterf(made.sampler[sampler], name, value),
+      glSamplerParameterfv: (sampler, name, at) => made.sampler[sampler] && drawing.samplerParameterf(made.sampler[sampler], name, glFloats(at, 1)[0] || 0),
+      glGetSamplerParameteriv: (sampler, name, at) => made.sampler[sampler] && glPut.i(at, glValues(drawing.getSamplerParameter(made.sampler[sampler], name))),
+      glGetSamplerParameterfv: (sampler, name, at) => made.sampler[sampler] && glPut.f(at, glValues(drawing.getSamplerParameter(made.sampler[sampler], name))),
+
+      glGenFramebuffers: glFresh("framebuffer", () => drawing.createFramebuffer()),
+      glDeleteFramebuffers: glGone("framebuffer", (held) => drawing.deleteFramebuffer(held)),
+      glIsFramebuffer: (framebuffer) => glIs("framebuffer", framebuffer, (held) => drawing.isFramebuffer(held)),
+      glBindFramebuffer: (target, framebuffer) => drawing.bindFramebuffer(target, made.framebuffer[framebuffer] || null),
+      glCheckFramebufferStatus: (target) => drawing.checkFramebufferStatus(target),
+      glFramebufferTexture2D: (target, attachment, kind, texture, level) => drawing.framebufferTexture2D(target, attachment, kind, made.texture[texture] || null, level),
+      glFramebufferTextureLayer: (target, attachment, texture, level, layer) => drawing.framebufferTextureLayer(target, attachment, made.texture[texture] || null, level, layer),
+      glFramebufferRenderbuffer: (target, attachment, kind, renderbuffer) => drawing.framebufferRenderbuffer(target, attachment, kind, made.renderbuffer[renderbuffer] || null),
+      glGetFramebufferAttachmentParameteriv: (target, attachment, name, at) => glPut.i(at, glValues(drawing.getFramebufferAttachmentParameter(target, attachment, name))),
+      glDrawBuffers: (count, at) => drawing.drawBuffers(Array.from(glArray(Uint32Array, at, count))),
+      glBlitFramebuffer: (x0, y0, x1, y1, toX0, toY0, toX1, toY1, mask, filter) => drawing.blitFramebuffer(x0, y0, x1, y1, toX0, toY0, toX1, toY1, mask, filter),
+      glInvalidateFramebuffer: (target, count, at) => drawing.invalidateFramebuffer(target, Array.from(glArray(Uint32Array, at, count))),
+      glInvalidateSubFramebuffer: (target, count, at, x, y, width, height) =>
+        drawing.invalidateSubFramebuffer(target, Array.from(glArray(Uint32Array, at, count)), x, y, width, height),
+      glClearBufferiv: (buffer, index, at) => drawing.clearBufferiv(buffer, index, glArray(Int32Array, at, buffer === 0x1800 ? 4 : 1)),
+      glClearBufferuiv: (buffer, index, at) => drawing.clearBufferuiv(buffer, index, glArray(Uint32Array, at, buffer === 0x1800 ? 4 : 1)),
+      glClearBufferfv: (buffer, index, at) => drawing.clearBufferfv(buffer, index, glFloats(at, buffer === 0x1800 ? 4 : 1)),
+      glClearBufferfi: (buffer, index, depth, stencil) => drawing.clearBufferfi(buffer, index, depth, stencil),
+      glGenRenderbuffers: glFresh("renderbuffer", () => drawing.createRenderbuffer()),
+      glDeleteRenderbuffers: glGone("renderbuffer", (held) => drawing.deleteRenderbuffer(held)),
+      glIsRenderbuffer: (renderbuffer) => glIs("renderbuffer", renderbuffer, (held) => drawing.isRenderbuffer(held)),
+      glBindRenderbuffer: (target, renderbuffer) => drawing.bindRenderbuffer(target, made.renderbuffer[renderbuffer] || null),
+      glRenderbufferStorage: (target, kind, width, height) => drawing.renderbufferStorage(target, kind, width, height),
+      glRenderbufferStorageMultisample: (target, samples, kind, width, height) => drawing.renderbufferStorageMultisample(target, samples, kind, width, height),
+      glGetRenderbufferParameteriv: (target, name, at) => glPut.i(at, glValues(drawing.getRenderbufferParameter(target, name))),
+
+      glGenQueries: glFresh("query", () => drawing.createQuery()),
+      glDeleteQueries: glGone("query", (held) => drawing.deleteQuery(held)),
+      glIsQuery: (query) => glIs("query", query, (held) => drawing.isQuery(held)),
+      glBeginQuery(target, query) {
+        if (made.query[query]) drawing.beginQuery(target, made.query[query]);
+        else glFail(0x0502);
+      },
+      glEndQuery: (target) => drawing.endQuery(target),
+      glGetQueryiv: (target, name, at) => glPut.i(at, glValues(drawing.getQuery(target, name))),
+      glGetQueryObjectuiv(query, name, at) {
+        if (made.query[query]) glPut.u(at, glValues(drawing.getQueryParameter(made.query[query], name)));
+        else glFail(0x0502);
+      },
+
+      glGenTransformFeedbacks: glFresh("feedback", () => drawing.createTransformFeedback()),
+      glDeleteTransformFeedbacks: glGone("feedback", (held) => drawing.deleteTransformFeedback(held)),
+      glIsTransformFeedback: (feedback) => glIs("feedback", feedback, (held) => drawing.isTransformFeedback(held)),
+      glBindTransformFeedback: (target, feedback) => drawing.bindTransformFeedback(target, made.feedback[feedback] || null),
+      glBeginTransformFeedback: (mode) => drawing.beginTransformFeedback(mode),
+      glEndTransformFeedback: () => drawing.endTransformFeedback(),
+      glPauseTransformFeedback: () => drawing.pauseTransformFeedback(),
+      glResumeTransformFeedback: () => drawing.resumeTransformFeedback(),
+
+      glFenceSync: (condition, flags) => keep("sync", drawing.fenceSync(condition, flags)),
+      glIsSync: (sync) => glIs("sync", sync, (held) => drawing.isSync(held)),
+      glDeleteSync(sync) {
+        if (made.sync[sync]) drawing.deleteSync(made.sync[sync]);
+        if (sync) made.sync[sync] = null;
+      },
+      glClientWaitSync(sync, flags, timeout) {
+        // A page may not wait long: WebGL waits no longer than it allows (often not at all).
+        if (!made.sync[sync]) {
+          glFail(0x0501);
+          return 0x911d;
+        }
+        const most = Number(drawing.getParameter(0x9247)) || 0;
+        return drawing.clientWaitSync(made.sync[sync], flags, Math.min(Number(timeout), most));
+      },
+      glWaitSync(sync) {
+        if (made.sync[sync]) drawing.waitSync(made.sync[sync], 0, -1);
+        else glFail(0x0501);
+      },
+      glGetSynciv(sync, name, room, lengthAt, at) {
+        if (!made.sync[sync]) {
+          glFail(0x0501);
+          return;
+        }
+        if (room > 0) glPut.i(at, [Number(drawing.getSyncParameter(made.sync[sync], name))]);
+        glPut.i(lengthAt, [room > 0 ? 1 : 0]);
+      },
     };
 
     // The network, for a program whose project names where it would reach, once the person has
@@ -767,6 +1213,14 @@ mod tests {
         }
         let answered = LOADER.lines().filter(|line| line.starts_with("      gl") && line[8..].chars().next().is_some_and(char::is_uppercase)).count();
         assert_eq!(answered, declared.len(), "the loader answers what the header declares");
+        // What is printed is a terminal to the program (no seeking, no telling where), so that its C
+        // library sends each line as it is printed: rights without FD_SEEK (4) and FD_TELL (32).
+        assert!(LOADER.contains("const rights = fd < 3 ? 0xffffffffffffffdbn : 0xffffffffffffffffn;"));
+        assert_eq!(!0xffff_ffff_ffff_ffdb_u64, 4 | 32);
+        // What the kit's C for OpenGL ES 3.0 asks of it, under names of the kit's own, is answered too.
+        for name in crate::gles3::asked_by_the_kit() {
+            assert!(LOADER.contains(&format!("      {name}")), "{name} is asked by the kit's C and not answered");
+        }
         // It is plain text a browser reads as it is: nothing a build step would have to make of it.
         assert!(LOADER.is_ascii() && !LOADER.contains('\r') && !LOADER.contains("import ") && !LOADER.contains("require("));
     }

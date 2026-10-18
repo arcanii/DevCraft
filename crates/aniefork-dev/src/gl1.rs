@@ -55,10 +55,6 @@ pub const HEADER: &str = r##"/*
 extern "C" {
 #endif
 
-typedef signed char GLbyte;
-typedef short GLshort;
-typedef unsigned short GLushort;
-typedef float GLclampf;
 typedef double GLdouble;
 typedef double GLclampd;
 
@@ -79,9 +75,6 @@ typedef double GLclampd;
 #define GL_ALPHA_TEST 0x0BC0
 #define GL_PERSPECTIVE_CORRECTION_HINT 0x0C50
 #define GL_COLOR_INDEX 0x1900
-#define GL_DONT_CARE 0x1100
-#define GL_FASTEST 0x1101
-#define GL_NICEST 0x1102
 #define GL_MODELVIEW 0x1700
 #define GL_PROJECTION 0x1701
 #define GL_POINT 0x1B00
@@ -89,10 +82,6 @@ typedef double GLclampd;
 #define GL_FILL 0x1B02
 #define GL_FLAT 0x1D00
 #define GL_SMOOTH 0x1D01
-#define GL_VENDOR 0x1F00
-#define GL_RENDERER 0x1F01
-#define GL_VERSION 0x1F02
-#define GL_EXTENSIONS 0x1F03
 #define GL_MODULATE 0x2100
 #define GL_DECAL 0x2101
 #define GL_TEXTURE_ENV_MODE 0x2200
@@ -105,8 +94,6 @@ typedef double GLclampd;
 #define GL_INTENSITY 0x8049
 #define GL_INTENSITY8 0x804B
 #define GL_RGB5 0x8050
-#define GL_RGBA4 0x8056
-#define GL_RGB5_A1 0x8057
 #define GL_VERTEX_ARRAY_EXT 0x8074
 #define GL_TEXTURE_COORD_ARRAY_EXT 0x8078
 #define GL_SHARED_TEXTURE_PALETTE_EXT 0x81FB
@@ -130,6 +117,7 @@ typedef double GLclampd;
 #define glHint gl1_Hint
 #define glPixelStorei gl1_PixelStorei
 #define glReadPixels gl1_ReadPixels
+#define glReadBuffer gl1_ReadBuffer
 #define glFinish gl1_Finish
 #define glFlush gl1_Flush
 #define glGetError gl1_GetError
@@ -162,6 +150,7 @@ void gl1_LineWidth(GLfloat width);
 void gl1_Hint(GLenum target, GLenum mode);
 void gl1_PixelStorei(GLenum pname, GLint param);
 void gl1_ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels);
+void gl1_ReadBuffer(GLenum mode);
 void gl1_Finish(void);
 void gl1_Flush(void);
 GLenum gl1_GetError(void);
@@ -215,7 +204,6 @@ void glClearDepth(GLclampd depth);
 void glShadeModel(GLenum mode);
 void glPolygonMode(GLenum face, GLenum mode);
 void glDrawBuffer(GLenum mode);
-void glReadBuffer(GLenum mode);
 void glFogf(GLenum pname, GLfloat param);
 void glFogi(GLenum pname, GLint param);
 void glFogfv(GLenum pname, const GLfloat *params);
@@ -1148,7 +1136,7 @@ void glDrawBuffer(GLenum mode)
     (void) mode; /* a page's canvas has the one picture */
 }
 
-void glReadBuffer(GLenum mode)
+void gl1_ReadBuffer(GLenum mode)
 {
     (void) mode;
 }
