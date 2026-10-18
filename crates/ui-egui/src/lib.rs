@@ -1176,7 +1176,8 @@ impl SheetApp {
         if let Some(d) = self.session.active() {
             let title = format!("{}{}", d.display_title(), if d.is_dirty() { " — Edited" } else { "" });
             if self.grid.last_title.as_deref() != Some(title.as_str()) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+                // The application's name after upstream's title (aniefork).
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(aniefork::about::window_title(&title)));
                 self.grid.last_title = Some(title);
             }
         }

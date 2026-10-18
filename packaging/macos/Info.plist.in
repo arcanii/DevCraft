@@ -6,10 +6,12 @@
 <dict>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
+  <!-- The fork's name: the whole in Finder and the Dock, the short one where macOS allows 15
+       characters (aniefork). The executable and the icon keep upstream's names. -->
   <key>CFBundleDisplayName</key>
-  <string>GridCraft</string>
+  <string>DevCraft (GridCraft fork)</string>
   <key>CFBundleName</key>
-  <string>GridCraft</string>
+  <string>DevCraft</string>
   <key>CFBundleExecutable</key>
   <string>GridCraft</string>
   <key>CFBundleIdentifier</key>

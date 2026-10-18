@@ -17,7 +17,7 @@ fn main() {
     // and the file's properties (aniefork). Upstream's: "GridCraft", "GridCraft spreadsheet".
     res.set_icon("../../assets/app-icon/gridcraft.ico")
         .set("ProductName", "DevCraft")
-        .set("FileDescription", "DevCraft (GridCraft with development kits)")
+        .set("FileDescription", "DevCraft (GridCraft fork)")
         .set("CompanyName", "Learning Machines LLC")
         .set("LegalCopyright", "Copyright (c) the GridCraft authors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "gridcraft.exe")

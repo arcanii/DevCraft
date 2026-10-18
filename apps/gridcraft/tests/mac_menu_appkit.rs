@@ -24,7 +24,8 @@ fn main() {
 
     let bar = nsapp.mainMenu().expect("a main menu");
     let tops: Vec<String> = (0..bar.numberOfItems()).filter_map(|i| bar.itemAtIndex(i)?.submenu()).map(|m| m.title().to_string()).collect();
-    assert_eq!(tops, ["GridCraft", "File", "Edit", "View", "Insert", "Format", "Tools", "Data", "Window", "Help"]);
+    // The application's menu carries the fork's name (aniefork).
+    assert_eq!(tops, [gridcraft_ui_egui::aniefork::about::APP_NAME, "File", "Edit", "View", "Insert", "Format", "Tools", "Data", "Window", "Help"]);
     assert_eq!(nsapp.windowsMenu().map(|m| m.title().to_string()).as_deref(), Some("Window"), "AppKit knows the Window menu");
 
     println!("mac_menu_appkit: ok");

@@ -202,8 +202,9 @@ fn select_theme(app: &mut SheetApp, id: &str) -> bool {
 impl NativeMenu {
     pub fn install(ctx: &egui::Context) -> NativeMenu {
         let menu = Menu::new();
-        let app_menu = Submenu::new("GridCraft", true);
-        let about = MenuItem::with_id("dialog:about", "About GridCraft", true, None);
+        // The fork's name (aniefork).
+        let app_menu = Submenu::new(gridcraft_ui_egui::aniefork::about::APP_NAME, true);
+        let about = MenuItem::with_id("dialog:about", gridcraft_ui_egui::aniefork::about::titled("About GridCraft"), true, None);
         let _ = app_menu.append_items(&[
             &about,
             &PredefinedMenuItem::separator(),

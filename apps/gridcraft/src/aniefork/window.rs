@@ -48,7 +48,7 @@ const OWN: [&str; 2] = ["https://gridcraft.development.invalid/", "gridcraft://d
 /// What the page may do: run its own script, use its own stylesheet. Nothing else.
 const POLICY: &str =
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-const TITLE: &str = "Development - GridCraft";
+const TITLE: &str = "Development - DevCraft (GridCraft fork)";
 
 /// What the UI thread tells the window's thread.
 enum Tell {

@@ -724,9 +724,18 @@ still there:
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
+| `crates/ui-egui/src/widgets.rs`, `message_box`, the title | `crate::aniefork::about::titled(&title)`: a message box's "GridCraft" is the application's name |
+| `crates/ui-egui/src/dialogs.rs`, `show`, the window's title | `app.ui.language.tr(&crate::aniefork::about::titled(&d.title))`: "About GridCraft" is "About DevCraft (GridCraft fork)" |
+| `crates/ui-egui/src/dialogs.rs`, `about`, the heading and version (upstream's: `ui.heading("GridCraft")` and "Version …") | `crate::aniefork::about::heading(ui)`: the name, and DevCraft's version beside GridCraft's |
+| `crates/ui-egui/src/ribbon.rs`, the title GridCraft draws in its title bar | `crate::aniefork::about::window_title(…)` around upstream's title |
+| `crates/ui-egui/src/ribbon.rs`, `automate`, the About button (upstream's label: "About\\nGridCraft") | `crate::aniefork::about::RIBBON_ABOUT` |
+| `crates/ui-egui/src/lib.rs`, `logic`, the window's title | `ViewportCommand::Title(aniefork::about::window_title(&title))` |
+| `apps/gridcraft/src/main.rs`, the viewport | `with_title(…::about::APP_NAME)` and `with_app_id(…::about::APP_ID)` in place of upstream's "GridCraft" and `ai.storyteller.gridcraft` |
+| `apps/gridcraft/src/native_menu.rs`, the application menu and its About item. macOS only | `…::about::APP_NAME` and `…::about::titled("About GridCraft")`; and `apps/gridcraft/tests/mac_menu_appkit.rs` expects that name |
+| `packaging/macos/Info.plist.in`, `CFBundleDisplayName` and `CFBundleName` | "DevCraft (GridCraft fork)" and "DevCraft" |
 | `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
 | `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
-| `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft with development kits)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
+| `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -809,6 +818,12 @@ included.
 
 Newest first.
 
+- **2026-10-18 (the application's name):** On the owner's word, after a question on upstream's
+  brand licence: the application shows itself as **DevCraft (GridCraft fork)**, in its windows'
+  titles (the system's and the one it draws), message boxes, the About window (with DevCraft's
+  version beside GridCraft's), the Automate tab's "About DevCraft", the macOS menu and bundle, and
+  Windows' file description; with the fork's own application id. The program's file and the
+  settings folder keep GridCraft's names. Hooks in upstream files, listed below.
 - **2026-10-18 (merge of upstream `c30fa3f`, GridCraft 0.8.0):** On the owner's word ("merge and
   commit when the gate passes"), after waiting for a larger gap. 15 commits since the merge
   before, with two releases (0.7.0, 0.8.0): the formula parser keeps Excel's 8,192-character

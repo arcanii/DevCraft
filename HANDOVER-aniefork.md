@@ -15,6 +15,11 @@ fork crate's version line on the first build, so stage `Cargo.lock` again after 
 commit it with the merge. The setups (`0ba9699`) are pushed. This file is not tracked, and never
 has been.
 
+**Committed on the owner's word (2026-10-18): the application's name, "DevCraft (GridCraft
+fork)"** (ADR-0001 "The application's name"; not pushed). The windows' titles now end
+with it ("Book1 - DevCraft (GridCraft fork)", "Development - DevCraft (GridCraft fork)"): the
+picture scripts find a window by a part of its title, so "Book1" and "Development" still work.
+
 **What the setups are** (ADR-0001 has it all): under Setups in the C kit's part, Doom (with
 "Shareware Doom" or "Freedoom"), Quake and GLQuake each have Set Up. By hand only: the operating
 system's question names every address and size; GridCraft downloads the game's code (one zip

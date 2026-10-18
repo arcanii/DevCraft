@@ -3531,6 +3531,49 @@ reads it); a download stopped by the person (the test stops one); a download thr
 macOS or Linux, where rustls's ring and the roots are the same but nothing was built; any
 game played by hand.
 
+### The application's name: DevCraft (GridCraft fork) (2026-10-18)
+
+**What the owner decided.** "Change the Application name to DevCraft"; then "we can call it
+GridCraft (dev version) to show it is a special fork of GridCraft". Told that upstream's brand
+licence asks a published fork not to present itself as an ArtCraft product, and that "GridCraft
+(dev version)" reads as the team's own development build, they chose **"DevCraft (GridCraft
+fork)"**. Of how far the name goes, they chose **what people see**: the program's file and its
+settings folder keep GridCraft's names, so that nothing of theirs moves.
+
+**Where it shows** (`crates/ui-egui/src/aniefork/about.rs`: `APP_NAME`, `APP_ID`, `titled`,
+`window_title`, `heading`, `RIBBON_ABOUT`):
+
+- the main window's title, the operating system's ("Book1 - DevCraft (GridCraft fork)") and the
+  one GridCraft draws in its own title bar; the Development window's ("Development - DevCraft
+  (GridCraft fork)");
+- the title of GridCraft's message boxes, where upstream's says "GridCraft", and of the About
+  window, "About DevCraft (GridCraft fork)", which is headed by the name and both versions,
+  "DevCraft 0.1.0 · GridCraft 0.8.0";
+- the Automate tab's button, "About DevCraft" (the ribbon has room for a short name);
+- the macOS application menu and its About item; the macOS bundle's names (`CFBundleDisplayName`
+  "DevCraft (GridCraft fork)", `CFBundleName` "DevCraft", which macOS keeps to 15 characters);
+- Windows' version information: `ProductName` "DevCraft" (since 2026-10-14) and now
+  `FileDescription` "DevCraft (GridCraft fork)", which Task Manager shows;
+- the window's application id, the fork's own: `io.github.arcanii.devcraft` (upstream's is
+  `ai.storyteller.gridcraft`). It names the window on Wayland and X11; eframe keeps no state by it
+  here (its persistence is not built in).
+
+**Not changed**: the program's file (`gridcraft.exe`) and the executable and icon inside the macOS
+bundle; the settings folder (`%APPDATA%\GridCraft`, with the projects, the trust decisions, what
+was built and the preferences); the crates' names; eframe's own name for the app; upstream's
+prose that names GridCraft for what it does (that it keeps a workbook's macros, that agents can
+drive it); upstream's installer scripts in `packaging/` beyond the bundle's two names; a message
+title written in another language than English (the fork's strings are English in every
+language). Upstream's Japanese name for the About button no longer applies: it shows the fork's.
+
+**Checked.** The names, and that a title is renamed only where upstream's names the application
+(and never twice); the About window, by its title, its heading and both versions, and nothing
+there headed GridCraft alone. **Seen** in an isolated copy: both windows' titles as the system
+lists them, the title GridCraft draws, the About window, the Automate tab's button; and the
+program's file description, read from the built file. **Not seen**: the macOS menu and bundle
+(not built here: the menu's test, `tests/mac_menu_appkit.rs`, now expects the fork's name), and
+Linux.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.

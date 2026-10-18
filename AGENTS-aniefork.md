@@ -1,7 +1,9 @@
 # aniefork: this checkout is a fork
 
 This repository is arcanii/DevCraft (until 2026-10-14, arcanii/gridcraft), a fork of
-storytold/gridcraft (the `upstream` remote). The program it builds is still named GridCraft.
+storytold/gridcraft (the `upstream` remote). The program shows itself as **DevCraft (GridCraft
+fork)** (the owner, 2026-10-18; `crates/ui-egui/src/aniefork/about.rs`); its file, its crates
+and its settings folder keep GridCraft's names.
 [`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md) are upstream's files and stay unchanged here;
 everything in them still applies (never crash, no Microsoft assets, clean room, quality gates).
 This file says where the fork differs. Read it and [`ROADMAP-aniefork.md`](ROADMAP-aniefork.md) at

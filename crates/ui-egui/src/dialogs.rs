@@ -1041,7 +1041,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         _ => 380.0,
     };
-    let window = egui::Window::new(app.ui.language.tr(&d.title))
+    // Where upstream's title names the application, the fork's name (aniefork).
+    let window = egui::Window::new(app.ui.language.tr(&crate::aniefork::about::titled(&d.title)))
         .id(egui::Id::new("dialog").with(&d.name))
         .collapsible(false)
         .resizable(false)
@@ -1491,8 +1492,8 @@ fn about(ui: &mut egui::Ui, d: &mut Dialog) {
         "Contributors" => crate::credits::contributors_ui(ui),
         "Models" => crate::credits::models_ui(ui),
         _ => {
-            ui.heading("GridCraft");
-            ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+            // The fork's name, and DevCraft's version beside GridCraft's (aniefork).
+            crate::aniefork::about::heading(ui);
             ui.add_space(4.0);
             // What the fork says of itself, in place of upstream's three lines (aniefork).
             crate::aniefork::about::credits(ui);

@@ -118,7 +118,8 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
             ui.painter().text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                format!("{title}{}", if dirty { " •" } else { "" }),
+                // The application's name after upstream's title (aniefork).
+                crate::aniefork::about::window_title(&format!("{title}{}", if dirty { " •" } else { "" })),
                 theme::ui_bold(13.0),
                 t.text,
             );
@@ -2262,7 +2263,8 @@ fn automate(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("journal", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "About\nGridCraft", "Version, contributors and the AI models that helped", false);
+    // The fork's name on the button (aniefork).
+    let __k = big_button(ui, Icon::Script, crate::aniefork::about::RIBBON_ABOUT, "Version, contributors and the AI models that helped", false);
     control_keytip(app, ui, &__k, "about");
     if __k.clicked() {
         app.open_dialog("about", json!({}));
