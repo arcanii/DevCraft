@@ -482,6 +482,10 @@ fn look(wb: &Workbook, si: usize, sh: &Sheet, c: CellRef, cf: &mut CfCache) -> (
         if st.font.strike {
             style.font.strike = true;
         }
+        // In a differential style General means "not set" (#1163).
+        if st.num_fmt.as_str() != "General" {
+            style.num_fmt = st.num_fmt.clone();
+        }
         for (dst, src) in [
             (&mut style.borders.left, st.borders.left),
             (&mut style.borders.right, st.borders.right),
@@ -2574,7 +2578,8 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
         resp.request_focus();
     }
     let other_focus = ctx.memory(|m| m.focused()).is_some_and(|f| f != resp.id && (editing || !stale.contains(&f)));
-    if editing || app.dialog.is_some() || other_focus || app.message.is_some() {
+    // An open filter menu owns the keyboard even when a click inside it left focus on nothing (#1516).
+    if editing || app.dialog.is_some() || other_focus || app.message.is_some() || app.grid.filter_menu.is_some() {
         return;
     }
     if ctx.memory(|m| m.focused()).is_none() {
@@ -2769,16 +2774,24 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     let values = gridcraft_engine::cmd::data::filter_values(&wb, si, col);
     let key = egui::Id::new(("filter_sel", col));
     let search_key = egui::Id::new(("filter_search", col));
+    let buttons_key = egui::Id::new(("filter_buttons", col));
+    // Enter is the menu's OK, as in Excel: taken before the search box (which would only drop its
+    // focus) and the value checkboxes (which would toggle) see it. A focused button keeps it as its click.
+    let buttons: Vec<egui::Id> = ui.ctx().data_mut(|d| d.get_temp(buttons_key)).unwrap_or_default();
+    let on_button = ui.ctx().memory(|m| m.focused()).is_some_and(|f| buttons.contains(&f));
+    let enter = !on_button && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let mut close = false;
     let area = egui::Area::new(egui::Id::new("filter_menu")).fixed_pos(at + vec2(-180.0, 10.0)).order(egui::Order::Foreground);
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(230.0);
-            if ui.button("↑  Sort Ascending").clicked() {
+            let ascending = ui.button("↑  Sort Ascending");
+            if ascending.clicked() {
                 let _ = app.run("data.sortAscending", json!({"column": col_to_letters(col)}));
                 close = true;
             }
-            if ui.button("↓  Sort Descending").clicked() {
+            let descending = ui.button("↓  Sort Descending");
+            if descending.clicked() {
                 let _ = app.run("data.sortDescending", json!({"column": col_to_letters(col)}));
                 close = true;
             }
@@ -2815,11 +2828,16 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
             let checks: Vec<(String, bool)> = checks.iter().map(|(v, on)| (v.clone(), *on && matches(v))).collect();
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("Clear Filter").clicked() {
+                let clear = ui.button("Clear Filter");
+                if clear.clicked() {
                     let _ = app.run("data.filterBy", json!({"column": col_to_letters(col), "clear": true}));
                     close = true;
                 }
-                if ui.button("Apply").clicked() {
+                // Nothing checked would hide every row, so Enter (unlike a click on Apply) does nothing then.
+                let any = checks.iter().any(|(_, on)| *on);
+                let apply = ui.button("Apply");
+                ui.ctx().data_mut(|d| d.insert_temp(buttons_key, vec![ascending.id, descending.id, clear.id, apply.id]));
+                if apply.clicked() || (enter && any) {
                     let blanks = checks.iter().any(|(v, on)| v == "(Blanks)" && *on);
                     let vals: Vec<String> = checks.iter().filter(|(v, on)| *on && v != "(Blanks)").map(|(v, _)| v.clone()).collect();
                     let p = if checks.iter().all(|(_, b)| *b) {
@@ -2837,6 +2855,7 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
         ui.ctx().data_mut(|d| {
             d.remove::<Vec<(String, bool)>>(key);
             d.remove::<String>(search_key);
+            d.remove::<Vec<egui::Id>>(buttons_key);
         });
         app.grid.filter_menu = None;
     }
@@ -3390,6 +3409,28 @@ mod tests {
         assert_eq!(center_across_end(0, 20, |c| c <= 2), 2);
         assert_eq!(center_across_end(0, 20, |_| false), 0);
         assert_eq!(center_across_end(0, 1, |_| true), 1);
+    }
+
+    #[test]
+    fn conditional_number_format_reaches_the_cell_text() {
+        // #1163: a rule's number format replaces the cell's own; unmatched cells keep theirs.
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        session.execute("range.setValues", json!({"range": "A1", "values": [[1], [3], [4]]})).unwrap();
+        session.execute("home.numberFormat", json!({"range": "A3", "code": "0.0"})).unwrap();
+        let rule = json!({"type": "cellIs", "operator": "greater", "value": "2", "style": {"num_fmt": "0.00"}});
+        session.execute("home.conditionalFormat", json!({"range": "A1:A3", "rule": rule})).unwrap();
+        let wb = session.active().unwrap().wb.clone();
+        let sh = wb.sheet(0).unwrap();
+        let mut cf = CfCache::new();
+        let text = |row: u32, cf: &mut CfCache| {
+            let c = CellRef::new(row, 0);
+            let (lk, _) = look(&wb, 0, sh, c, cf);
+            display_text(&wb, sh, c, &sh.value(c), &lk.style, 200.0, 7.0).0
+        };
+        assert_eq!(text(0, &mut cf), "1");
+        assert_eq!(text(1, &mut cf), "3.00");
+        assert_eq!(text(2, &mut cf), "4.00");
     }
 
     #[test]

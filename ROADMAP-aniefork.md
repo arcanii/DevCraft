@@ -20,9 +20,9 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-13, upstream `84acf62` (407 commits since the merge before; no release since 0.6.1) |
+| Last merge of upstream | 2026-10-18, upstream `c30fa3f` (15 commits since the merge before: releases 0.7.0 and 0.8.0) |
 | Fork is behind upstream by | 0 commits at that merge |
-| Fork carries | 16 changes upstream lacks (below) |
+| Fork carries | 17 changes upstream lacks (below) |
 
 ## What the fork carries
 
@@ -809,6 +809,17 @@ included.
 
 Newest first.
 
+- **2026-10-18 (merge of upstream `c30fa3f`, GridCraft 0.8.0):** On the owner's word ("merge and
+  commit when the gate passes"), after waiting for a larger gap. 15 commits since the merge
+  before, with two releases (0.7.0, 0.8.0): the formula parser keeps Excel's 8,192-character
+  limit and no longer crashes on deep postfix nesting; large clears recalculate every cell they
+  change; MEDIAN's midpoint can't overflow; a pivot table refuses an unknown value-field
+  function; Enter applies the AutoFilter menu; a conditional format shows its number format;
+  ChromeOS's fonts are found; the control channel closes a connection on the first line that is
+  not a request (the fork's tools send only requests); CI changes (FreeBSD shared, a Nix check,
+  Flatpak pages gone). **No conflict**: both sides had changed only `Cargo.lock` and `grid.rs`,
+  upstream's far from the fork's hooks. The hooks were counted before and after (55 mentions
+  outside the fork's files, unchanged). DevCraft stays 0.1.0 (the owner, 2026-10-15).
 - **2026-10-17 (docked panels on macOS):** On the owner's word ("Do this task here", from the
   proposal to bring phase 2d to macOS). A trusted project's panel now docks beside the sheet on
   macOS too, in WKWebView through `wry` (already the fork's dependency on Windows): the same host
