@@ -9,10 +9,10 @@
 //! It is a project like any other: created untrusted, in the user's projects folder, and it
 //! does nothing until the user trusts it and builds it. It asks to be allowed nothing.
 
-use std::fs;
 use std::path::Path;
 
-use crate::project::{self, Project};
+use crate::project::Project;
+use crate::showcase::Showcase;
 
 /// The showcase project's id, and its folder's name.
 pub const ID: &str = "turning-triangle";
@@ -222,26 +222,14 @@ const PANEL: &str = r#"<!doctype html>
 /// The showcase's files: where each goes in the project, and its text.
 pub const FILES: [(&str, &str); 3] = [("project.toml", MANIFEST), ("src/triangle.c", SOURCE), ("panel/index.html", PANEL)];
 
+/// The showcase, as the C kit's part offers it.
+pub const SHOWCASE: Showcase =
+    Showcase { id: ID, name: NAME, kit: crate::kit::C.id, says: "A C program that draws with OpenGL ES: a triangle, turning.", files: &FILES };
+
 /// Creates the showcase project in `projects_dir` and returns it as read back from disk. It
 /// never touches a folder that already exists.
 pub fn create(projects_dir: &Path) -> Result<Project, String> {
-    let dir = projects_dir.join(ID);
-    if dir.exists() {
-        return Err(format!("There is already a project folder named {ID}."));
-    }
-    let failed = |e: std::io::Error| format!("The showcase could not be created: {e}");
-    for (path, text) in FILES {
-        let file = path.split('/').fold(dir.clone(), |at, part| at.join(part));
-        if let Some(folder) = file.parent() {
-            fs::create_dir_all(folder).map_err(failed)?;
-        }
-        fs::write(&file, text).map_err(failed)?;
-    }
-    let made = project::load(&dir);
-    match &made.problem {
-        Some(problem) => Err(format!("The showcase was created, but can't be used: {problem}.")),
-        None => Ok(made),
-    }
+    SHOWCASE.create(projects_dir)
 }
 
 #[cfg(test)]

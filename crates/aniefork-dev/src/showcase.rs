@@ -9,6 +9,10 @@
 //! (`panel/`), and the Svelte source that panel is built from (`source/`), so that whoever
 //! makes the project has what they need to change it. The fork ships them as text inside Rust
 //! source, as it does the starter project's: the repository holds no JavaScript file.
+//!
+//! **Every kit's showcases** are listed here too ([`ALL`]): this one, PythonCraft's, and the C
+//! kit's two, the turning triangle ([`crate::triangle`]) and the Mandelbrot set
+//! ([`crate::mandelbrot`]). A kit's part offers its own, by id ([`named`], [`of_kit`]).
 
 use std::fs;
 use std::path::Path;
@@ -19,26 +23,71 @@ use crate::showcase_files::FILES;
 /// The showcase project's id, and its folder's name.
 pub const ID: &str = "svelte-showcase";
 
+/// A showcase: a project made from files compiled into GridCraft, to show what a kit's projects
+/// can be. Each is created untrusted, like any project.
+#[derive(Clone, Copy, Debug)]
+pub struct Showcase {
+    /// The project's id, and its folder's name.
+    pub id: &'static str,
+    pub name: &'static str,
+    /// The kit whose part offers it, by the kit's id.
+    pub kit: &'static str,
+    /// What it is, as its kit's part says before it is created.
+    pub says: &'static str,
+    /// Its files: where each goes in the project, and its text.
+    pub files: &'static [(&'static str, &'static str)],
+}
+
+/// The Svelte showcase, as PythonCraft's part offers it.
+pub const SVELTE: Showcase = Showcase {
+    id: ID,
+    name: "Svelte Showcase",
+    kit: crate::kit::PYTHONCRAFT.id,
+    says: "A project whose panel is a Svelte app, docked beside the sheet.",
+    files: FILES,
+};
+
+/// Every showcase, in the order each kit's part offers its own.
+pub static ALL: [Showcase; 3] = [SVELTE, crate::triangle::SHOWCASE, crate::mandelbrot::SHOWCASE];
+
+/// The showcase of that id.
+pub fn named(id: &str) -> Option<&'static Showcase> {
+    ALL.iter().find(|one| one.id == id)
+}
+
+/// The showcases a kit's part offers, by the kit's id.
+pub fn of_kit(kit: &str) -> impl Iterator<Item = &'static Showcase> + '_ {
+    ALL.iter().filter(move |one| one.kit == kit)
+}
+
+impl Showcase {
+    /// Creates the showcase project in `projects_dir` and returns it as read back from disk. It
+    /// never touches a folder that already exists.
+    pub fn create(&self, projects_dir: &Path) -> Result<Project, String> {
+        let dir = projects_dir.join(self.id);
+        if dir.exists() {
+            return Err(format!("There is already a project folder named {}.", self.id));
+        }
+        let failed = |e: std::io::Error| format!("The showcase could not be created: {e}");
+        for (path, text) in self.files {
+            let file = path.split('/').fold(dir.clone(), |at, part| at.join(part));
+            if let Some(folder) = file.parent() {
+                fs::create_dir_all(folder).map_err(failed)?;
+            }
+            fs::write(&file, text).map_err(failed)?;
+        }
+        let made = project::load(&dir);
+        match &made.problem {
+            Some(problem) => Err(format!("The showcase was created, but can't be used: {problem}.")),
+            None => Ok(made),
+        }
+    }
+}
+
 /// Creates the showcase project in `projects_dir` and returns it as read back from disk. It
 /// never touches a folder that already exists.
 pub fn create(projects_dir: &Path) -> Result<Project, String> {
-    let dir = projects_dir.join(ID);
-    if dir.exists() {
-        return Err(format!("There is already a project folder named {ID}."));
-    }
-    let failed = |e: std::io::Error| format!("The showcase could not be created: {e}");
-    for (path, text) in FILES {
-        let file = path.split('/').fold(dir.clone(), |at, part| at.join(part));
-        if let Some(folder) = file.parent() {
-            fs::create_dir_all(folder).map_err(failed)?;
-        }
-        fs::write(&file, text).map_err(failed)?;
-    }
-    let made = project::load(&dir);
-    match &made.problem {
-        Some(problem) => Err(format!("The showcase was created, but can't be used: {problem}.")),
-        None => Ok(made),
-    }
+    SVELTE.create(projects_dir)
 }
 
 #[cfg(test)]
@@ -108,5 +157,24 @@ import "
         for (path, _) in FILES {
             assert_eq!(crate::manifest::inner_path(path).as_deref(), Ok(*path));
         }
+    }
+
+    #[test]
+    fn each_kit_offers_its_own_showcases_each_a_sound_project_of_that_kit() {
+        let t = TempDir::new("showcases");
+        let ids = |kit: &str| of_kit(kit).map(|one| one.id).collect::<Vec<_>>();
+        assert_eq!(ids(crate::kit::PYTHONCRAFT.id), [ID]);
+        assert_eq!(ids(crate::kit::C.id), [crate::triangle::ID, crate::mandelbrot::ID]);
+        assert_eq!(ids("no-such-kit"), Vec::<&str>::new());
+        for one in &ALL {
+            assert_eq!(named(one.id).map(|found| found.name), Some(one.name));
+            // Made, it is a project of the kit that offers it, by its own id and name.
+            let made = one.create(&t.0).unwrap();
+            assert!(made.is_sound(), "{}: {:?}", one.id, made.problem);
+            assert_eq!((made.id.as_str(), made.name()), (one.id, one.name));
+            assert_eq!(crate::manifest::kit_id(&made.manifest.as_ref().unwrap().kit), one.kit);
+            assert!(!one.says.is_empty() && one.says.ends_with('.'), "{}", one.says);
+        }
+        assert!(named("blink").is_none() && named("").is_none());
     }
 }

@@ -835,8 +835,8 @@ fn project_row(project: &Json, open: Option<&str>) -> Json {
 }
 
 /// A development kit: what it is, where it stands, what it can't do yet, and its projects.
-/// What only one kit has (the Python that runs scripts, the showcase) is said for that kit
-/// and left out for the others.
+/// What only some kits have (the Python that runs scripts, the showcases) is said for those
+/// kits and left out for the others.
 pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
     let head = json!({
         "kind": "kit",
@@ -924,45 +924,43 @@ pub(super) fn kit_pane(app: &SheetApp, ctx: &egui::Context, kit: &Kit) -> Json {
             "canPick": has_compiler_picker(),
         });
     }
-    // The C kit's showcase is a program that draws with OpenGL ES. Its panel has something to
-    // run once it is trusted and built: until then the part says which of the two is wanting.
-    if kit.id == kit::C.id {
-        use gridcraft_aniefork_dev::triangle;
-        let project = found.projects.iter().find(|project| project["id"] == triangle::ID);
-        let trusted = project.is_some_and(|project| project["status"] == "trusted");
-        let print = project.and_then(|project| project["fingerprint"].as_str());
-        let built = trusted && matches!(c::standing(&at.settings, triangle::ID, print), c::Standing::Built { .. });
-        told["showcase"] = json!({
-            "stands": match (project.is_some(), built) { (false, _) => "none", (true, true) => "trusted", (true, false) => "untrusted" },
-            "text": match (project.is_some(), trusted, built) {
-                (false, ..) => "A C program that draws with OpenGL ES: a triangle, turning.",
-                (true, false, _) => "Turning Triangle is not trusted yet: review and trust it in its own part, build it, then come back.",
-                (true, true, false) => "Turning Triangle is trusted and not built yet: build it in its own part, then come back.",
-                (true, true, true) => "Turning Triangle is ready.",
-            },
-            "canDock": super::dock::available(ctx),
-            "canBrowse": app.services.open_url.is_some(),
-        });
-    }
-    // The showcase is a project of the first kit.
-    if kit.id == kit::PYTHONCRAFT.id {
-        let standing = found.projects.iter().find(|project| project["id"] == showcase::ID).map(|project| project["status"] == "trusted");
-        told["showcase"] = json!({
-            "stands": match standing { None => "none", Some(true) => "trusted", Some(false) => "untrusted" },
-            "text": match standing {
-                None => "A project whose panel is a Svelte app, docked beside the sheet.",
-                Some(true) => "Svelte Showcase is ready.",
-                Some(false) => "Svelte Showcase is not trusted yet: review and trust it in Projects, then come back.",
-            },
-            "canDock": super::dock::available(ctx),
-            "canBrowse": app.services.open_url.is_some(),
-        });
+    // Its showcases: projects made from files compiled into GridCraft, to show what the kit's
+    // projects can be. One of a kit that builds has something to run once it is trusted and
+    // built: until then each says which of the two is wanting.
+    let showcases: Vec<Json> = showcase::of_kit(kit.id).map(|one| showcase_says(one, kit, &found, &at, ctx, app)).collect();
+    if !showcases.is_empty() {
+        told["showcases"] = json!(showcases);
     }
     // The C kit's setups: the games it was tried with, made into projects of the person's.
     if kit.id == kit::C.id {
         told["setups"] = setups_says(&found, &at);
     }
     told
+}
+
+/// One of a kit's showcases, as its part says it: whether it is there to be shown ("none",
+/// "untrusted" or "trusted"), what is wanting, and where its panel can be shown. One of a kit
+/// that builds stands as trusted only once it is built from the files it holds.
+fn showcase_says(one: &showcase::Showcase, kit: &Kit, found: &Found, at: &Places, ctx: &egui::Context, app: &SheetApp) -> Json {
+    let project = found.projects.iter().find(|project| project["id"] == one.id);
+    let trusted = project.is_some_and(|project| project["status"] == "trusted");
+    let print = project.and_then(|project| project["fingerprint"].as_str());
+    let built = !kit.builds || (trusted && matches!(c::standing(&at.settings, one.id, print), c::Standing::Built { .. }));
+    let name = one.name;
+    json!({
+        "id": one.id,
+        "name": name,
+        "stands": match (project.is_some(), trusted && built) { (false, _) => "none", (true, true) => "trusted", (true, false) => "untrusted" },
+        "text": match (project.is_some(), trusted, built) {
+            (false, ..) => one.says.to_string(),
+            (true, false, _) if kit.builds => format!("{name} is not trusted yet: review and trust it in its own part, build it, then come back."),
+            (true, false, _) => format!("{name} is not trusted yet: review and trust it in Projects, then come back."),
+            (true, true, false) => format!("{name} is trusted and not built yet: build it in its own part, then come back."),
+            (true, true, true) => format!("{name} is ready."),
+        },
+        "canDock": super::dock::available(ctx),
+        "canBrowse": app.services.open_url.is_some(),
+    })
 }
 
 /// What the C kit's part says of its setups, above them.
@@ -1651,7 +1649,7 @@ mod tests {
             told["projectsNote"],
             "A project is a folder with a project.toml, Python scripts and a web panel. It does nothing until you trust it."
         );
-        assert!(told["python"].is_string() && told["showcase"].is_object(), "what the first kit has of its own");
+        assert!(told["python"].is_string() && told["showcases"].is_array(), "what the first kit has of its own");
         assert_eq!(told["newFor"], json!(title));
         // One list, under one word: Projects. Nothing in the kit's part calls one a library.
         assert_eq!((&told["projectsTitle"], &told["projectsEmpty"], &told["groups"]), (&json!("Projects"), &json!(NONE_YET), &Json::Null));
@@ -1718,9 +1716,13 @@ mod tests {
             "A project is a folder with a project.toml, C sources and a web panel that runs the program built from them. It does nothing until you trust it."
         );
         assert_eq!((&empty["projects"], &empty["projectsEmpty"]), (&json!([]), &json!(NONE_YET)), "the first kit's are not listed here");
-        // What only the first kit has is not said of this one; its showcase is its own.
-        assert_eq!((&empty["python"], &empty["showcase"]["stands"]), (&Json::Null, &json!("none")));
-        assert!(empty["showcase"]["text"].as_str().is_some_and(|text| text.contains("draws with OpenGL ES")));
+        // What only the first kit has is not said of this one; its showcases are its own.
+        assert_eq!(
+            (&empty["python"], &empty["showcases"][0]["stands"], &empty["showcases"][1]["stands"]),
+            (&Json::Null, &json!("none"), &json!("none"))
+        );
+        assert!(empty["showcases"][0]["text"].as_str().is_some_and(|text| text.contains("draws with OpenGL ES")));
+        assert!(empty["showcases"][1]["text"].as_str().is_some_and(|text| text.contains("Mandelbrot set")));
         // It builds: the compiler is named here, or looked for. The first kit has none to name.
         assert_eq!(empty["compiler"], json!({"title": "C compiler", "says": COMPILER_FOUND, "named": "", "hint": COMPILER_HINT, "canPick": false}));
         assert_eq!(kit_pane(&a, &ctx, &kit::PYTHONCRAFT)["compiler"], Json::Null);

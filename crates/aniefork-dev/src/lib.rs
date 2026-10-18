@@ -25,7 +25,8 @@
 //!   development work, as far as the user lets them go.
 //! - [`highlight`]: how a project's files are read for showing, from what its kit describes.
 //! - [`starter`]: "New Project".
-//! - [`showcase`]: a project whose panel is a Svelte app, to show a web toolkit at work.
+//! - [`showcase`]: a project whose panel is a Svelte app, to show a web toolkit at work; and
+//!   every kit's showcases, among them the C kit's [`triangle`] and [`mandelbrot`].
 //! - [`setup`]: Doom, Quake and GLQuake as projects of the C kit, downloaded, pinned and checked,
 //!   on the person's Set Up alone ([`setup_fetch`]: the HTTPS it downloads with).
 //! - [`paths`], [`settings`]: where projects, decisions and the subsystem's settings are kept.
@@ -49,6 +50,7 @@ mod http;
 pub mod kit;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod kitpack;
+pub mod mandelbrot;
 pub mod manifest;
 pub mod net;
 pub mod paths;

@@ -152,21 +152,17 @@ pub(super) fn create_project_in(kit: &Kit, name: &str, workbook: Option<&str>) -
     })
 }
 
-/// Creates the Svelte showcase project. Like any project it is not trusted until the user says.
-pub(super) fn create_showcase() -> Result<String, String> {
+/// Creates one of the kits' showcase projects, by its id. Like any project it is not trusted
+/// until the user says; one of a kit that builds is built before its panel has anything to run.
+pub(super) fn create_showcase(id: &str) -> Result<String, String> {
+    let one = gridcraft_aniefork_dev::showcase::named(id).ok_or_else(|| format!("There is no showcase named {id}."))?;
     let at = places().ok_or(UNAVAILABLE)?;
     std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
-    let created = gridcraft_aniefork_dev::showcase::create(&at.projects)?;
-    Ok(format!("{} was created. It is not trusted yet: review and trust it in Projects.", created.name()))
-}
-
-/// Creates the C kit's showcase, the turning triangle. Like any project it is not trusted until
-/// the user says, and being of the C kit it is built before its panel has anything to run.
-pub(super) fn create_triangle() -> Result<String, String> {
-    let at = places().ok_or(UNAVAILABLE)?;
-    std::fs::create_dir_all(&at.projects).map_err(|e| format!("The projects folder could not be created: {e}"))?;
-    let created = gridcraft_aniefork_dev::triangle::create(&at.projects)?;
-    Ok(format!("{} was created. It is not trusted yet: review and trust it in its own part, then build it.", created.name()))
+    let created = one.create(&at.projects)?;
+    Ok(match gridcraft_aniefork_dev::kit::named(one.kit).is_some_and(|kit| kit.builds) {
+        true => format!("{} was created. It is not trusted yet: review and trust it in its own part, then build it.", created.name()),
+        false => format!("{} was created. It is not trusted yet: review and trust it in Projects.", created.name()),
+    })
 }
 
 /// Remembers which Python to use and says whether it answers.

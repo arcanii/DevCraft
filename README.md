@@ -151,6 +151,12 @@ trust it, build it and dock it, as any other. What DevCraft wrote for the games 
 this repository's licence, and holds none of id Software's code; the games' code and data stay
 theirs, fetched from their own places each time.
 
+**And a sheet that steers a program.** The C kit's part also makes **Mandelbrot**, a showcase
+of its own: one file of C works out the Mandelbrot set, and its panel keeps the view in a sheet.
+Change the zoom in the sheet and the picture follows; drag the picture and the cells follow it,
+so Undo takes it back. The iterations are a formula of the zoom, and the places to go are rows
+you can add to.
+
 ### Kits from packages
 
 A kit can be loaded from a package file (`.gridkit`). Such a kit describes and runs nothing of
@@ -194,7 +200,8 @@ cargo run --release -p gridcraft -- --sample sales
 4. Dock its panel or open it in your browser, and select some cells.
 
 Scripts need a Python on your machine (GridCraft finds it, or you name it). The C kit needs zig.
-To see what it can build, open the C Development Kit's part and Set Up one of the games.
+To see what it can build, open the C Development Kit's part and create Mandelbrot, or Set Up
+one of the games.
 
 ## Where it stands
 

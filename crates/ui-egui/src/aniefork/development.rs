@@ -55,7 +55,7 @@ use std::sync::Arc;
 
 use gridcraft_aniefork_dev::agents::{self as dev, Action, Asked, Kind, Level, Sight};
 use gridcraft_aniefork_dev::bridge::Places;
-use gridcraft_aniefork_dev::{c, manifest, settings, setup, showcase, starter};
+use gridcraft_aniefork_dev::{c, manifest, settings, setup, starter};
 use serde_json::{Value as Json, json};
 
 use super::card::{self, Block, NO, NO_OF_THREE, NOT_NOW, REASON, YES, YES_PLAN};
@@ -113,8 +113,8 @@ pub(super) enum Act {
     CheckCompiler(String),
     /// Build a project: run the person's compiler over its files. The person's alone to ask.
     Build(String),
-    /// Create the Svelte showcase project (untrusted, like any new project).
-    CreateShowcase,
+    /// Create one of the kits' showcase projects, by its id (untrusted, like any new project).
+    CreateShowcase(String),
     /// Set a game up as a project of the C kit: its setup by the project's id, and the data
     /// chosen, by its key. It downloads, after the operating system's question: the person's alone.
     SetUp {
@@ -123,8 +123,9 @@ pub(super) enum Act {
     },
     /// Stop a setup that is running.
     StopSetUp(String),
-    /// Show the showcase's panel: docked in the window, or in the browser.
+    /// Show a showcase's panel, by its id: docked in the window, or in the browser.
     ShowShowcase {
+        id: String,
         docked: bool,
     },
     /// Show a project's panel: docked in the window, or in the browser. Opening a panel is the
@@ -1062,37 +1063,39 @@ fn kit_part(ui: &mut egui::Ui, told: &Json, state: &mut State, action: &mut Opti
         }
         None => state.new_for = false,
     }
-    // The showcase: a panel written with a web toolkit, shown inside the window. Each kit that
-    // has one has its own.
-    let showcase = &told["showcase"];
-    if showcase.is_object() {
+    // The showcases: projects made from files compiled into GridCraft, each shown inside the
+    // window once it can be. Each kit that has any has its own.
+    if let Some(showcases) = told["showcases"].as_array().filter(|list| !list.is_empty()) {
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new("Showcase").strong());
-            ui.label(said(showcase, "text"));
-            match said(showcase, "stands") {
-                "none" => {
-                    if ui
-                        .button("Create Showcase")
-                        .on_hover_text("Creates the Svelte Showcase project. It does nothing until you trust it.")
-                        .clicked()
-                    {
-                        *action = Some(Act::CreateShowcase);
+        ui.label(egui::RichText::new(if showcases.len() == 1 { "Showcase" } else { "Showcases" }).strong());
+        for one in showcases {
+            let (id, name) = (said(one, "id"), said(one, "name"));
+            ui.horizontal_wrapped(|ui| {
+                ui.label(said(one, "text"));
+                match said(one, "stands") {
+                    "none" => {
+                        if ui
+                            .button(format!("Create {name}"))
+                            .on_hover_text(format!("Creates the {name} project. It does nothing until you trust it."))
+                            .clicked()
+                        {
+                            *action = Some(Act::CreateShowcase(id.to_string()));
+                        }
                     }
+                    "trusted" => {
+                        if one["canDock"] == true
+                            && ui.button(format!("Dock {name}")).on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
+                        {
+                            *action = Some(Act::ShowShowcase { id: id.to_string(), docked: true });
+                        }
+                        if one["canBrowse"] == true && ui.button(format!("Open {name} in Browser")).clicked() {
+                            *action = Some(Act::ShowShowcase { id: id.to_string(), docked: false });
+                        }
+                    }
+                    _ => {}
                 }
-                "trusted" => {
-                    if showcase["canDock"] == true
-                        && ui.button("Dock Showcase").on_hover_text("Shows its panel inside the window, beside the sheet").clicked()
-                    {
-                        *action = Some(Act::ShowShowcase { docked: true });
-                    }
-                    if showcase["canBrowse"] == true && ui.button("Open in Browser").clicked() {
-                        *action = Some(Act::ShowShowcase { docked: false });
-                    }
-                }
-                _ => {}
-            }
-        });
+            });
+        }
     }
     setups_part(ui, &told["setups"], action);
 }
@@ -1537,7 +1540,7 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
             | Act::OpenProjectFolder(_)
             | Act::AskAgain(..)
             | Act::StopPlan(_)
-            | Act::CreateShowcase
+            | Act::CreateShowcase(_)
             | Act::StopSetUp(_)
             | Act::CreateProject { .. }
             | Act::CloseFile
@@ -1734,15 +1737,9 @@ fn carry_out(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, action:
         // Each kit that has a showcase has its own: which is meant is the kit whose part is shown.
         Act::SetUp { setup, data } => kits::set_up(app, ctx, &setup, &data),
         Act::StopSetUp(id) => kits::stop_set_up(&id),
-        Act::CreateShowcase => match &state.pane {
-            Pane::Kit(id) if *id == gridcraft_aniefork_dev::kit::C.id => projects::create_triangle(),
-            _ => projects::create_showcase(),
-        },
+        Act::CreateShowcase(id) => projects::create_showcase(&id),
         // Showing a panel is opening it: the person's alone to do (checked above).
-        Act::ShowShowcase { docked } => {
-            let of_c = matches!(&state.pane, Pane::Kit(id) if *id == gridcraft_aniefork_dev::kit::C.id);
-            show_panel(app, ctx, if of_c { gridcraft_aniefork_dev::triangle::ID } else { showcase::ID }, docked, open)
-        }
+        Act::ShowShowcase { id, docked } => show_panel(app, ctx, &id, docked, open),
         Act::ShowPanel { project, docked } => show_panel(app, ctx, &project, docked, open),
         Act::OpenFolder => match (projects::places(), &app.services.open_url) {
             (Some(at), Some(open_url)) => {
@@ -1848,6 +1845,7 @@ mod tests {
     use egui_kittest::kittest::{NodeT, Queryable};
     use gridcraft_aniefork_dev::kit;
     use gridcraft_aniefork_dev::python::PythonHost;
+    use gridcraft_aniefork_dev::showcase;
 
     use super::*;
     use crate::aniefork::devpage;
@@ -3383,11 +3381,13 @@ mod tests {
         );
         assert_eq!(second["pane"]["says"], kit::C.says);
         assert_eq!(
-            (&second["pane"]["python"], &second["pane"]["showcase"]["stands"], &second["pane"]["projectsSays"]),
+            (&second["pane"]["python"], &second["pane"]["showcases"][0]["stands"], &second["pane"]["projectsSays"]),
             (&Json::Null, &json!("none"), &json!("No projects yet"))
         );
-        // Its showcase is its own: a program that draws, not the first kit's Svelte one.
-        assert!(second["pane"]["showcase"]["text"].as_str().is_some_and(|text| text.contains("OpenGL ES")));
+        // Its showcases are its own: a program that draws and the Mandelbrot set, not the first
+        // kit's Svelte one.
+        assert!(second["pane"]["showcases"][0]["text"].as_str().is_some_and(|text| text.contains("OpenGL ES")));
+        assert_eq!(second["pane"]["showcases"][1]["name"], "Mandelbrot");
         assert!(second["nav"].as_array().unwrap().iter().any(|row| row["go"] == "kit:c" && row["selected"] == true));
         // A project made there is that kit's: a manifest, a program and the panel that runs
         // it, untrusted.
@@ -3693,8 +3693,8 @@ mod tests {
         );
         assert_eq!(part["says"], "Panels that chart what is selected.");
         // It stands on the first kit: its projects have scripts, so the Python is named here
-        // too. The showcase is the first kit's own.
-        assert!(part["pythonField"].is_object() && part["showcase"].is_null() && part["compiler"].is_null());
+        // too. The showcases are the first kit's own.
+        assert!(part["pythonField"].is_object() && part["showcases"].is_null() && part["compiler"].is_null());
         // Loading and removing are by hand: asked for by what drives the window, they are refused.
         let mut state = State::default();
         let mut open = true;
@@ -3934,8 +3934,9 @@ mod tests {
         assert!(h.query_by_label_contains("can't run a C project").is_none());
         h.get_by_label("No projects yet");
         h.get_by_label(&kits::projects_note(&kit::C));
-        // It has no Python to name; its showcase is its own.
-        assert!(h.query_by_label_contains("Python:").is_none() && h.query_by_label("Create Showcase").is_some());
+        // It has no Python to name; its showcases are its own.
+        assert!(h.query_by_label_contains("Python:").is_none() && h.query_by_label("Create Svelte Showcase").is_none());
+        assert!(h.query_by_label("Create Turning Triangle").is_some() && h.query_by_label("Create Mandelbrot").is_some());
         h.get_by_label_contains("draws with OpenGL ES");
         // A project made there is that kit's, and is not the first kit's.
         h.get_by_role_and_label(Role::TextInput, "New project:").focus();
@@ -4187,45 +4188,102 @@ mod tests {
     }
 
     #[test]
-    fn the_c_kits_part_offers_its_showcase_which_draws_and_is_built_before_it_is_shown() {
-        use gridcraft_aniefork_dev::triangle;
+    fn the_pages_create_showcase_names_one_of_the_kits_showcases_by_its_id() {
+        use gridcraft_aniefork_dev::mandelbrot;
+        let s = Sandbox::new("devpage-showcases");
+        let asked = yes();
+        let mut h = harness_alone(app_with(Some(&asked)));
+        let ctx = h.ctx.clone();
+        devpage::host_is_here(&ctx);
+        h.state_mut().open_dialog(NAME, json!({}));
+        h.run_steps(3);
+        let _first = told(&mut h);
+        page(&mut h, json!({"act": "go", "to": "kit:c"}));
+        let shown = told(&mut h);
+        assert_eq!((&shown["pane"]["showcases"][1]["id"], &shown["pane"]["showcases"][1]["stands"]), (&json!(mandelbrot::ID), &json!("none")));
+        // What names no showcase is not taken as a click on Create, or on Dock.
+        for bad in [
+            json!({"act": "createShowcase"}),
+            json!({"act": "createShowcase", "id": "blink"}),
+            json!({"act": "createShowcase", "id": "../mandelbrot"}),
+            json!({"act": "createShowcase", "id": 7}),
+            json!({"act": "showShowcase", "id": "blink", "docked": true}),
+            json!({"act": "showShowcase", "id": mandelbrot::ID}),
+        ] {
+            page(&mut h, bad);
+        }
+        let made = || std::fs::read_dir(s.0.join("projects")).map(|found| found.count()).unwrap_or(0);
+        assert_eq!(made(), 0);
+        // A click on Create Mandelbrot makes that one, untrusted, and asks nothing.
+        page(&mut h, json!({"act": "createShowcase", "id": mandelbrot::ID}));
+        assert!(s.0.join("projects").join(mandelbrot::ID).join("panel/index.html").is_file() && made() == 1);
+        assert_eq!(told(&mut h)["pane"]["showcases"][1]["stands"], "untrusted");
+        assert!(asked.questions().is_empty(), "creating it asked nothing and trusted nothing");
+    }
+
+    #[test]
+    fn the_c_kits_part_offers_its_showcases_each_built_before_it_is_shown() {
+        use gridcraft_aniefork_dev::{mandelbrot, triangle};
         let s = Sandbox::new("dev-triangle");
         let asked = yes();
         let mut h = harness_alone(app_with(Some(&asked)));
         let ctx = h.ctx.clone();
-        let showcase_of = |h: &mut Harness, of: &'static gridcraft_aniefork_dev::kit::Kit| {
+        let showcases_of = |h: &mut Harness, of: &'static gridcraft_aniefork_dev::kit::Kit| {
             let ctx = h.ctx.clone();
             kits::forget();
-            kits::kit_pane(h.state_mut(), &ctx, of)["showcase"].clone()
+            kits::kit_pane(h.state_mut(), &ctx, of)["showcases"].clone()
         };
-        // Each kit says its own showcase: the C kit's is a program that draws.
-        let none = showcase_of(&mut h, &kit::C);
-        assert_eq!((&none["stands"], &none["text"]), (&json!("none"), &json!("A C program that draws with OpenGL ES: a triangle, turning.")));
-        assert!(showcase_of(&mut h, &kit::PYTHONCRAFT)["text"].as_str().unwrap().contains("Svelte"));
-        // Created from the C kit's part, it is the turning triangle, untrusted; from the first
-        // kit's part, the Svelte one.
+        // Each kit says its own showcases: the C kit's are a program that draws, and one that
+        // works out the Mandelbrot set with its view in a sheet.
+        let none = showcases_of(&mut h, &kit::C);
+        assert_eq!(
+            (&none[0]["id"], &none[0]["stands"], &none[0]["text"]),
+            (&json!(triangle::ID), &json!("none"), &json!("A C program that draws with OpenGL ES: a triangle, turning."))
+        );
+        assert_eq!((&none[1]["id"], &none[1]["name"], &none[1]["stands"]), (&json!(mandelbrot::ID), &json!("Mandelbrot"), &json!("none")));
+        assert!(none[1]["text"].as_str().unwrap().contains("Mandelbrot set, with its view kept in a sheet"));
+        let first_kits = showcases_of(&mut h, &kit::PYTHONCRAFT);
+        assert_eq!((first_kits.as_array().unwrap().len(), &first_kits[0]["id"]), (1, &json!(showcase::ID)));
+        // Each is created by its id, untrusted, and nothing else is.
         let (mut state, mut open) = (State { pane: Pane::kit(&kit::C), ..State::default() }, true);
-        let made = super::act(h.state_mut(), &ctx, &mut state, Act::CreateShowcase, false, &mut open).unwrap();
-        assert!(made.starts_with("Turning Triangle was created. It is not trusted yet"), "{made}");
-        assert!(s.0.join("projects").join(triangle::ID).join("src/triangle.c").is_file() && !s.0.join("projects").join(showcase::ID).exists());
-        let untrusted = showcase_of(&mut h, &kit::C);
-        assert_eq!(untrusted["stands"], json!("untrusted"));
-        assert!(untrusted["text"].as_str().unwrap().contains("not trusted yet"));
+        let made = super::act(h.state_mut(), &ctx, &mut state, Act::CreateShowcase(triangle::ID.to_string()), false, &mut open).unwrap();
+        assert!(
+            made.starts_with("Turning Triangle was created. It is not trusted yet: review and trust it in its own part, then build it."),
+            "{made}"
+        );
+        assert!(s.0.join("projects").join(triangle::ID).join("src/triangle.c").is_file());
+        assert!(!s.0.join("projects").join(showcase::ID).exists() && !s.0.join("projects").join(mandelbrot::ID).exists());
+        let untrusted = showcases_of(&mut h, &kit::C);
+        assert_eq!((&untrusted[0]["stands"], &untrusted[1]["stands"]), (&json!("untrusted"), &json!("none")));
+        assert!(untrusted[0]["text"].as_str().unwrap().contains("not trusted yet"));
         // Trusted, and nothing built from it yet: there is nothing to show, and the part says what is wanting.
         let print = gridcraft_aniefork_dev::project::load(&s.0.join("projects").join(triangle::ID)).fingerprint.unwrap();
         trust(h.state(), triangle::ID, &print, false).unwrap();
-        let unbuilt = showcase_of(&mut h, &kit::C);
-        assert_eq!(unbuilt["stands"], json!("untrusted"));
-        assert!(unbuilt["text"].as_str().unwrap().contains("not built yet"), "{unbuilt}");
+        let unbuilt = showcases_of(&mut h, &kit::C);
+        assert_eq!(unbuilt[0]["stands"], json!("untrusted"));
+        assert!(unbuilt[0]["text"].as_str().unwrap().contains("not built yet"), "{unbuilt}");
         // Built from the files it holds: it is ready.
         let kept = s.0.join("built").join(triangle::ID).join(&print);
         std::fs::create_dir_all(&kept).unwrap();
         std::fs::write(kept.join("program.wasm"), b"\0asm\x01\0\0\0").unwrap();
-        let ready = showcase_of(&mut h, &kit::C);
-        assert_eq!((&ready["stands"], &ready["text"]), (&json!("trusted"), &json!("Turning Triangle is ready.")));
+        let ready = showcases_of(&mut h, &kit::C);
+        assert_eq!((&ready[0]["stands"], &ready[0]["text"]), (&json!("trusted"), &json!("Turning Triangle is ready.")));
+        // The Mandelbrot, the same way: made, untrusted, a project that asks to read and write.
+        let made = super::act(h.state_mut(), &ctx, &mut state, Act::CreateShowcase(mandelbrot::ID.to_string()), false, &mut open).unwrap();
+        assert!(made.starts_with("Mandelbrot was created. It is not trusted yet"), "{made}");
+        assert!(s.0.join("projects").join(mandelbrot::ID).join("src/mandelbrot.c").is_file());
+        assert_eq!(showcases_of(&mut h, &kit::C)[1]["stands"], json!("untrusted"));
+        // A second time, the folder is there: nothing is written over.
+        let again = super::act(h.state_mut(), &ctx, &mut state, Act::CreateShowcase(mandelbrot::ID.to_string()), false, &mut open).unwrap_err();
+        assert!(again.contains("already a project folder"), "{again}");
+        // From the first kit's part, the Svelte one.
         let mut first = State { pane: Pane::kit(&kit::PYTHONCRAFT), ..State::default() };
-        let svelte = super::act(h.state_mut(), &ctx, &mut first, Act::CreateShowcase, false, &mut open).unwrap();
-        assert!(svelte.starts_with("Svelte Showcase was created"), "{svelte}");
+        let svelte = super::act(h.state_mut(), &ctx, &mut first, Act::CreateShowcase(showcase::ID.to_string()), false, &mut open).unwrap();
+        assert!(svelte.starts_with("Svelte Showcase was created. It is not trusted yet: review and trust it in Projects."), "{svelte}");
+        // An id that is no showcase's makes nothing.
+        let unknown = super::act(h.state_mut(), &ctx, &mut first, Act::CreateShowcase("blink".to_string()), false, &mut open).unwrap_err();
+        assert_eq!(unknown, "There is no showcase named blink.");
+        assert!(!s.0.join("projects").join("blink").exists());
     }
 
     #[test]
@@ -4511,7 +4569,7 @@ mod tests {
         open_top(&mut h);
         go(&mut h, "PythonCraft");
         // Created like any project: on disk, and not trusted.
-        click(&mut h, "Create Showcase");
+        click(&mut h, "Create Svelte Showcase");
         assert!(s.0.join("projects/svelte-showcase/panel/app.js").is_file() && s.0.join("projects/svelte-showcase/source/src/App.svelte").is_file());
         let listed = list();
         let made = listed["projects"].as_array().unwrap().iter().find(|m| m["id"] == showcase::ID).unwrap().clone();
@@ -4519,7 +4577,7 @@ mod tests {
         assert_eq!(made["asks"].as_array().unwrap().iter().map(|a| a["permission"].as_str().unwrap()).collect::<Vec<_>>(), ["read", "write"]);
         h.get_by_label_contains("Svelte Showcase was created. It is not trusted yet");
         h.get_by_label_contains("review and trust it in Projects, then come back");
-        assert!(h.query_by_label("Dock Showcase").is_none() && h.query_by_label("Create Showcase").is_none());
+        assert!(h.query_by_label("Dock Svelte Showcase").is_none() && h.query_by_label("Create Svelte Showcase").is_none());
         assert!(asked.questions().is_empty(), "creating it asked nothing and trusted nothing");
         // The person trusts it, as they would any project: the operating system asks.
         trust(h.state(), showcase::ID, made["fingerprint"].as_str().unwrap(), false).unwrap();
@@ -4527,8 +4585,8 @@ mod tests {
         h.run_steps(3);
         h.get_by_label("Svelte Showcase is ready.");
         // A copy of GridCraft without a web view offers the browser, and only that.
-        assert!(h.query_by_label("Dock Showcase").is_none());
-        click(&mut h, "Open in Browser");
+        assert!(h.query_by_label("Dock Svelte Showcase").is_none());
+        click(&mut h, "Open Svelte Showcase in Browser");
         assert_eq!(opened.borrow().len(), 1);
         // With one, the panel is docked beside the sheet, and the window makes way for it.
         let ctx = h.ctx.clone();
@@ -4536,11 +4594,11 @@ mod tests {
         h.run_steps(3);
         // Not by the control channel: showing a panel is the person's to do.
         drive(&mut h);
-        click(&mut h, "Dock Showcase");
+        click(&mut h, "Dock Svelte Showcase");
         assert_eq!(message(&mut h).as_deref(), Some(presence::BY_HAND));
         assert!(dock::docked(&ctx).is_none());
         quiet(&mut h);
-        click(&mut h, "Dock Showcase");
+        click(&mut h, "Dock Svelte Showcase");
         assert!(h.state().dialog.is_none(), "{:?}", h.state().message);
         let docked = dock::docked(&ctx).unwrap();
         assert_eq!((docked.project.as_str(), docked.name.as_str(), docked.network), (showcase::ID, "Svelte Showcase", false));

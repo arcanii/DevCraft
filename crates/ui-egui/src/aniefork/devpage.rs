@@ -579,7 +579,12 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         "loadKit" => Some(Act::LoadKit),
         "pickCompiler" => Some(Act::PickCompiler),
         "removeKit" => project_id(&message).map(Act::RemoveKit),
-        "createShowcase" => Some(Act::CreateShowcase),
+        // A showcase by its id: one of the kits' own.
+        "createShowcase" => message
+            .get("id")
+            .and_then(Json::as_str)
+            .and_then(gridcraft_aniefork_dev::showcase::named)
+            .map(|one| Act::CreateShowcase(one.id.to_string())),
         // A setup by its project's id, one of the C kit's; the data chosen by its key, one it offers.
         "setUp" => {
             let one = message.get("id").and_then(Json::as_str).and_then(gridcraft_aniefork_dev::setup::named);
@@ -591,7 +596,11 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, message: &str) -> bool {
         "stopSetUp" => {
             message.get("id").and_then(Json::as_str).and_then(gridcraft_aniefork_dev::setup::named).map(|one| Act::StopSetUp(one.id.to_string()))
         }
-        "showShowcase" => message.get("docked").and_then(Json::as_bool).map(|docked| Act::ShowShowcase { docked }),
+        "showShowcase" => {
+            let one = message.get("id").and_then(Json::as_str).and_then(gridcraft_aniefork_dev::showcase::named);
+            let docked = message.get("docked").and_then(Json::as_bool);
+            one.zip(docked).map(|(one, docked)| Act::ShowShowcase { id: one.id.to_string(), docked })
+        }
         // A project's panel, docked in GridCraft's window or in the browser: the project by its id.
         "showPanel" => {
             let project = message.get("id").and_then(Json::as_str).filter(|id| gridcraft_aniefork_dev::manifest::valid_id(id));

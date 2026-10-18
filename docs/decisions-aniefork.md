@@ -3574,6 +3574,69 @@ program's file description, read from the built file. **Not seen**: the macOS me
 (not built here: the menu's test, `tests/mac_menu_appkit.rs`, now expects the fork's name), and
 Linux.
 
+### The Mandelbrot showcase: a C program, and its view kept in a sheet (built 2026-10-18)
+
+**What the owner asked.** "For our development version. Can we produce a mandelbrot demo -
+which is better python, or C, C++ (Zig?)". Recommended C, on the kit there is: the picture is
+one tight loop of arithmetic, which the kit builds as WebAssembly and the panel runs where it
+is shown, fast enough to drag and zoom, in double precision; Python runs out of the panel's
+process and answers in JSON, seconds a picture without numpy; C++ and Zig would each first need
+the kit to grow (`zig c++` and its library; Zig's own compiler, and how it would say every file
+it read, which the build's guard rests on). The owner: **"build it in C with the workbook
+link"**.
+
+**What it is** (`crates/aniefork-dev/src/mandelbrot.rs`): a project of the C kit, created from
+its part like the turning triangle, untrusted; it asks for `read` and `write` and nothing else.
+
+- **The program** (`src/mandelbrot.c`, about 4 KB built) exports three functions and imports
+  nothing to draw with: `spacing` (how far apart the dots are at a zoom), `view` (what to show:
+  the middle, the zoom, the size, the iterations and the colours; it gives where its picture is
+  kept, or 0) and `rows` (works out some rows, a dot in every `block`, and says how many were in
+  the set). Each dot is followed until it goes past 16 or the limit; the heart and the disc left
+  of it are known shapes and skipped, and a point that comes back where it was is in the set.
+  Colours go round three schemes of the fork's own (Ember, Sea, Grey) smoothly between steps.
+- **The page** hands the program no canvas: it reads the colours out of the program's memory and
+  puts them on a 2D canvas, a rough picture first (a dot in eight) and then every dot, a few
+  milliseconds at a time, so that it keeps answering the mouse. Drag moves, the wheel zooms where
+  the pointer is, a double-click goes four times closer; buttons for the whole set, in and out.
+- **The sheet.** The page makes a sheet named Mandelbrot when the person asks (one step of
+  undo): the view in B2:B6 (the middle's x and y, the zoom, the iterations, the colours), a few
+  cells worked out from it by formulas, and places to go from row 14. The page reads the sheet on
+  each `workbookChanged` and takes in only what changed there since it last read or wrote it;
+  once the picture stops moving it writes B2:B4, one step of undo per move, so Undo takes the
+  picture back. A cell that holds a formula is never written over: the picture follows it and the
+  page says so. The iterations are a formula of the zoom (`=ROUND(200*(1+MAX(0,LOG10(B4))),0)`,
+  the page's own rule while nothing is linked) until the person types a number there. The places
+  are the sheet's rows, listed as buttons; Keep This Place writes the place shown into the first
+  empty row.
+- **A kit's showcases are a list** (`showcase::ALL`, `named`, `of_kit`): the Svelte one for
+  PythonCraft, the triangle and the Mandelbrot for the C kit. A kit's part lists its own; Create
+  and Dock name one by its id (`Act::CreateShowcase(id)`, `Act::ShowShowcase { id, docked }`;
+  the page's `createShowcase` and `showShowcase` carry the id, and one that names no showcase is
+  not taken as a click). The buttons say the showcase's name ("Create Mandelbrot").
+
+**Built for size, the kit's default.** Built for speed (`-O2`), zig keeps about 950 KB of
+debugging information beside the program's 4 KB; built for size it is 8 KB, and a picture of the
+deep place (200,000 times closer, 1,260 iterations) took 155 ms against 154.
+
+**Learnt on the way.** `home.bold` without `on` turns bold the other way from the cell that is
+selected, not from the range it is given: a batch of several bolds turns them on and off in turn.
+The page says `on: true`. (The setups' game pages call it without `on`.)
+
+**Checked.** Tests: the project, its recipe, what the program exports and what the page runs;
+every kit's showcases; the Development window's parts and the page's messages; with zig, the
+build, its exports, and that it stays small. **Seen** in an isolated copy (`appdata-m1` in the
+session's scratchpad, trusted and built there by `harness3`): the C kit's part listing both
+showcases, Create Mandelbrot from the page, the panel docked drawing the whole set (13 ms), Make
+the Mandelbrot Sheet, a change of B2:B4 over the control channel moving the picture, Zoom In
+writing B4 and the iterations' formula following, Undo taking the picture back, the colours cell,
+a formula in B4 kept and said, a place's button, Keep This Place, and the deep place. **Not seen**:
+a drag, the wheel or a double-click done from here. (Moves came that were not posted from
+here, seemingly the screen's own pointer over the docked panel: the undo list held them, and
+the picture had once gone 1.7 billion times closer, which it drew in 4.4 s.) Nor the colours chosen in the panel's own list; the showcases
+in GridCraft's own (egui) Development window, which only its tests have drawn; Open in Browser;
+macOS and Linux.
+
 ### Backlog
 
 - A setup wizard that installs Python for the user.
