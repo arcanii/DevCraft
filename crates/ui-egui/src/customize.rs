@@ -80,9 +80,59 @@ impl Default for RibbonLayout {
     }
 }
 
+/// Commands a button can't run: each needs a value that only its own ribbon control asks for (a
+/// size, a colour, a name, a range…), so with no parameters it fails. They are left out of the
+/// dialog, the right-click menus and saved layouts; `every_offered_command_runs_from_a_button`
+/// finds any new one.
+const NEEDS_INPUT: &[&str] = &[
+    "arrange.bringForward",
+    "arrange.rotate",
+    "arrange.sendBackward",
+    "automate.newScript",
+    "chart.selectData",
+    "chart.shapeOutline",
+    "data.advancedFilter",
+    "data.consolidate",
+    "data.dataTable",
+    "data.goalSeek",
+    "edit.find",
+    "edit.goTo",
+    "edit.replace",
+    "file.exportCsv",
+    "file.exportHtml",
+    "formulas.useInFormula",
+    "home.columnWidth",
+    "home.defaultWidth",
+    "home.fillColor",
+    "home.fontColor",
+    "home.fontName",
+    "home.fontSize",
+    "home.newCellStyle",
+    "home.numberFormat",
+    "home.rowHeight",
+    "insert.sparkline",
+    "pivot.changeSource",
+    "pivot.collapse",
+    "pivot.group",
+    "sheet.move",
+    "sheet.rename",
+    "table.resize",
+    "view.zoom",
+    "window.activate",
+];
+
+/// Why a toolbar or group can't hold command `id`.
+fn refused(id: &str) -> String {
+    if NEEDS_INPUT.contains(&id) {
+        format!("{id:?} needs a value that only its ribbon control asks for, so no button can run it")
+    } else {
+        format!("unknown command {id:?}")
+    }
+}
+
 /// Whether a toolbar or group may hold command `id`.
 pub fn known_command(id: &str) -> bool {
-    gridcraft_engine::find_command(id).is_some() || UI_COMMANDS.iter().any(|(u, ..)| *u == id)
+    !NEEDS_INPUT.contains(&id) && (gridcraft_engine::find_command(id).is_some() || UI_COMMANDS.iter().any(|(u, ..)| *u == id))
 }
 
 fn label_text(label: &str, fallback: &str) -> String {
@@ -275,7 +325,7 @@ fn string_list(v: &Json) -> Result<Vec<String>, String> {
     let Some(a) = v.as_array() else { return Err("expected a list of command ids".into()) };
     let ids: Vec<String> = a.iter().filter_map(Json::as_str).map(str::to_string).collect();
     if let Some(bad) = ids.iter().find(|id| !known_command(id)) {
-        return Err(format!("unknown command {bad:?}"));
+        return Err(refused(bad));
     }
     Ok(ids)
 }
@@ -296,7 +346,7 @@ pub fn quick_access_command(app: &mut SheetApp, p: &Json) -> Result<Json, String
     }
     if let Some(id) = p.get("add").and_then(Json::as_str) {
         if !known_command(id) {
-            return Err(format!("unknown command {id:?}"));
+            return Err(refused(id));
         }
         if !layout.qat.iter().any(|q| q == id) && !layout.qat_add(id) {
             return Err(format!("the Quick Access Toolbar holds at most {MAX_QAT} commands"));
@@ -375,8 +425,6 @@ const COMMAND_ICONS: &[(&str, Icon)] = &[
     ("edit.paste", Icon::Paste),
     ("edit.pasteSpecial", Icon::Paste),
     ("edit.formatPainter", Icon::Brush),
-    ("edit.find", Icon::Find),
-    ("edit.replace", Icon::Find),
     ("edit.fillDown", Icon::FillDown),
     ("edit.clearAll", Icon::Eraser),
     ("edit.clearFormats", Icon::Eraser),
@@ -386,7 +434,6 @@ const COMMAND_ICONS: &[(&str, Icon)] = &[
     ("home.underline", Icon::Underline),
     ("home.strikethrough", Icon::Strike),
     ("home.borders", Icon::Borders),
-    ("home.fillColor", Icon::Fill),
     ("home.alignLeft", Icon::AlignLeft),
     ("home.alignRight", Icon::AlignRight),
     ("home.alignTop", Icon::AlignTop),
@@ -414,7 +461,6 @@ const COMMAND_ICONS: &[(&str, Icon)] = &[
     ("insert.pivotTable", Icon::PivotTable),
     ("insert.chart", Icon::Chart),
     ("insert.recommendedCharts", Icon::Chart),
-    ("insert.sparkline", Icon::Sparkline),
     ("insert.picture", Icon::Picture),
     ("insert.shape", Icon::Shapes),
     ("insert.textBox", Icon::TextBox),
@@ -443,7 +489,6 @@ const COMMAND_ICONS: &[(&str, Icon)] = &[
     ("view.freezePanes", Icon::Freeze),
     ("view.freezeTopRow", Icon::Freeze),
     ("view.freezeFirstColumn", Icon::Freeze),
-    ("view.zoom", Icon::Zoom),
     ("view.zoomToSelection", Icon::Zoom),
     ("view.gridlines", Icon::Gridlines),
     ("view.normal", Icon::Normal),
@@ -454,7 +499,6 @@ const COMMAND_ICONS: &[(&str, Icon)] = &[
     ("pageLayout.orientation", Icon::Orient),
     ("pageLayout.printArea", Icon::PrintArea),
     ("pageLayout.theme", Icon::Theme),
-    ("automate.newScript", Icon::Script),
 ];
 
 pub fn command_icon(id: &str) -> Option<Icon> {
@@ -713,11 +757,14 @@ fn divider(ui: &mut Ui) {
 
 // ---------------------------------------------------------------- the dialog
 
-/// The commands offered in the dialog: every command with a place in the menus, and the interface
-/// commands, as (id, English label, English tab), sorted by label.
+/// The commands offered in the dialog: every command with a place in the menus that a button can
+/// run, and the interface commands, as (id, English label, English tab), sorted by label.
 fn choices() -> Vec<(&'static str, &'static str, &'static str)> {
-    let mut v: Vec<(&'static str, &'static str, &'static str)> =
-        gridcraft_engine::command_specs().iter().filter_map(|c| c.menu.first().map(|tab| (c.id, c.label, *tab))).collect();
+    let mut v: Vec<(&'static str, &'static str, &'static str)> = gridcraft_engine::command_specs()
+        .iter()
+        .filter(|c| known_command(c.id))
+        .filter_map(|c| c.menu.first().map(|tab| (c.id, c.label, *tab)))
+        .collect();
     v.extend(UI_COMMANDS.iter().copied());
     v.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then(a.0.cmp(b.0)));
     v
@@ -1051,11 +1098,22 @@ fn ribbon_page(app: &mut SheetApp, ui: &mut Ui, d: &mut crate::dialogs::Dialog) 
     };
     // Always there, greyed unless one of the user's tabs or groups is selected.
     let renamable = current.is_some();
-    let mut name = current.unwrap_or_default();
+    // The field keeps what was typed from frame to frame (a trailing space, an empty field) while
+    // the label takes it trimmed; leaving the field, or selecting something else, shows the label.
+    let owner = d.values.get("selected").cloned().unwrap_or_default();
+    let typed = d.values.get("renaming").filter(|o| **o == owner).and(d.values.get("rename")).and_then(Json::as_str);
+    let mut name = typed.map(str::to_string).or(current).unwrap_or_default();
     {
         ui.horizontal(|ui| {
             ui.label(lang.tr("Name:"));
-            if ui.add_enabled(renamable, egui::TextEdit::singleline(&mut name).desired_width(180.0)).changed() {
+            let field = ui.add_enabled(renamable, egui::TextEdit::singleline(&mut name).char_limit(MAX_LABEL).desired_width(180.0));
+            if field.lost_focus() {
+                d.values.remove("rename");
+                d.values.remove("renaming");
+            }
+            if field.changed() {
+                d.values.insert("rename".into(), Json::String(name.clone()));
+                d.values.insert("renaming".into(), owner);
                 let name = label_text(&name, "");
                 if !name.is_empty() {
                     match &sel {
@@ -1176,6 +1234,29 @@ mod tests {
         assert_eq!(l.qat, vec!["edit.undo".to_string(), "edit.redo".to_string(), "home.bold".to_string()]);
         for id in QAT_MENU {
             assert!(known_command(id), "{id} is a command");
+        }
+    }
+
+    /// A button runs its command with no parameters, so each command offered must run that way:
+    /// it may say it can't run here (no table, nothing to undo), never that it was given too
+    /// little. And each one left out still needs its input.
+    #[test]
+    fn every_offered_command_runs_from_a_button() {
+        let app = || {
+            let mut s = gridcraft_engine::Session::new();
+            s.execute("file.new", json!({"sample": "sales"})).unwrap();
+            crate::SheetApp::new(s, Default::default())
+        };
+        for (id, ..) in choices() {
+            if let Err(e) = app().run(id, json!({})) {
+                // Ink to Shape converts the last ink stroke, and says so when there is none.
+                assert!(!e.starts_with("invalid parameters") || id == "draw.inkToShape", "{id}: {e}");
+            }
+        }
+        for id in NEEDS_INPUT {
+            assert!(gridcraft_engine::find_command(id).is_some(), "{id} is a command");
+            let r = app().run(id, json!({}));
+            assert!(r.as_ref().is_err_and(|e| e.starts_with("invalid parameters")), "{id} runs with no input: {r:?}");
         }
     }
 

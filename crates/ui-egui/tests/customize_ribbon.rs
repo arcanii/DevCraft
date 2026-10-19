@@ -135,6 +135,8 @@ fn agents_hide_add_and_reorder_tabs_without_a_dialog() {
     // Hostile input is an error or left out, never a crash.
     assert!(h.state_mut().run("ui.customizeRibbon", json!({"layout": 5})).is_err());
     assert!(h.state_mut().run("ui.quickAccessToolbar", json!({"add": "no.such.command"})).is_err());
+    let e = h.state_mut().run("ui.quickAccessToolbar", json!({"add": "view.zoom"})).unwrap_err();
+    assert!(e.contains("needs a value"), "{e}");
     assert!(h.state_mut().run("ui.quickAccessToolbar", json!({"commands": ["file.save", 7, null]})).is_ok());
     let r = h.state_mut().run("ui.quickAccessToolbar", json!({"add": "home.bold"})).unwrap();
     assert_eq!(r["commands"], json!(["file.save", "home.bold"]));
@@ -177,4 +179,45 @@ fn the_customize_dialog_fills_the_toolbar_and_a_new_tab() {
     h.get_by_label("Close").click();
     h.run_steps(2);
     assert!(h.state().dialog.is_none());
+}
+
+#[test]
+fn a_tab_or_group_is_renamed_as_typed_spaces_and_all() {
+    let mut h = harness();
+    h.state_mut().open_dialog("customizeRibbon", json!({}));
+    h.run_steps(3);
+    h.get_by_label("New Tab").click();
+    h.run_steps(3);
+    let value = |h: &Harness, rect: egui::Rect| h.get_all_by_role(Role::TextInput).find(|n| n.rect() == rect).and_then(|n| n.value());
+    let label = |h: &Harness| {
+        let l = &h.state().ui.ribbon;
+        (l.tabs[0].label.clone(), l.groups[0].label.clone())
+    };
+    // The new tab or its group is selected, with its name in the field.
+    let field = h.get_all_by_role(Role::TextInput).find(|n| matches!(n.value().as_deref(), Some("New Tab" | "New Group"))).unwrap();
+    let (rect, was) = (field.rect(), field.value().unwrap());
+    let renamed = |h: &Harness| if was == "New Tab" { label(h).0 } else { label(h).1 };
+    h.input_mut().events.push(Event::PointerMoved(rect.center()));
+    h.run_steps(1);
+    h.get_all_by_role(Role::TextInput).find(|n| n.rect() == rect).unwrap().click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.key_press(egui::Key::Backspace);
+    h.run_steps(2);
+    // An empty field stays empty while the user types; the label keeps its old name.
+    assert_eq!(value(&h, rect).as_deref(), Some(""));
+    assert_eq!(renamed(&h), was);
+    // One keystroke per frame, as a person types: each space must survive the next frame.
+    for c in "My Tools ".chars() {
+        h.input_mut().events.push(Event::Text(c.to_string()));
+        h.run_steps(2);
+    }
+    assert_eq!(value(&h, rect).as_deref(), Some("My Tools "));
+    assert_eq!(renamed(&h), "My Tools");
+    // Leaving the field shows the label, trimmed.
+    h.key_press(egui::Key::Enter);
+    h.run_steps(2);
+    assert_eq!(value(&h, rect).as_deref(), Some("My Tools"));
+    assert_eq!(renamed(&h), "My Tools");
 }
