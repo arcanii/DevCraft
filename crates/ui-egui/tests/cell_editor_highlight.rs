@@ -253,10 +253,11 @@ fn lines_added_below_take_whole_rows_and_clear_the_bottom_line() {
     let mut h = harness(s);
     let t = Tokens::get(&h.ctx);
     let (green, white) = (Paint::Fill(t.sel_border), Paint::Fill(Color32::WHITE));
-    let (c5, c6) = (cell(&h, "C5"), cell(&h, "C6"));
-    let [left, top, right, bottom] = sides(&h, "C4");
     h.state_mut().begin_edit(Some("one\ntwo".into()), false);
     h.run_steps(3);
+    // Where the cells are once editing has begun: a formula bar that grows with the text moves the grid.
+    let (c5, c6) = (cell(&h, "C5"), cell(&h, "C6"));
+    let [left, top, right, bottom] = sides(&h, "C4");
     assert_eq!(on_top(&h, bottom.center()), Some(white), "the line the second line of text crosses");
     for side in [left, top, right] {
         assert_eq!(on_top(&h, side.center()), Some(green), "at {side:?}");
