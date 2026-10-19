@@ -298,14 +298,22 @@ stood before the review and before the merge, should the owner want the two comm
 
 - **#463** (the File view's recent list tells when each workbook was last changed): **merged** on
   2026-10-13.
-- **#549** (`editor-highlight`: the selection's outline on the gridlines; the in-cell editor's
-  highlight): open, no review yet (looked 2026-10-13: mergeable, its check green, the last
-  commit a merge of `main`). "Auto-fix pull requests" watches it and sends
-  `<ci-monitor-event>` messages. In the last merges its `outline_bands` (upstream's, from their
-  fix for #687) takes its sides from this change's `outline_sides`: a small rewrite of another
-  contributor's function, which the owner may want pointed out in a comment (asked twice, not
-  answered). A trial merge of the branch into upstream's `main` of 2026-10-13 (`84acf62`) had
-  no conflict; it was not built.
+- **#549 and #1921: split at review (2026-10-19).** FredApps asked on 2026-10-18 for the outline
+  and the editor apart, the unchecked cases settled, and a run with #456. Split on upstream's
+  `66ce6be`:
+  - **#1921** (`selection-outline`, `d60e222`) is the outline alone, with 1,622 tests in the gate.
+  - **#549** (`editor-highlight`, force-pushed to `c04018f`) is the editor, stacked on #1921:
+    `d60e222`, then `dd3a88a` (the editor), then `c04018f` (a test measures once editing has
+    begun, so it holds with #456's growing formula bar). It has 1,630 tests in the gate.
+  - **The old #549 head `2649f9b`** is kept in the local branch `editor-highlight`.
+  - **The texts**: the descriptions and the reply to the review are in `target/k3-prep/pr549/`.
+  - **What stays unchecked against Excel**: Alt+Enter going downwards is described as a choice,
+    not as a match, and the outline was measured at 150% only. The twelve-point early widening
+    is kept on purpose. The reviewer had asked for these to be checked or dropped, so they may
+    push back on the first.
+  - **#456**: run on its branch, `in_cell_editor_stops_growing_at_five_lines` passes. #456's own
+    `bar_grows_to_five_lines_then_scrolls_with_name_box_pinned` fails on its branch alone.
+  - **Monitoring**: the app's PR bar watches #1921.
 - **#990** is not the fork's: another contributor's, which would make GridCraft run VBA. Read
   on the owner's word; ADR-0001 has what was found and what is recommended.
 
