@@ -1,8 +1,29 @@
 # Handover — GridCraft (aniefork), the fork the owner calls DevCraft
 
-## Now: read this first (2026-10-19)
+## Now: read this first (2026-10-21)
 
-**Committed on the owner's word (2026-10-19: "commit when the gate passes"), not pushed: three
+**Upstream 0.9.0 merged** on the owner's word ("merge upstream, commit when the gate passes"),
+not pushed. The merge took in upstream `68e58a2`, 67 commits. ROADMAP-aniefork.md's log has the
+details:
+- **The README conflicted**, and the fork's was kept.
+- **Clippy failed on Windows** in upstream's new `desktop_theme.rs`. Upstream's CI is Linux only.
+  It is fixed in the merge by a comment and one `allow` of the lint, off Linux only. It is in
+  the hooks table until upstream fixes it.
+  Upstream could be offered the fix; that is the owner's to decide.
+- **The gate log** is `target/k3-prep/gate-merge-090.log`.
+
+**Before that, pushed by the owner:** the three commits of 2026-10-19 below, and the handover's
+note of the #549 split (`6534c96`).
+
+**Pull requests:**
+- **#1921 and #549** are waiting for review (see "#549 and #1921" further down).
+- **#1921**: CodeRabbit asked for the outline's pixels to be worked out after the right-to-left
+  mirror. This is not checked yet; a right-to-left case in `tests/selection_outline.rs` would
+  show it. The owner has not yet said to look.
+
+## 2026-10-19
+
+**Committed on the owner's word (2026-10-19: "commit when the gate passes"), pushed since: three
 commits after `545de30`.** The Mandelbrot (below); the window's two fixes; OpenGL ES 3.0 with the
 plan for WebGPU. The gate passed on the whole before they were committed (1,964 tests, with zig;
 `target/k3-prep/gate-commit-1019.log`). `git status -sb` says how far `main` is ahead.
@@ -116,7 +137,7 @@ frames, re-centring it, so a test lets it settle before it clicks (`go_project`)
 3. **A cell that changes the game.**
 4. **A "workbook is about to be saved" event.**
 
-**Upstream:** merged to 0.8.0 on 2026-10-18 (above).
+**Upstream:** merged to 0.9.0 on 2026-10-21 (at the top).
 
 **Decided by the owner (2026-10-15): a project may hold a save up**, "Wait up to 2 seconds for
 projects that ask to be waited for" (choice (a) below). The choices offered: (a) **wait up to 2 s** (recommended): a panel

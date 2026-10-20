@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-18, upstream `c30fa3f` (15 commits since the merge before: releases 0.7.0 and 0.8.0) |
+| Last merge of upstream | 2026-10-21, upstream `68e58a2` (67 commits since the merge before, 41 of them not merges: release 0.9.0) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -738,6 +738,7 @@ still there:
 | `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
 | `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
 | `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
+| `crates/ui-egui/src/desktop_theme.rs`, `DesktopTheme::start`, above `let mut link = Link::default();` | `#[cfg_attr(not(target_os = "linux"), allow(clippy::let_unit_value))]`. Off Linux upstream's `Link` is `()`, so the line binds `()`, which clippy refuses. Upstream's CI runs on Linux only and never sees it. A unit struct in place of `()` trips `default_constructed_unit_structs` instead. A fix of upstream's code, not a hook: drop it once upstream's own fix arrives |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -768,6 +769,8 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
 
 - **`README.md`**, whenever upstream changes theirs: the root README is the fork's own since
   2026-10-14. Keep the fork's (`git checkout --ours README.md`), then read upstream's change.
+  The 0.9.0 merge conflicted here alone: upstream's badges, and its wording without other
+  products' names, none of it in the fork's README.
 - **The logo files in `docs/brand/`**, if upstream changes one (the fork deleted them): delete
   it again (`git rm`). A new file upstream adds there merges in without a conflict, so **look
   in `docs/brand/` after every merge**: only `LICENSE-brand.txt` belongs there.
@@ -820,6 +823,39 @@ included.
 
 Newest first.
 
+- **2026-10-21 (merge of upstream `68e58a2`, GridCraft 0.9.0):** On the owner's word ("merge
+  upstream, commit when the gate passes"). 67 commits since the merge before, 41 of them not
+  merges, with release 0.9.0:
+  - **Right-to-left**: `.xls` sheets open right-to-left; text boxes and shapes keep their
+    paragraph direction; HTML export marks right-to-left sheets and Arabic text; an explicit
+    Left or Right alignment keeps its side.
+  - **Limits and parsing**: name lengths count characters, table names stop at 255, `.xls`
+    dialog sheets are skipped, and `RangeRef::parse` refuses signed and multi-`$` whole rows and
+    columns.
+  - **The keyboard**: Ctrl+Shift+= and Ctrl+- act on whole rows and columns, letters typed with
+    Alt held continue a keytip sequence, Ctrl+Enter gives each cell its number format, Backspace
+    then Enter is one undo step, and redo selects the redone cell.
+  - **Touch**: a one-finger drag pans the grid.
+  - **Embedding**: a host can turn off the title bar and the File tab.
+  - **Pivot tables, filters and files**: grand totals in Excel's direction, numeric custom
+    filters, CSV fields kept as text, references outlined only on their own sheet, and hidden
+    zero-width columns shown again.
+  - **Translations**: German context menus, French and Serbian Options headings.
+  - **Upstream's docs**: they no longer name other products.
+  - **CI**: Dependabot, a CodeRabbit setting, a D-Bus test dropped, and clippy for Rust 1.95.
+
+  **One conflict, `README.md`**, upstream's own: the fork's kept, as "Syncing with upstream"
+  says. `grid.rs`, `lib.rs` and `ribbon.rs`, where the fork has hooks, merged by themselves.
+  Nothing came into `docs/brand/` or `ATTRIBUTION.md`. The fork's mentions in upstream's code
+  (`crates`, `apps`, `xtask`, outside its own files) were counted before and after: 77,
+  unchanged. DevCraft stays 0.1.0.
+
+  **One thing broke without a conflict**: clippy, on Windows, in upstream's new
+  `desktop_theme.rs`. Off Linux its `Link` is `()`, and `let mut link = Link::default();` is a
+  `let_unit_value`. Upstream's CI runs on Linux only, so its gate is green. Fixed here in two
+  lines, a comment and an `allow` of that lint off Linux on that one line. It is in the hooks
+  table until upstream fixes it.
+  `Cargo.lock` takes the fork's crate to 0.9.0 with the workspace.
 - **2026-10-19 (OpenGL ES 3.0, the whole of it):** On the owner's word ("Let's do the graphics
   work first : Fuller OpenGL ES, then a plan for WebGPU"). `<GLES3/gl3.h>` holds every call of
   OpenGL ES 3.0 (241 answered by the loader, five done by the kit's own C because they hand
