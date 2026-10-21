@@ -21,8 +21,13 @@ type Harness = egui_kittest::Harness<'static, SheetApp>;
 const SCALES: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
 fn harness(ppp: f32, select: &str) -> Harness {
+    harness_on(ppp, select, false)
+}
+
+fn harness_on(ppp: f32, select: &str, right_to_left: bool) -> Harness {
     let mut session = Session::new();
     session.new_workbook();
+    session.execute("view.rightToLeft", json!({"on": right_to_left})).unwrap();
     session.execute("selection.set", json!({"range": select})).unwrap();
     let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).with_pixels_per_point(ppp).build_ui_state(
         |ui, app: &mut SheetApp| {
@@ -36,11 +41,17 @@ fn harness(ppp: f32, select: &str) -> Harness {
     h
 }
 
-/// Where a cell or range is on screen.
+fn geo(h: &Harness) -> Geo {
+    let app = h.state();
+    let sheet = app.session.active().unwrap().wb.active().unwrap();
+    Geo::new(sheet, app.grid.rect.unwrap(), app.view().scroll)
+}
+
+/// Where a cell or range is on screen (before a right-to-left sheet is mirrored).
 fn cells(h: &Harness, a1: &str) -> Rect {
     let app = h.state();
     let sheet = app.session.active().unwrap().wb.active().unwrap();
-    Geo::new(sheet, app.grid.rect.unwrap(), app.view().scroll).range_rect(sheet, RangeRef::parse(a1).unwrap())
+    geo(h).range_rect(sheet, RangeRef::parse(a1).unwrap())
 }
 
 /// The shapes of the last frame, in the order they were painted.
@@ -82,6 +93,11 @@ fn pixels(centre: f32, width: f32, ppp: f32) -> (f32, f32) {
 /// The gridline the grid painted nearest the cell edge at `edge`: an upright one for an edge
 /// along x, a level one for an edge along y. Its pixels, as the renderer draws it.
 fn gridline(h: &Harness, edge: f32, upright: bool) -> (f32, f32) {
+    gridline_near(h, edge - 0.5, upright)
+}
+
+/// The gridline the grid painted nearest `centre`, before the renderer moved it onto pixels.
+fn gridline_near(h: &Harness, centre: f32, upright: bool) -> (f32, f32) {
     let colour = Tokens::get(&h.ctx).gridline;
     let along = |points: &[egui::Pos2; 2]| if upright { (points[0].x, points[1].x) } else { (points[0].y, points[1].y) };
     let found = painted(h)
@@ -89,14 +105,14 @@ fn gridline(h: &Harness, edge: f32, upright: bool) -> (f32, f32) {
         .filter(|shape| matches!(shape, Shape::LineSegment { points, stroke } if stroke.color == colour && along(points).0 == along(points).1))
         .min_by(|a, b| {
             let off = |shape: &Shape| match shape {
-                Shape::LineSegment { points, .. } => (along(points).0 - (edge - 0.5)).abs(),
+                Shape::LineSegment { points, .. } => (along(points).0 - centre).abs(),
                 _ => f32::INFINITY,
             };
             off(a).total_cmp(&off(b))
         })
         .expect("a gridline is painted");
     let Shape::LineSegment { points, stroke } = found else { unreachable!() };
-    assert!((along(points).0 - (edge - 0.5)).abs() < 1.0, "the gridline for the edge at {edge} is at {}", along(points).0);
+    assert!((along(points).0 - centre).abs() < 1.0, "the gridline near {centre} is at {}", along(points).0);
     let middle = rendered(h, found).center();
     pixels(if upright { middle.x } else { middle.y }, stroke.width, h.ctx.pixels_per_point())
 }
@@ -120,7 +136,7 @@ fn each_side_of_the_outline_covers_its_gridline_and_reaches_outward_at_every_sca
         for select in ["C4", "B3:D6"] {
             let h = harness(ppp, select);
             let at = cells(&h, select);
-            let [left, top, right, bottom] = outline_sides(at, ppp);
+            let [left, top, right, bottom] = outline_sides(at, ppp, None);
             let what = format!("{select} at {ppp} pixels a point");
             // The near sides end where their gridline ends, and start at or before it.
             for (side, edge, upright) in [(left, at.left(), true), (top, at.top(), false)] {
@@ -147,6 +163,45 @@ fn each_side_of_the_outline_covers_its_gridline_and_reaches_outward_at_every_sca
 }
 
 #[test]
+fn on_a_right_to_left_sheet_the_mirrored_outline_still_covers_its_gridlines() {
+    for ppp in SCALES {
+        for select in ["C4", "B3:D6"] {
+            let h = harness_on(ppp, select, true);
+            let g = geo(&h);
+            assert!(g.rtl);
+            let at = cells(&h, select);
+            let [left, top, right, bottom] = outline_sides(at, ppp, g.mirror_axis());
+            let what = format!("{select} at {ppp} pixels a point, right to left");
+            // Everything is painted as for a left-to-right sheet and then mirrored, sides and
+            // gridlines alike, so the cells' left side is drawn on the right. The renderer puts
+            // the mirrored lines on pixels.
+            let line = |edge: f32| gridline_near(&h, g.mirror_x(edge.round() - 0.5), true);
+            // The side drawn on the left starts at or before its gridline and ends with it.
+            let (drawn, under) = (side_pixels(&h, g.mirror_rect(right), true), line(at.right()));
+            assert_eq!(drawn.1, under.1, "{what}: the left side {drawn:?} ends with its gridline {under:?}");
+            assert!(drawn.0 <= under.0, "{what}: and covers it: {drawn:?} over {under:?}");
+            // The side drawn on the right starts with its gridline and ends at or after it.
+            let (drawn, under) = (side_pixels(&h, g.mirror_rect(left), true), line(at.left()));
+            assert_eq!(drawn.0, under.0, "{what}: the right side {drawn:?} starts with its gridline {under:?}");
+            assert!(drawn.1 >= under.1, "{what}: and covers it: {drawn:?} over {under:?}");
+            // The top and bottom are not moved up or down.
+            for (side, edge, near) in [(top, at.top(), true), (bottom, at.bottom(), false)] {
+                let (drawn, under) = (side_pixels(&h, g.mirror_rect(side), false), gridline(&h, edge, false));
+                let lies_on = if near { drawn.1 == under.1 && drawn.0 <= under.0 } else { drawn.0 == under.0 && drawn.1 >= under.1 };
+                assert!(lies_on, "{what}: {drawn:?} on its gridline {under:?}");
+            }
+            // Every side is the same whole number of pixels.
+            let weights: Vec<f32> = [(left, true), (top, false), (right, true), (bottom, false)]
+                .map(|(side, upright)| side_pixels(&h, g.mirror_rect(side), upright))
+                .iter()
+                .map(|p| p.1 - p.0)
+                .collect();
+            assert!(weights.iter().all(|w| *w == weights[0] && *w >= 1.0), "{what}: {weights:?}");
+        }
+    }
+}
+
+#[test]
 fn the_outline_goes_round_the_inside_of_the_cells() {
     // At a pixel a point the arithmetic is plain: the gridlines are the last point of the cell
     // before and the last point of the cell itself, and the outline is each of those and the
@@ -154,7 +209,7 @@ fn the_outline_goes_round_the_inside_of_the_cells() {
     let h = harness(1.0, "C4");
     let at = cells(&h, "C4");
     let (l, t, r, b) = (at.left().round(), at.top().round(), at.right().round(), at.bottom().round());
-    let [left, top, right, bottom] = outline_sides(at, 1.0);
+    let [left, top, right, bottom] = outline_sides(at, 1.0, None);
     assert_eq!((left.left(), left.right()), (l - 2.0, l));
     assert_eq!((top.top(), top.bottom()), (t - 2.0, t));
     assert_eq!((right.left(), right.right()), (r - 1.0, r + 1.0));

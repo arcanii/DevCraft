@@ -312,6 +312,11 @@ impl Geo {
     pub fn mirror_x(&self, x: f32) -> f32 {
         if self.rtl { self.rect.left() + self.rect.right() - x } else { x }
     }
+    /// The line a right-to-left sheet is reflected across, as the `axis` of `mirror_painted`
+    /// (`x` becomes `axis - x`); `None` when the sheet is left-to-right.
+    pub fn mirror_axis(&self) -> Option<f32> {
+        self.rtl.then_some(self.rect.left() + self.rect.right())
+    }
     pub fn mirror_pos(&self, p: Pos2) -> Pos2 {
         pos2(self.mirror_x(p.x), p.y)
     }
@@ -1596,9 +1601,28 @@ fn gridline_centre(edge: f32) -> f32 {
 /// `tests/selection_outline.rs` compares the two as the renderer tessellates them, at several
 /// display scales, so a renderer that changes its rule is noticed.
 fn gridline_span(edge: f32, ppp: f32) -> (f32, f32) {
+    gridline_pixels(gridline_centre(edge), ppp)
+}
+
+/// [`gridline_span`] for an upright gridline on a sheet whose painting is then reflected across
+/// `mirror` (right-to-left; [`Geo::mirror_axis`]). The renderer moves the reflected line onto
+/// pixels, so its pixels are found there and reflected back: reflected with everything else, the
+/// span covers them exactly.
+fn gridline_span_mirrored(edge: f32, ppp: f32, mirror: Option<f32>) -> (f32, f32) {
+    match mirror {
+        Some(axis) => {
+            let (first, past) = gridline_pixels(axis - gridline_centre(edge), ppp);
+            (axis - past, axis - first)
+        }
+        None => gridline_span(edge, ppp),
+    }
+}
+
+/// The device pixels a gridline the renderer is given centred at `centre` covers, in points.
+fn gridline_pixels(centre: f32, ppp: f32) -> (f32, f32) {
     let ppp = if ppp.is_finite() && ppp > 0.0 { ppp } else { 1.0 };
     let width = ppp;
-    let centre = gridline_centre(edge) * ppp;
+    let centre = centre * ppp;
     let odd = width <= 1.0 || (width * 0.5 + 0.25).fract() > 0.5;
     let centre = if odd { (centre - 0.5).round() + 0.5 } else { centre.round() };
     // The pixels it covers half of or more: a fainter fringe beside them doesn't count.
@@ -1615,10 +1639,14 @@ fn gridline_span(edge: f32, ppp: f32) -> (f32, f32) {
 /// cells, no gridline shows inside it, and every edge is sharp at any display scale. That is
 /// where Excel puts its outline (measured on a display at 150%: the gridline's own pixel and
 /// the one outside it, on each side).
-pub fn outline_sides(cells: Rect, ppp: f32) -> [Rect; 4] {
+///
+/// `mirror` is the line a right-to-left sheet's painting is reflected across
+/// ([`Geo::mirror_axis`]), `None` on a left-to-right sheet. The sides are given where they are
+/// painted, before the reflection, and lie on the gridlines once it is done.
+pub fn outline_sides(cells: Rect, ppp: f32, mirror: Option<f32>) -> [Rect; 4] {
     let ppp = if ppp.is_finite() && ppp > 0.0 { ppp } else { 1.0 };
-    let (left, top) = (gridline_span(cells.left(), ppp), gridline_span(cells.top(), ppp));
-    let (right, bottom) = (gridline_span(cells.right(), ppp), gridline_span(cells.bottom(), ppp));
+    let (left, top) = (gridline_span_mirrored(cells.left(), ppp, mirror), gridline_span(cells.top(), ppp));
+    let (right, bottom) = (gridline_span_mirrored(cells.right(), ppp, mirror), gridline_span(cells.bottom(), ppp));
     // A whole number of pixels, and never thinner than the gridline it lies on.
     let w = ((OUTLINE_W * ppp).round().max(1.0) / ppp).max(left.1 - left.0);
     let inner = Rect::from_min_max(pos2(left.1, top.1), pos2(right.0, bottom.0));
@@ -1637,12 +1665,16 @@ pub fn outline_sides(cells: Rect, ppp: f32) -> [Rect; 4] {
 /// A side that spans a whole column (20 million points tall) loses its precision in the
 /// tessellator and vanishes; sides that stay near the viewport do not. Sides wholly outside
 /// `clip` are left out.
-pub(crate) fn outline_bands(cells: Rect, ppp: f32, clip: Rect) -> Vec<Rect> {
+pub(crate) fn outline_bands(cells: Rect, ppp: f32, mirror: Option<f32>, clip: Rect) -> Vec<Rect> {
     if !cells.is_finite() || !clip.is_finite() {
         return Vec::new();
     }
     let clip = clip.expand(OUTLINE_W * 2.0);
-    outline_sides(cells, ppp).into_iter().map(|s| s.intersect(clip)).filter(|s| s.is_finite() && s.width() > 0.0 && s.height() > 0.0).collect()
+    outline_sides(cells, ppp, mirror)
+        .into_iter()
+        .map(|s| s.intersect(clip))
+        .filter(|s| s.is_finite() && s.width() > 0.0 && s.height() > 0.0)
+        .collect()
 }
 
 /// `outline` is where the current area's border is drawn this frame (see `selection_glide`).
@@ -1687,7 +1719,7 @@ pub(crate) fn paint_selection(
         }
     }
     if cur_here {
-        for side in outline_bands(outline, p.ctx().pixels_per_point(), p.clip_rect()) {
+        for side in outline_bands(outline, p.ctx().pixels_per_point(), geo.mirror_axis(), p.clip_rect()) {
             p.rect_filled(side, 0.0, t.sel_border);
         }
     }
@@ -3702,7 +3734,7 @@ mod outline_band_tests {
         let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 600.0));
         let col = Rect::from_min_max(pos2(100.0, 40.0), pos2(180.0, 20_971_540.0));
         for ppp in [1.0, 1.25, 1.5, 2.0] {
-            let sides = outline_bands(col, ppp, clip);
+            let sides = outline_bands(col, ppp, None, clip);
             // Left, right and top (in view); the bottom is 20 million points away.
             assert_eq!(sides.len(), 3, "{ppp}");
             assert!(sides.iter().all(|s| s.bottom() <= clip.bottom() + 4.0 + f32::EPSILON), "{ppp}");
@@ -3715,12 +3747,12 @@ mod outline_band_tests {
     #[test]
     fn outline_outside_the_view_and_non_finite_draw_nothing() {
         let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 600.0));
-        assert!(outline_bands(Rect::from_min_max(pos2(900.0, 0.0), pos2(950.0, 20.0)), 1.0, clip).is_empty());
-        assert!(outline_bands(Rect::from_min_max(pos2(f32::NAN, 0.0), pos2(1.0, 1.0)), 1.0, clip).is_empty());
-        assert!(outline_bands(Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), 1.0, Rect::NAN).is_empty());
+        assert!(outline_bands(Rect::from_min_max(pos2(900.0, 0.0), pos2(950.0, 20.0)), 1.0, None, clip).is_empty());
+        assert!(outline_bands(Rect::from_min_max(pos2(f32::NAN, 0.0), pos2(1.0, 1.0)), 1.0, None, clip).is_empty());
+        assert!(outline_bands(Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), 1.0, None, Rect::NAN).is_empty());
         // In view, it is the four sides of `outline_sides`, as they are.
         let cells = Rect::from_min_max(pos2(100.0, 40.0), pos2(180.0, 60.0));
-        assert_eq!(outline_bands(cells, 1.5, clip), outline_sides(cells, 1.5).to_vec());
+        assert_eq!(outline_bands(cells, 1.5, None, clip), outline_sides(cells, 1.5, None).to_vec());
     }
 
     #[test]
@@ -3749,7 +3781,7 @@ mod outline_band_tests {
     fn the_outline_covers_each_gridline_and_reaches_outward() {
         let cells = Rect::from_min_max(pos2(100.0, 50.0), pos2(160.0, 66.0));
         // At a pixel a point: each gridline's own pixel and the one outside it.
-        let [left, top, right, bottom] = outline_sides(cells, 1.0);
+        let [left, top, right, bottom] = outline_sides(cells, 1.0, None);
         assert_eq!((left.left(), left.right()), (98.0, 100.0));
         assert_eq!((top.top(), top.bottom()), (48.0, 50.0));
         assert_eq!((right.left(), right.right()), (159.0, 161.0));
@@ -3759,7 +3791,7 @@ mod outline_band_tests {
         assert_eq!((left.top(), left.bottom()), (48.0, 67.0));
         // A whole number of pixels at every scale, on its gridline, never thinner than it.
         for ppp in [1.0_f32, 1.25, 1.5, 1.75, 2.0, 3.0] {
-            let [left, top, right, bottom] = outline_sides(cells, ppp);
+            let [left, top, right, bottom] = outline_sides(cells, ppp, None);
             let (px, grid) = (left.width() * ppp, gridline_span(cells.left(), ppp));
             assert!((px - px.round()).abs() < 1e-3 && px >= 1.0, "{ppp}: {px} pixels");
             assert!(px + 1e-3 >= (grid.1 - grid.0) * ppp, "{ppp}: covers its gridline");
@@ -3774,7 +3806,7 @@ mod outline_band_tests {
         }
         // Numbers that make no sense give no panic, and nothing that would be painted.
         for (cells, ppp) in [(Rect::NAN, 1.0), (cells, f32::NAN), (Rect::from_min_max(pos2(0.0, 0.0), pos2(f32::INFINITY, 10.0)), 1.5)] {
-            let _ = outline_sides(cells, ppp).map(|side| side.is_finite() && side.is_positive());
+            let _ = outline_sides(cells, ppp, None).map(|side| side.is_finite() && side.is_positive());
         }
     }
 }

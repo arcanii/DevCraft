@@ -45,7 +45,7 @@ this logic, with one undo step.
 |---|---|
 | Click/drag/Shift/Ctrl selection, multi-area selection | rectangular drag works in one direction only in some cases (#28) |
 | Selection outline glides to a new selection (Excel: "Provide feedback with animation") | done (10-11): 0.12 s, decelerating, with the fill and fill handle; View ▸ Animations (`view.animations`) turns it off. The timing is an estimate, not yet measured against Excel; the system's reduced-motion setting isn't followed yet |
-| Selection outline lies on the gridlines | done (10-12): each side covers the gridline that bounds the selection and reaches outward from it, a whole number of device pixels wide at any display scale, so no gridline shows inside it. Measured in Windows Excel on a display at 150%: the gridline's own pixel and the one outside it, on each side. The weight is unchanged, two points: three pixels at 150%, where Excel's measured two |
+| Selection outline lies on the gridlines | done (10-12): each side covers the gridline that bounds the selection and reaches outward from it, a whole number of device pixels wide at any display scale, so no gridline shows inside it. Measured in Windows Excel on a display at 150%: the gridline's own pixel and the one outside it, on each side. The weight is unchanged, two points: three pixels at 150%, where Excel's measured two. On a right-to-left sheet too, where the grid is drawn mirrored |
 | Fill handle: drag to fill series, double-click to fill down, right-drag menu | fill done (Ctrl+drag swaps copy and series); right-drag menu missing |
 | Drag-move and drag-copy cells (border drag, Ctrl/Option, Shift to insert) | done (M3) |
 | In-cell editing, Enter/Tab movement, Alt/Option+Enter line breaks | done |
@@ -162,6 +162,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | On a right-to-left sheet the selection's outline lies on the gridlines too: at 125% and 175% display scaling it was a pixel off them, so a gridline showed inside one side |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
 | 2026-10-12 | minor | The selection's outline lies on the gridlines at any display scale, where it was a pixel past them at the bottom and right |
