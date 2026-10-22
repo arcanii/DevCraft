@@ -1,11 +1,12 @@
 //! The column the sheet's vertical scrollbar stands in, above where its track begins.
 //!
-//! Upstream's grid paints the scrollbar's track from the first row that scrolls, and nothing
+//! Upstream's grid painted the scrollbar's track from the first row that scrolls, and nothing
 //! above it: beside the column headings (and beside frozen rows) the sheet's own white showed
 //! through, a white square at the top of the scrollbar, plain to see in the dark theme (the
 //! owner, 2026-10-19: "a graphical oddity the white square at the top of the scrollbar"). Here
 //! that part of the column is painted: beside the headings as the headings are, beside frozen
-//! rows as the track is.
+//! rows as the track is. Upstream now fills the whole column in the track's colour first
+//! (its 1788c5a), so without this the part beside the headings would be the track's colour.
 
 use egui::{Painter, Rect, Stroke, pos2};
 

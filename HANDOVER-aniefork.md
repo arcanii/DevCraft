@@ -1,6 +1,26 @@
 # Handover — GridCraft (aniefork), the fork the owner calls DevCraft
 
-## Now: read this first (2026-10-21)
+## Now: read this first (2026-10-22)
+
+**Upstream 0.10.0 merged and pushed** on the owner's word ("Merge upstream main into the fork's
+main, … run cargo xtask ci, then commit and push main to origin"): upstream `a1c8454`, 610
+commits. ROADMAP-aniefork.md's log has the details:
+- **Four conflicts**, all resolved keeping the fork's hooks: the README (the fork's kept), the
+  cell editor in `grid.rs` (upstream's wrapping editor for Wrap Text cells, the fork's growth
+  for the rest), `UiState` and `logic` in `lib.rs`, and the title in `ribbon.rs` (the fork's
+  name now goes through upstream's truncating `paint_title`).
+- **The fork's code** follows two upstream changes: `vba_project` is an `Arc` (#1629) and
+  undo steps carry `retained_bytes` (#1227), which the panels' `batch` now estimates.
+- **Upstream fixed the clippy lint** the fork had patched in `desktop_theme.rs`: the patch and
+  its hooks-table row are gone.
+- **Two upstream tests are ignored** (`tests/in_cell_editor_size.rs`): they measure upstream's
+  editor painting, which the fork replaces. In the hooks table.
+
+**Upstream pull requests of this session:** #1629, #1630 and #1631 (memory) were merged on
+2026-10-22. #1641 (Customize the Ribbon and the Quick Access Toolbar) and #1643 (undo steps
+share a sheet's other parts) are open, merged with upstream's main, and answered CodeRabbit.
+
+## 2026-10-21
 
 **Upstream 0.9.0 merged** on the owner's word ("merge upstream, commit when the gate passes"),
 not pushed. The merge took in upstream `68e58a2`, 67 commits. ROADMAP-aniefork.md's log has the

@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-21, upstream `68e58a2` (67 commits since the merge before, 41 of them not merges: release 0.9.0) |
+| Last merge of upstream | 2026-10-22, upstream `a1c8454` (610 commits since the merge before, 345 of them not merges: release 0.10.0) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -738,7 +738,7 @@ still there:
 | `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
 | `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
 | `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
-| `crates/ui-egui/src/desktop_theme.rs`, `DesktopTheme::start`, above `let mut link = Link::default();` | `#[cfg_attr(not(target_os = "linux"), allow(clippy::let_unit_value))]`. Off Linux upstream's `Link` is `()`, so the line binds `()`, which clippy refuses. Upstream's CI runs on Linux only and never sees it. A unit struct in place of `()` trips `default_constructed_unit_structs` instead. A fix of upstream's code, not a hook: drop it once upstream's own fix arrives |
+| `crates/ui-egui/tests/in_cell_editor_size.rs` (upstream's #1755), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -823,6 +823,44 @@ included.
 
 Newest first.
 
+- **2026-10-22 (merge of upstream `a1c8454`, GridCraft 0.10.0):** On the owner's word ("Merge
+  upstream main into the fork's main, … run cargo xtask ci, then commit and push main to
+  origin"). 610 commits since the merge before, 345 of them not merges, with release 0.10.0.
+  Among them the fork's three memory pull requests, merged on 2026-10-22: undo steps share
+  picture and macro bytes (#1629), the interface fonts are held once (#1630), and floating
+  pictures' textures are bounded (#1631). Also Turkish, Romanian and Ukrainian, Japanese paper
+  sizes, Number Stored as Text, Paste Special laid out as Excel's, an editor that wraps in Wrap
+  Text cells, a title cut with "…" between the title bar's controls, AutoSave kept as a
+  preference, the undo history bounded by the storage it keeps (#1227), caps on array and
+  regression sizes, and SonarCloud in CI.
+  - **Four conflicts.** `README.md`, upstream's (the app icon above the title, a link): the
+    fork's kept. `grid.rs`, the cell editor: upstream's wrapping editor for a Wrap Text cell,
+    the fork's growth a whole cell at a time for any other; `paint_editor` is given the wrapped
+    width there, so it clears no gridline the text doesn't reach. `lib.rs`: upstream's
+    `autosave` after `autocomplete` and the fork's field after it, in `UiState` and its
+    `Default`; `aniefork::poll` still right after `control::poll`, then upstream's new
+    `guard_window_close`. `ribbon.rs`: upstream now paints the title after the controls on the
+    right, cut to fit between them; the fork's `window_title` is applied to the title there, so
+    the unsaved dot now comes after the application's name, where upstream keeps it in view.
+  - **Broke without a conflict, in the fork's own files:** `vba_project` is an
+    `Option<Arc<Vec<u8>>>` since #1629 (the macros tests, and `development.rs`'s), and
+    `HistoryEntry` has `retained_bytes` (#1227). The panels' `batch` makes its one undo step
+    itself, so it now estimates that step's bytes as the engine does for its own (the engine's
+    function is private; `CellStore::retained_bytes_against` is public), and the engine trims
+    the history by them when the next step is added. The batch test checks the estimate.
+  - **Two of upstream's new tests are ignored here:** `tests/in_cell_editor_size.rs` (#1755)
+    looks for the editor's white background painted from the cell's top-left corner, and the
+    fork paints it inside the selection's highlight. What they check is checked by the fork's own
+    tests of `editor_size` and `paint_editor`. Listed in the hooks table.
+  - **Upstream fixed what the fork had patched:** clippy off Linux in `desktop_theme.rs`
+    (upstream's `3979e48`, `NoLink`). The fork's `allow` is gone, and its row in the hooks
+    table. Upstream also paints the scrollbar's column beside the headings now (`1788c5a`), in
+    the track's colour; the fork's hook paints over it beside the headings, in theirs.
+  - Every hook in the table was checked present. Nothing came into `docs/brand/` or
+    `ATTRIBUTION.md`. The fork's mentions in upstream's code: 77 (78 before, less the lint's).
+    `Cargo.lock` takes the fork's crate to 0.10.0 with the workspace; DevCraft stays 0.1.0.
+  - Checked on the result, on macOS: `cargo xtask ci`, all eight steps (fmt, clippy, 2,456 tests
+    with 3 ignored, assets, layers, wasm, parity, keytips).
 - **2026-10-21 (merge of upstream `68e58a2`, GridCraft 0.9.0):** On the owner's word ("merge
   upstream, commit when the gate passes"). 67 commits since the merge before, 41 of them not
   merges, with release 0.9.0:

@@ -3834,7 +3834,7 @@ mod tests {
         // Reading asks the person nothing, and changes nothing.
         assert_eq!(asked.questions().len(), 1, "only the level was asked about");
         assert!(agents::snapshot().waiting.is_empty() && h.state().notice.is_none());
-        assert_eq!(h.state().session.active().unwrap().wb.vba_project.as_deref(), Some(project.as_slice()));
+        assert_eq!(h.state().session.active().unwrap().wb.vba_project.as_deref().map(Vec::as_slice), Some(project.as_slice()));
         // The workbook no longer carries one: nor is it told of any more.
         let doc = h.state_mut().session.active_mut().unwrap();
         std::sync::Arc::make_mut(&mut doc.wb).vba_project = None;

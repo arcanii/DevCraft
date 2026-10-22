@@ -310,7 +310,8 @@ fn batch(app: &mut SheetApp, call: &Call, label: &str, commands: &[(String, Json
         doc.redo = redo;
     } else {
         let mut history = undo;
-        history.push(HistoryEntry { label: label.to_string(), wb: before, selection });
+        let retained_bytes = retained_bytes(&before, &doc.wb);
+        history.push(HistoryEntry { label: label.to_string(), wb: before, selection, retained_bytes });
         if history.len() > UNDO_LIMIT {
             history.remove(0);
         }
@@ -318,6 +319,23 @@ fn batch(app: &mut SheetApp, call: &Call, label: &str, commands: &[(String, Json
         doc.redo.clear();
     }
     Ok(Json::Array(results))
+}
+
+/// What an undo step keeps beyond the workbook after it, estimated as upstream's engine does for
+/// its own steps (`history_retained_bytes`, private there): each sheet the step doesn't share
+/// with the workbook after it, and that sheet's cells that differ. The engine trims the history
+/// to its byte budget by these estimates when the next step is added.
+fn retained_bytes(older: &gridcraft_engine::model::Workbook, newer: &gridcraft_engine::model::Workbook) -> usize {
+    let mut bytes = std::mem::size_of::<gridcraft_engine::model::Workbook>();
+    let empty = gridcraft_engine::model::CellStore::new();
+    for (index, sheet) in older.sheets.iter().enumerate() {
+        if newer.sheets.iter().any(|next| Arc::ptr_eq(sheet, next)) {
+            continue;
+        }
+        let next = newer.sheets.get(index).map_or(&empty, |next| &next.cells);
+        bytes = bytes.saturating_add(std::mem::size_of::<gridcraft_engine::model::Sheet>()).saturating_add(sheet.cells.retained_bytes_against(next));
+    }
+    bytes
 }
 
 #[cfg(test)]
@@ -785,6 +803,8 @@ mod tests {
         assert_eq!((cell(&mut h, "A1"), cell(&mut h, "B1")), (json!(10.0), json!(20.0)));
         assert_eq!(history(&h), (before.0 + 1, 0), "three changes, one undo step");
         assert_eq!(h.state().session.active().unwrap().undo.last().map(|e| e.label.as_str()), Some("Project tidy"), "named after the project");
+        // Counted against the engine's byte budget for the history, as its own steps are.
+        assert!(h.state().session.active().unwrap().undo.last().is_some_and(|e| e.retained_bytes > 0));
         h.state_mut().run("edit.undo", json!({})).unwrap();
         assert_eq!((cell(&mut h, "A1"), cell(&mut h, "B1")), (json!(1.0), Json::Null), "one undo takes all of it back");
         h.state_mut().run("edit.redo", json!({})).unwrap();

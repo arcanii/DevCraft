@@ -383,7 +383,7 @@ pub(crate) mod tests {
     /// Gives the open workbook a VBA project, as one read from an `.xlsm` has.
     pub(crate) fn carry(app: &mut SheetApp, project: Vec<u8>) {
         let doc = app.session.active_mut().expect("a workbook");
-        Arc::make_mut(&mut doc.wb).vba_project = Some(project);
+        Arc::make_mut(&mut doc.wb).vba_project = Some(Arc::new(project));
     }
 
     pub(crate) fn sample() -> Vec<u8> {
@@ -441,7 +441,7 @@ pub(crate) mod tests {
         // It was read once, and the workbook still carries it as it was.
         let first = read(&a).unwrap();
         assert!(Arc::ptr_eq(&first.project, &read(&a).unwrap().project));
-        assert_eq!(a.session.active().unwrap().wb.vba_project.as_deref(), Some(project.as_slice()));
+        assert_eq!(a.session.active().unwrap().wb.vba_project.as_deref().map(Vec::as_slice), Some(project.as_slice()));
         // A project that can't be read is an error that says so, and nothing worse.
         carry(&mut a, b"not a VBA project at all".to_vec());
         assert!(a.run("developer.macros", json!({})).unwrap_err().contains("could not be read"));
@@ -546,7 +546,7 @@ pub(crate) mod tests {
         assert_eq!(h.state().toast.as_ref().map(|(said, _)| said.as_str()), Some(COPIED));
         assert!(REQUEST.contains("topic \"macros\"") && !REQUEST.contains("AddUp") && !REQUEST.contains(&title));
         // The workbook is as it was: reading and copying changed nothing.
-        assert_eq!(h.state().session.active().unwrap().wb.vba_project.as_deref(), Some(project.as_slice()));
+        assert_eq!(h.state().session.active().unwrap().wb.vba_project.as_deref().map(Vec::as_slice), Some(project.as_slice()));
     }
 
     #[test]
