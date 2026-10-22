@@ -3100,7 +3100,8 @@ fn undo_steps_share_the_parts_an_edit_leaves_alone() {
     // Undo gives back exactly the workbook before.
     s.execute("edit.undo", json!({"steps": 2})).unwrap();
     let sh = s.doc().unwrap().wb.active().unwrap();
-    assert_eq!(sh.comments.len(), 1);
+    let notes: Vec<(CellRef, &str)> = sh.comments.iter().map(|(c, n)| (*c, n.text.as_str())).collect();
+    assert_eq!(notes, vec![(CellRef::parse("A1").unwrap(), "checked")], "A1's note is back as it was, A2's is gone");
     assert!(sh.cell(CellRef::parse("Z9").unwrap()).is_none());
     assert_eq!(sh.spill.len(), 49);
 }
