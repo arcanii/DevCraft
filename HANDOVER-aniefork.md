@@ -2,6 +2,10 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-23: upstream 0.11.1 merged and pushed** on the owner's word: 7 commits (releases
+0.11.0 and 0.11.1, scripts from a file need trust #2178, a macOS packaging retry), no
+conflict, every hook present, the gate green. ROADMAP-aniefork.md's log has it.
+
 **Upstream 0.10.0 merged and pushed** on the owner's word ("Merge upstream main into the fork's
 main, … run cargo xtask ci, then commit and push main to origin"): upstream `a1c8454`, 610
 commits. ROADMAP-aniefork.md's log has the details:

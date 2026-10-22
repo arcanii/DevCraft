@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-22, upstream `a1c8454` (610 commits since the merge before, 345 of them not merges: release 0.10.0) |
+| Last merge of upstream | 2026-10-23, upstream `ac8da7d` (7 commits since the merge before, 5 of them not merges: releases 0.11.0 and 0.11.1) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -823,6 +823,22 @@ included.
 
 Newest first.
 
+- **2026-10-23 (merge of upstream `ac8da7d`, GridCraft 0.11.1):** On the owner's word ("Merge
+  upstream main (0.11.1) into the fork's main, check the hooks, bring the fork crate's
+  Cargo.lock entry to the new version, run cargo xtask ci, log it in ROADMAP-aniefork.md, then
+  commit and push main to origin"). 7 commits since the merge before, 5 of them not merges,
+  with releases 0.11.0 and 0.11.1:
+  - **Scripts that come with a file need trust** (#2178): a workbook's own GridCraft scripts
+    stay disabled until the user trusts it, from the Macros dialog (Trust Scripts) or
+    `automate.trustScripts`. Upstream's change to `dialogs.rs` is inside its Macros dialog, away
+    from the fork's two hooks there.
+  - **macOS packaging** retries the stapler when Apple's service drops the connection.
+  - **No conflict.** Every hook in the table was checked present. Nothing came into
+    `docs/brand/` or `ATTRIBUTION.md`. The fork's mentions in upstream's code: 79, the 77 of the
+    merge before and the two reasons on the ignored editor tests. `Cargo.lock` takes the fork's
+    crate to 0.11.1 with the workspace; DevCraft stays 0.1.0.
+  - Checked on the result, on macOS: `cargo xtask ci`, all eight steps (fmt, clippy, 2,462 tests
+    with 3 ignored, assets, layers, wasm, parity, keytips).
 - **2026-10-22 (merge of upstream `a1c8454`, GridCraft 0.10.0):** On the owner's word ("Merge
   upstream main into the fork's main, … run cargo xtask ci, then commit and push main to
   origin"). 610 commits since the merge before, 345 of them not merges, with release 0.10.0.
