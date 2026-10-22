@@ -91,7 +91,6 @@ const NEEDS_INPUT: &[&str] = &[
     "automate.newScript",
     "chart.selectData",
     "chart.shapeOutline",
-    "data.advancedFilter",
     "data.consolidate",
     "data.dataTable",
     "data.goalSeek",
@@ -1247,17 +1246,28 @@ mod tests {
             s.execute("file.new", json!({"sample": "sales"})).unwrap();
             crate::SheetApp::new(s, Default::default())
         };
+        // These report what the sheet lacks through their parameters' error: Ink to Shape when
+        // there is no ink stroke, Select Precedents and Dependents when the active cell has none.
+        let nothing_here = ["draw.inkToShape", "formulas.selectPrecedents", "formulas.selectDependents"];
+        let mut failed = Vec::new();
         for (id, ..) in choices() {
-            if let Err(e) = app().run(id, json!({})) {
-                // Ink to Shape converts the last ink stroke, and says so when there is none.
-                assert!(!e.starts_with("invalid parameters") || id == "draw.inkToShape", "{id}: {e}");
+            if let Err(e) = app().run(id, json!({}))
+                && e.starts_with("invalid parameters")
+                && !nothing_here.contains(&id)
+            {
+                failed.push(format!("{id}: {e}"));
             }
         }
+        assert!(failed.is_empty(), "{failed:#?}");
+        let mut runs = Vec::new();
         for id in NEEDS_INPUT {
             assert!(gridcraft_engine::find_command(id).is_some(), "{id} is a command");
             let r = app().run(id, json!({}));
-            assert!(r.as_ref().is_err_and(|e| e.starts_with("invalid parameters")), "{id} runs with no input: {r:?}");
+            if !r.as_ref().is_err_and(|e| e.starts_with("invalid parameters")) {
+                runs.push(format!("{id}: {r:?}"));
+            }
         }
+        assert!(runs.is_empty(), "these run with no input: {runs:#?}");
     }
 
     #[test]
