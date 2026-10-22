@@ -369,7 +369,10 @@ pub fn customize_command(app: &mut SheetApp, p: &Json) -> Result<Json, String> {
             return Err("`layout` must be an object: {order, hidden, tabs, groups, qat}".into());
         }
         let qat = app.ui.ribbon.qat.clone();
-        let mut layout = RibbonLayout::from_json(v.clone());
+        // Unlike a saved ui.json, a layout sent with a field of the wrong shape is an error and
+        // leaves the ribbon as it was, rather than resetting it.
+        let mut layout: RibbonLayout = serde_json::from_value(v.clone()).map_err(|e| format!("`layout` is malformed: {e}"))?;
+        layout.sanitize(&known_command);
         if v.get("qat").is_none() {
             layout.qat = qat;
         }
@@ -572,6 +575,12 @@ fn run_from_toolbar(app: &mut SheetApp, ctx: &egui::Context, id: &str) {
                 app.run_or_alert(id, json!({}));
             }
         }
+        // The grid draws tracer arrows from what these return, as the ribbon's buttons keep it.
+        "formulas.tracePrecedents" | "formulas.traceDependents" => match app.run(id, json!({})) {
+            Ok(r) => app.grid.trace = Some(r),
+            Err(e) => app.alert(e),
+        },
+        "formulas.removeArrows" => app.grid.trace = None,
         _ => app.run_or_alert(id, json!({})),
     }
 }
@@ -1268,6 +1277,25 @@ mod tests {
             }
         }
         assert!(runs.is_empty(), "these run with no input: {runs:#?}");
+    }
+
+    /// The toolbar's trace buttons draw their arrows and Remove Arrows takes them away, as the
+    /// ribbon's buttons do.
+    #[test]
+    fn trace_buttons_on_the_toolbar_draw_and_remove_arrows() {
+        let mut s = gridcraft_engine::Session::new();
+        s.new_workbook();
+        s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+        s.execute("cell.set", json!({"cell": "B1", "input": "=A1*2"})).unwrap();
+        s.execute("selection.set", json!({"range": "B1"})).unwrap();
+        let mut app = crate::SheetApp::new(s, Default::default());
+        let ctx = egui::Context::default();
+        run_from_toolbar(&mut app, &ctx, "formulas.tracePrecedents");
+        assert!(app.grid.trace.is_some(), "arrows to B1's precedents");
+        run_from_toolbar(&mut app, &ctx, "formulas.removeArrows");
+        assert!(app.grid.trace.is_none());
+        run_from_toolbar(&mut app, &ctx, "formulas.traceDependents");
+        assert!(app.grid.trace.is_some() || app.message.is_some(), "arrows, or a message saying there are none");
     }
 
     #[test]

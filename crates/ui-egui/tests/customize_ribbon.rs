@@ -134,6 +134,10 @@ fn agents_hide_add_and_reorder_tabs_without_a_dialog() {
     assert_eq!(h.state().ui.ribbon_tab, "Home");
     // Hostile input is an error or left out, never a crash.
     assert!(h.state_mut().run("ui.customizeRibbon", json!({"layout": 5})).is_err());
+    let kept = h.state().ui.ribbon.clone();
+    let e = h.state_mut().run("ui.customizeRibbon", json!({"layout": {"order": "Data"}})).unwrap_err();
+    assert!(e.contains("malformed"), "{e}");
+    assert_eq!(h.state().ui.ribbon, kept, "a malformed layout leaves the ribbon as it was");
     assert!(h.state_mut().run("ui.quickAccessToolbar", json!({"add": "no.such.command"})).is_err());
     let e = h.state_mut().run("ui.quickAccessToolbar", json!({"add": "view.zoom"})).unwrap_err();
     assert!(e.contains("needs a value"), "{e}");
