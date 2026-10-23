@@ -80,6 +80,20 @@ sign() {
   codesign --force --sign "$IDENTITY" ${kc[@]+"${kc[@]}"} "${ts[@]}" "$@"
 }
 
+# stapler fetches the ticket from Apple's CloudKit, which sometimes drops the connection ("The
+# network connection was lost", Error 68). Stapling and validating are idempotent, so retry.
+stapler_retry() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if xcrun stapler "$@"; then
+      return 0
+    fi
+    [ "$attempt" = 5 ] && { echo "stapler $1 failed 5 times" >&2; return 1; }
+    warn "stapler $1 failed (attempt $attempt of 5); retrying in $((attempt * 15))s"
+    sleep $((attempt * 15))
+  done
+}
+
 notarize() {
   local file="$1" out id status
   echo "==> notarizing $(basename "$file") (this can take a few minutes)"
@@ -120,8 +134,8 @@ codesign --verify --strict --deep --verbose=2 "$APP"
 if [ "$NOTARIZE" = 1 ]; then
   ditto -c -k --keepParent "$APP" "$WORK/GridCraft-notarize.zip"
   notarize "$WORK/GridCraft-notarize.zip"
-  xcrun stapler staple "$APP"
-  xcrun stapler validate "$APP"
+  stapler_retry staple "$APP"
+  stapler_retry validate "$APP"
   spctl --assess --type execute -vvv "$APP"
 fi
 
@@ -146,8 +160,8 @@ sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
 if [ "$NOTARIZE" = 1 ]; then
   notarize "$DMG"
-  xcrun stapler staple "$DMG"
-  xcrun stapler validate "$DMG"
+  stapler_retry staple "$DMG"
+  stapler_retry validate "$DMG"
   spctl --assess --type open --context context:primary-signature -vvv "$DMG"
 fi
 
