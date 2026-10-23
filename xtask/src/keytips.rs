@@ -1,6 +1,6 @@
 //! Regenerate the keytip sequence table and its per-sequence test suite from `keytips.json`.
 //!
-//! `cargo xtask keytips`          regenerate the table + `tests/keytips_generated.rs`
+//! `cargo xtask keytips`          regenerate the table + `tests/it/keytips_generated.rs`
 //! `cargo xtask keytips --check`  fail if either generated file differs from the JSON source
 //!
 //! Requires the default `engine` feature: the generator probes the live command
@@ -92,7 +92,7 @@ pub fn run(root: &Path, rest: &[&str]) -> Result<(), String> {
     {
         let json_path = root.join("crates/ui-egui/src/keytips/keytips.json");
         let table_path = root.join("crates/ui-egui/src/keytips/keytip_table/generated.rs");
-        let tests_path = root.join("crates/ui-egui/tests/keytips_generated.rs");
+        let tests_path = root.join("crates/ui-egui/tests/it/keytips_generated.rs");
         let source = fs::read_to_string(&json_path).map_err(|e| format!("read {}: {e}", json_path.display()))?;
         let (entries, probe) = parse_and_probe(&source)?;
         let generated =
