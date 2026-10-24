@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod assets;
+mod i18n_report;
 mod ico;
 mod keytips;
 mod layers;
@@ -21,11 +22,12 @@ const USAGE: &str = "\
 usage: cargo xtask <command>
 
 commands:
-  ci              fmt --check, clippy -D warnings, test, doctest, assets, layers, wasm, parity --check,
-                  keytips --check (stops at the first failure; the parity check runs only if
-                  docs/parity-checklist.md exists)
+  ci              i18n-report, fmt --check, clippy -D warnings, test, doctest, assets, layers, wasm,
+                  parity --check, keytips --check (stops at the first failure; the parity check runs
+                  only if docs/parity-checklist.md exists)
   test            workspace tests (cargo nextest when installed, else cargo test), then doctests
   assets          check that every icon/image/font/sample file is attributed in ATTRIBUTION.md
+  i18n-report     list the interface strings each language doesn't translate yet (always passes)
   layers          enforce the crate dependency layering (AGENTS.md \"Layering\")
   wasm            cargo check --target wasm32-unknown-unknown for the L0-L5 crates (+ gridcraft-web), one call
   parity [--check] [--out PATH]
@@ -44,6 +46,7 @@ fn main() -> ExitCode {
     let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     let result = match args.first().map(String::as_str) {
         Some("assets") => assets::run(&root()),
+        Some("i18n-report") => i18n_report::run(&root()),
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("test") => cmd_test().and_then(|()| cmd_doctest()),
@@ -194,6 +197,8 @@ fn cmd_doctest() -> Result<(), String> {
 fn cmd_ci() -> Result<(), String> {
     type Step = (&'static str, Box<dyn Fn() -> Result<(), String>>);
     let steps: Vec<Step> = vec![
+        // Missing translations never fail the gate; the list goes first so every log shows it.
+        ("i18n-report", Box::new(|| i18n_report::run(&root()))),
         (
             "fmt",
             Box::new(|| {

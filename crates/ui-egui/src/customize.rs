@@ -682,8 +682,12 @@ pub fn quick_access(app: &mut SheetApp, ui: &mut Ui, height: f32) {
         if id == "edit.undo" {
             let undo_list = crate::widgets::icon_button(ui, Icon::Chevron, t.text_dim, "Undo list", vec2(14.0, height));
             egui::Popup::menu(&undo_list).show(|ui| {
-                let labels: Vec<String> =
-                    app.session.active().map(|d| d.undo.iter().rev().take(20).map(|e| e.label.clone()).collect()).unwrap_or_default();
+                // Nothing to offer while Undo itself can't run (an undo group still open).
+                let labels: Vec<String> = if gridcraft_engine::cmd::can_undo(&app.session).is_ok() {
+                    app.session.active().map(|d| d.undo.iter().rev().take(20).map(|e| e.label.clone()).collect()).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 if labels.is_empty() {
                     ui.label(app.ui.language.tr("Can't Undo"));
                 }
