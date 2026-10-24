@@ -45,6 +45,20 @@ impl<T> From<T> for Shared<T> {
     }
 }
 
+/// A shared list compares with a plain one, either way round, as the list it holds: code and
+/// tests that compare a part with a `Vec` read as they did before the part was shared.
+impl<T: PartialEq> PartialEq<Vec<T>> for Shared<Vec<T>> {
+    fn eq(&self, other: &Vec<T>) -> bool {
+        *self.0 == *other
+    }
+}
+
+impl<T: PartialEq> PartialEq<Shared<Vec<T>>> for Vec<T> {
+    fn eq(&self, other: &Shared<Vec<T>>) -> bool {
+        *self == *other.0
+    }
+}
+
 impl<T: fmt::Debug> fmt::Debug for Shared<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -108,5 +122,9 @@ mod tests {
         let json = serde_json::to_string(&b).unwrap();
         assert_eq!(json, "[1,2,3,4]");
         assert_eq!(serde_json::from_str::<Shared<Vec<u32>>>(&json).unwrap(), b);
+        // Compared with a plain list either way round, as the list it holds.
+        assert_eq!(b, vec![1, 2, 3, 4]);
+        assert_eq!(vec![1, 2, 3], a);
+        assert_ne!(a, vec![1, 2]);
     }
 }
