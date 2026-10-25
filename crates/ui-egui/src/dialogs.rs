@@ -2591,21 +2591,28 @@ fn paste_name(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &m
     }
     d.list_index = d.list_index.min(last);
     ui.label(app.ui.language.tr("Paste name"));
-    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        if names.is_empty() {
-            ui.label(egui::RichText::new(app.ui.language.tr("No names defined")).italics());
-        }
-        for (i, n) in names.iter().enumerate() {
+    if names.is_empty() {
+        ui.label(egui::RichText::new(app.ui.language.tr("No names defined")).italics());
+    }
+    // A workbook can hold thousands of names: only the rows in view are laid out.
+    let row_height = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+    let step = row_height + ui.spacing().item_spacing.y;
+    egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show_rows(ui, row_height, names.len(), |ui, rows| {
+        let top = ui.cursor().top() - rows.start as f32 * step;
+        for (i, n) in names.iter().enumerate().skip(rows.start).take(rows.len()) {
             let r = ui.selectable_label(i == d.list_index, n);
-            if (down || up) && i == d.list_index && !ui.clip_rect().contains_rect(r.rect) {
-                r.scroll_to_me(Some(if down { egui::Align::Max } else { egui::Align::Min }));
-            }
             if r.clicked() {
                 d.list_index = i;
             }
             if r.double_clicked() {
                 *confirm = true;
+            }
+        }
+        // The arrow keys can move the selection onto a row that isn't laid out.
+        if down || up {
+            let rect = egui::Rect::from_min_size(egui::pos2(ui.min_rect().left(), top + d.list_index as f32 * step), egui::vec2(1.0, row_height));
+            if !ui.clip_rect().contains_rect(rect) {
+                ui.scroll_to_rect(rect, Some(if down { egui::Align::Max } else { egui::Align::Min }));
             }
         }
     });

@@ -667,7 +667,7 @@ fn go_to_target(wb: &gridcraft_model::Workbook, sheet: usize, part: &str, depth:
         return Some((on, vec![r], false));
     }
     let name = match prefix {
-        Some(_) => wb.names.iter().find(|n| n.scope == Some(on) && n.name.eq_ignore_ascii_case(body)),
+        Some(_) => wb.names.iter().find(|n| n.scope == Some(on) && gridcraft_formula::same_name(&n.name, body)),
         None => wb.name(body, sheet),
     };
     if let Some(n) = name {
@@ -709,20 +709,21 @@ fn name_areas(wb: &gridcraft_model::Workbook, n: &gridcraft_model::DefinedName, 
 /// and the active sheet's own name hides the workbook name it shares. Hidden names and names that
 /// do not refer to a range are left out.
 pub fn go_to_names(wb: &gridcraft_model::Workbook, sheet: usize) -> Vec<String> {
-    let own: std::collections::HashSet<String> = wb.names.iter().filter(|n| n.scope == Some(sheet)).map(|n| n.name.to_ascii_lowercase()).collect();
+    let own: std::collections::HashSet<String> =
+        wb.names.iter().filter(|n| n.scope == Some(sheet)).map(|n| gridcraft_formula::fold_name(&n.name)).collect();
     let mut out: Vec<String> = wb
         .names
         .iter()
         .filter(|n| !n.hidden && name_areas(wb, n, sheet, 0).is_some())
         .filter_map(|n| match n.scope {
-            None if own.contains(&n.name.to_ascii_lowercase()) => None,
+            None if own.contains(&gridcraft_formula::fold_name(&n.name)) => None,
             None => Some(n.name.clone()),
             Some(s) if s == sheet => Some(n.name.clone()),
             Some(s) => Some(format!("{}!{}", gridcraft_core::quote_sheet(&wb.sheet(s)?.name), n.name)),
         })
         .collect();
-    out.sort_by_key(|n| n.to_lowercase());
-    out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    out.sort_by_cached_key(|n| gridcraft_formula::fold_name(n));
+    out.dedup_by(|a, b| gridcraft_formula::same_name(a, b));
     out
 }
 
@@ -1969,6 +1970,19 @@ mod tests {
         let out = s.execute("edit.goTo", json!({"reference": "Areas"})).unwrap();
         assert_eq!(out["selection"], "A1,C3:C4", "{out}");
         assert_eq!(s.doc().unwrap().wb.active_sheet, 0);
+    }
+
+    /// A name matches in any case and any script, as a formula matches it.
+    #[test]
+    fn go_to_matches_a_sheet_name_in_any_case() {
+        let mut s = go_to_workbook();
+        s.execute("formulas.defineName", json!({"name": "Größe", "refersTo": "=Sheet2!$D$4", "scope": "Sheet2"})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "GRÖSSE", "refersTo": "=Sheet1!$F$6", "scope": "Workbook"})).unwrap();
+        let out = s.execute("edit.goTo", json!({"reference": "Sheet2!GRÖSSE"})).unwrap();
+        assert_eq!(out["selection"], "D4", "{out}");
+        // Seen from Sheet2, its own name hides the workbook name it shares.
+        let list = s.execute("edit.goTo", json!({"list": true})).unwrap();
+        assert_eq!(list["names"], json!(["Areas", "Größe", "Local", "Price", "Sheet1!Own", "type"]), "{list}");
     }
 
     /// "You can enter multiple named ranges or cell references in the Reference box. Separating
