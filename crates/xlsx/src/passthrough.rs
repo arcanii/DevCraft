@@ -406,6 +406,7 @@ impl KeptReader {
                     },
                     rel_id: r.id.clone(),
                     before: worksheets,
+                    sheet_id: se.attr_u32("sheetId").unwrap_or(0),
                 }),
                 Err(why) => cx.warn(format!("chart sheet \"{name}\" was dropped: {why}")),
             }
@@ -984,6 +985,34 @@ pub struct KeptSheet {
     name: String,
     visibility: Visibility,
     rid: String,
+    sheet_id: u32,
+}
+
+/// The `sheetId`s of the written sheets: each keeps the one the file gave it, unless another
+/// sheet took it first (a copied sheet) or it has none (a new sheet), and those get the next id
+/// that no sheet asks for.
+pub struct SheetIds {
+    wanted: HashSet<u32>,
+    given: HashSet<u32>,
+    next: u32,
+}
+
+impl SheetIds {
+    pub fn new(wb: &Workbook, kept: &WorkbookKept) -> SheetIds {
+        let wanted: HashSet<u32> = wb.sheets.iter().map(|s| s.file_id).chain(kept.sheets.iter().map(|s| s.sheet_id)).filter(|&id| id != 0).collect();
+        SheetIds { wanted, given: HashSet::new(), next: 1 }
+    }
+
+    pub fn take(&mut self, wanted: u32) -> u32 {
+        if wanted != 0 && self.given.insert(wanted) {
+            return wanted;
+        }
+        while self.wanted.contains(&self.next) || self.given.contains(&self.next) {
+            self.next += 1;
+        }
+        self.given.insert(self.next);
+        self.next
+    }
 }
 
 /// The workbook's kept content as written.
@@ -1001,8 +1030,8 @@ impl WorkbookKept {
     }
 
     /// The `<sheet>` entries of the chart sheets that go right before the model's sheet `i`
-    /// (`i` = the number of sheets for those that come last); `id` numbers them from `first_id`.
-    pub fn sheet_entries(&self, i: usize, last: bool, mut id: usize) -> (String, usize) {
+    /// (`i` = the number of sheets for those that come last), with their ids from `ids`.
+    pub fn sheet_entries(&self, i: usize, last: bool, ids: &mut SheetIds) -> String {
         let mut x = String::new();
         for s in self.sheets.iter().filter(|s| if last { s.before >= i } else { s.before == i }) {
             let state = match s.visibility {
@@ -1011,10 +1040,10 @@ impl WorkbookKept {
                 Visibility::VeryHidden => " state=\"veryHidden\"",
             };
             let name: String = s.name.chars().take(31).collect();
+            let id = ids.take(s.sheet_id);
             let _ = write!(x, "<sheet name=\"{}\" sheetId=\"{id}\"{state} r:id=\"{}\"/>", esc_attr(&name), esc_attr(&s.rid));
-            id += 1;
         }
-        (x, id)
+        x
     }
 }
 
@@ -1134,7 +1163,15 @@ pub fn write_workbook(wb: &Workbook, wb_rels: &mut Rels, out: &mut Out) -> Workb
         elements: p.elements.iter().filter(|e| e.slot == "externalReferences").filter_map(|e| remap(&e.xml, &ids)).collect(),
         sheets: live
             .iter()
-            .filter_map(|s| Some(KeptSheet { before: s.before, name: s.name.clone(), visibility: s.visibility, rid: ids.get(&s.rel_id)?.clone() }))
+            .filter_map(|s| {
+                Some(KeptSheet {
+                    before: s.before,
+                    name: s.name.clone(),
+                    visibility: s.visibility,
+                    rid: ids.get(&s.rel_id)?.clone(),
+                    sheet_id: s.sheet_id,
+                })
+            })
             .collect(),
     }
 }

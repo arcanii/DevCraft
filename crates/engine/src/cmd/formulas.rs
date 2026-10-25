@@ -105,20 +105,53 @@ fn auto_sum(s: &mut Session, p: &Json) -> Result<Json> {
         None => d.selection.current(),
     };
     if !sel.is_single() {
-        // A block: totals below each column (and to the right when a blank column is included).
-        // Columns past the sheet's data get no total (a whole-row selection doesn't write 16,384
-        // formulas), and all totals are one edit (one undo step).
-        let Some(last_col) = sh.cells.used_range().map(|u| u.end.col.min(sel.end.col)) else { return ok() };
-        let last_row_blank = (sel.start.col..=last_col).all(|c| sh.value(CellRef::new(sel.end.row, c)).is_empty());
-        let (data_end_row, out_row) = if last_row_blank { (sel.end.row.saturating_sub(1), sel.end.row) } else { (sel.end.row, sel.end.row + 1) };
-        if out_row >= gridcraft_core::MAX_ROWS {
-            return Err(EngineError::Other("There's no room below the selection for the totals.".into()));
+        // A selection: totals go in its empty last row or column, as Excel's do, and otherwise
+        // past it: to the right of a single row, below each column of anything taller. Columns
+        // past the sheet's data get no total (a whole-row selection doesn't write 16,384
+        // formulas), nor do rows past it, and all totals are one edit (one undo step).
+        let Some(used) = sh.cells.used_range() else { return ok() };
+        let empty = |row: u32, col: u32| sh.value(CellRef::new(row, col)).is_empty();
+        let sum = |from: CellRef, to: CellRef| format!("={func}({})", RangeRef::new(from, to).a1());
+        let last_col = used.end.col.min(sel.end.col);
+        let mut writes: Vec<(CellRef, String)> = Vec::new();
+        if sel.start.row == sel.end.row {
+            // One row: its total goes in its last cell when that is empty, else just after it.
+            let row = sel.start.row;
+            let end_col = if sel.is_full_rows() { last_col } else { sel.end.col };
+            let (data_end, out) = if end_col > sel.start.col && empty(row, end_col) { (end_col - 1, end_col) } else { (end_col, end_col + 1) };
+            if out >= gridcraft_core::MAX_COLS {
+                return Err(EngineError::Other("There's no room to the right of the selection for the total.".into()));
+            }
+            writes.push((CellRef::new(row, out), sum(CellRef::new(row, sel.start.col), CellRef::new(row, data_end))));
+        } else {
+            // An empty last column takes each row's total; rows past the data get none.
+            let rows_end = sel.end.row.min(used.end.row);
+            let right_blank = !sel.is_full_rows() && sel.end.col > sel.start.col && (sel.start.row..=rows_end).all(|r| empty(r, sel.end.col));
+            let data_end_col = if right_blank { sel.end.col - 1 } else { last_col };
+            let last_row_blank = (sel.start.col..=last_col).all(|c| empty(sel.end.row, c));
+            let (data_end_row, out_row) = if last_row_blank { (sel.end.row.saturating_sub(1), sel.end.row) } else { (sel.end.row, sel.end.row + 1) };
+            // Each column's total, below it: unless only the last column is there to take totals.
+            if last_row_blank || !right_blank {
+                if out_row >= gridcraft_core::MAX_ROWS {
+                    return Err(EngineError::Other("There's no room below the selection for the totals.".into()));
+                }
+                for c in sel.start.col..=data_end_col.min(last_col) {
+                    writes.push((CellRef::new(out_row, c), sum(CellRef::new(sel.start.row, c), CellRef::new(data_end_row, c))));
+                }
+            }
+            if right_blank {
+                for r in sel.start.row..=data_end_row.min(rows_end) {
+                    writes.push((CellRef::new(r, sel.end.col), sum(CellRef::new(r, sel.start.col), CellRef::new(r, data_end_col))));
+                }
+                // Both empty: the corner takes the total of the whole block.
+                if last_row_blank {
+                    writes.push((
+                        CellRef::new(sel.end.row, sel.end.col),
+                        sum(CellRef::new(sel.start.row, sel.start.col), CellRef::new(data_end_row, data_end_col)),
+                    ));
+                }
+            }
         }
-        let writes: Vec<(CellRef, String)> = (sel.start.col..=last_col)
-            .map(|c| {
-                (CellRef::new(out_row, c), format!("={func}({})", RangeRef::new(CellRef::new(sel.start.row, c), CellRef::new(data_end_row, c)).a1()))
-            })
-            .collect();
         let sheet = d.wb.active_sheet;
         edit(s, |cx| {
             for (c, f) in &writes {

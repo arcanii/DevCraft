@@ -203,11 +203,13 @@ fn shift_sheet_features(sh: &mut Sheet, axis: Axis, at: u32, count: u32, insert:
     for (o, a) in sh.shapes.iter_mut().zip(new_shapes) {
         o.anchor = a;
     }
-    for sp in sh.sparklines.iter_mut() {
-        if let Some(c) = map_cell(sp.cell) {
+    sh.sparklines.retain_mut(|sp| match map_cell(sp.cell) {
+        Some(c) => {
             sp.cell = c;
+            true
         }
-    }
+        None => false,
+    });
     if let Some(pa) = sh.print.print_area {
         sh.print.print_area = map_range(pa);
     }
