@@ -221,8 +221,8 @@ impl Dialog {
                 "rowHeight",
                 "Row Height",
                 "home.rowHeight",
-                vec![Number { key: "height", label: "Row height (pixels):" }],
-                json!({"height": app.session.active().and_then(|d| d.wb.active().map(|s| s.row_height(d.selection.active.row))).unwrap_or(20.0)}),
+                vec![Number { key: "points", label: "Row height (points):" }],
+                json!({"points": app.session.active().and_then(|d| d.wb.active().map(|s| s.row_height(d.selection.active.row) as f64 * 0.75)).unwrap_or(15.0)}),
             ),
             "columnWidth" => Dialog::form(
                 "columnWidth",

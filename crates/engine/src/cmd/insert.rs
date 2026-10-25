@@ -1317,9 +1317,20 @@ fn comment(s: &mut Session, p: &Json, threaded: bool) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let at = cell_param_on(s, p, "cell", sheet)?.unwrap_or(s.doc()?.selection.active);
     let text = str_param(p, "text").unwrap_or("").to_string();
-    let author = str_param(p, "author").map(str::to_string).unwrap_or_else(|| s.prefs.user_name.clone());
+    let named = str_param(p, "author").map(str::to_string);
+    let author = named.clone().unwrap_or_else(|| s.prefs.user_name.clone());
     edit(s, |cx| {
-        cx.sheet_mut(sheet)?.comments.insert(
+        let comments = &mut cx.sheet_mut(sheet)?.comments;
+        // Writing a note on a cell that has one edits it, as Excel's Edit Note does: the box, the
+        // replies, the dates and who wrote it stay. A note replaces a comment and vice versa.
+        if let Some(c) = comments.get_mut(&at).filter(|c| c.threaded == threaded) {
+            c.text = text.clone();
+            if let Some(author) = named.clone() {
+                c.author = author;
+            }
+            return Ok(json!({"cell": at.a1()}));
+        }
+        comments.insert(
             at,
             Comment {
                 author: author.clone(),

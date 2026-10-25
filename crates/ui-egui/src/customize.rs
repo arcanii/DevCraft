@@ -577,7 +577,7 @@ fn run_from_toolbar(app: &mut SheetApp, ctx: &egui::Context, id: &str) {
         }
         // The grid draws tracer arrows from what these return, as the ribbon's buttons keep it.
         "formulas.tracePrecedents" | "formulas.traceDependents" => match app.run(id, json!({})) {
-            Ok(r) => app.grid.trace = Some(r),
+            Ok(r) => app.grid.trace = crate::grid::Trace::new(app, r),
             Err(e) => app.alert(e),
         },
         "formulas.removeArrows" => app.grid.trace = None,

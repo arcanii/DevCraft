@@ -2000,6 +2000,69 @@ fn autosum_over_whole_rows_is_one_undo_step_within_the_data() {
     assert_eq!(v(&s, "B6"), Value::Empty);
 }
 
+fn formula_at(s: &Session, a: &str) -> Option<String> {
+    s.doc().unwrap().wb.active().unwrap().cell(CellRef::parse(a).unwrap()).and_then(|c| c.formula.as_ref().map(|f| f.text.clone()))
+}
+
+#[test]
+fn autosum_over_a_row_totals_it_to_the_right() {
+    // As in Excel: a row selected and AutoSum puts one total to its right, not a one-cell total
+    // under each of its cells.
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "B2", "values": [[1, 2, 3, 4]]})).unwrap();
+    s.execute("formulas.autoSum", json!({"range": "B2:E2"})).unwrap();
+    assert_eq!(formula_at(&s, "F2").as_deref(), Some("SUM(B2:E2)"));
+    assert_eq!(v(&s, "F2"), Value::Number(10.0));
+    assert!(gridcraft_core::RangeRef::parse("B3:F3").unwrap().iter().all(|c| v(&s, &c.a1()) == Value::Empty), "nothing under the row");
+    assert_eq!(s.doc().unwrap().undo.len(), 2, "one undo step");
+    // A row whose last cell is empty takes its total there.
+    s.execute("range.setValues", json!({"range": "B4", "values": [[5, 6, 7]]})).unwrap();
+    s.execute("formulas.autoSum", json!({"range": "B4:E4"})).unwrap();
+    assert_eq!(formula_at(&s, "E4").as_deref(), Some("SUM(B4:D4)"));
+    assert_eq!(v(&s, "F4"), Value::Empty);
+    // AVERAGE and the rest go the same way.
+    s.execute("formulas.autoSum", json!({"range": "B2:E2", "function": "average"})).unwrap();
+    assert_eq!(formula_at(&s, "F2").as_deref(), Some("AVERAGE(B2:E2)"));
+}
+
+#[test]
+fn autosum_over_a_whole_row_totals_it_after_the_data() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A2", "values": [[1, 2, 3]]})).unwrap();
+    s.execute("formulas.autoSum", json!({"range": "2:2"})).unwrap();
+    assert_eq!(formula_at(&s, "D2").as_deref(), Some("SUM(A2:C2)"));
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().cells.used_range().unwrap().a1(), "A2:D2", "not out to the last column");
+}
+
+#[test]
+fn autosum_fills_a_selections_empty_last_column_and_row() {
+    // As in Excel: an empty last column takes each row's total, an empty last row each column's,
+    // and with both the corner takes the total of the block.
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2], [3, 4]]})).unwrap();
+    s.execute("formulas.autoSum", json!({"range": "A1:C2"})).unwrap();
+    assert_eq!((formula_at(&s, "C1").as_deref(), formula_at(&s, "C2").as_deref()), (Some("SUM(A1:B1)"), Some("SUM(A2:B2)")));
+    assert_eq!((v(&s, "C1"), v(&s, "C2")), (Value::Number(3.0), Value::Number(7.0)));
+    assert!(gridcraft_core::RangeRef::parse("A3:C3").unwrap().iter().all(|c| v(&s, &c.a1()) == Value::Empty), "no totals under the rows");
+
+    s.execute("range.setValues", json!({"range": "E1", "values": [[1, 2], [3, 4]]})).unwrap();
+    let steps = s.doc().unwrap().undo.len();
+    s.execute("formulas.autoSum", json!({"range": "E1:G3"})).unwrap();
+    for (cell, formula, value) in
+        [("E3", "SUM(E1:E2)", 4.0), ("F3", "SUM(F1:F2)", 6.0), ("G1", "SUM(E1:F1)", 3.0), ("G2", "SUM(E2:F2)", 7.0), ("G3", "SUM(E1:F2)", 10.0)]
+    {
+        assert_eq!(formula_at(&s, cell).as_deref(), Some(formula), "{cell}");
+        assert_eq!(v(&s, cell), Value::Number(value), "{cell}");
+    }
+    assert_eq!(s.doc().unwrap().undo.len(), steps + 1, "one undo step");
+
+    // Neither empty: totals below each column, as before.
+    s.execute("range.setValues", json!({"range": "I1", "values": [[1, 2], [3, 4]]})).unwrap();
+    s.execute("formulas.autoSum", json!({"range": "I1:J2"})).unwrap();
+    assert_eq!((formula_at(&s, "I3").as_deref(), formula_at(&s, "J3").as_deref()), (Some("SUM(I1:I2)"), Some("SUM(J1:J2)")));
+    assert_eq!(v(&s, "K1"), Value::Empty);
+}
+
 #[test]
 fn insert_and_delete_cells_never_shift_part_of_a_table() {
     // Found by the command-sequence fuzzer: Delete Cells moved part of a table's cells (so two
@@ -3383,6 +3446,19 @@ fn absolute_objects_ignore_sort_and_structural_edits() {
     assert_eq!(image_cell(&s, pinned), Some(CellRef::parse("A3").unwrap()));
 }
 
+/// Deleting a row removes the sparkline located on it; later ones shift up.
+#[test]
+fn deleting_a_row_removes_its_sparklines() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2, 3], [4, 5, 6], [7, 8, 9]]})).unwrap();
+    s.execute("insert.sparkline", json!({"range": "A2:C2", "location": "E2"})).unwrap();
+    s.execute("insert.sparkline", json!({"range": "A3:C3", "location": "E3"})).unwrap();
+    s.execute("home.deleteRows", json!({"rows": "2:2"})).unwrap();
+    let got: Vec<(String, String)> =
+        s.doc().unwrap().wb.active().unwrap().sparklines.iter().map(|sp| (sp.cell.to_string(), sp.source.clone())).collect();
+    assert_eq!(got, vec![("E2".to_string(), "A2:C2".to_string())]);
+}
+
 /// A "move but don't size" object follows its row across a sort but keeps its size.
 #[test]
 fn move_only_objects_follow_but_do_not_resize() {
@@ -3773,6 +3849,35 @@ fn notes_comments_and_links_survive_a_json_save() {
     assert_eq!(after.comments, before.comments);
     assert_eq!(after.hyperlinks, before.hyperlinks);
     assert_eq!(after.cells, before.cells);
+}
+
+/// Writing a note or a comment on a cell that has one of the same kind edits its text: the
+/// replies, the resolved state, the dates and the note's box stay. `comment` replaced the whole
+/// thread, so editing a comment dropped its replies.
+#[test]
+fn editing_a_note_or_a_comment_keeps_its_thread() {
+    let mut s = s();
+    s.execute("review.newComment", json!({"cell": "B2", "text": "first", "author": "Ada"})).unwrap();
+    s.execute("review.replyComment", json!({"cell": "B2", "text": "reply", "author": "Bob"})).unwrap();
+    s.execute("review.resolveComment", json!({"cell": "B2", "resolved": true})).unwrap();
+    s.execute("review.newComment", json!({"cell": "B2", "text": "edited"})).unwrap();
+    s.execute("review.newNote", json!({"cell": "A1", "text": "note", "author": "Ada"})).unwrap();
+    s.execute("review.showNote", json!({"cell": "A1"})).unwrap();
+    s.execute("review.newNote", json!({"cell": "A1", "text": "changed"})).unwrap();
+    let d = s.doc().unwrap();
+    let sh = d.wb.active().unwrap();
+    let thread = &sh.comments[&CellRef::parse("B2").unwrap()];
+    assert_eq!((thread.author.as_str(), thread.text.as_str()), ("Ada", "edited"));
+    assert_eq!(thread.replies, vec![("Bob".to_string(), "reply".to_string())]);
+    assert!(thread.resolved && thread.threaded);
+    let note = &sh.comments[&CellRef::parse("A1").unwrap()];
+    assert_eq!((note.author.as_str(), note.text.as_str()), ("Ada", "changed"));
+    assert!(note.visible && !note.threaded);
+    // A note written over a comment replaces it.
+    s.execute("review.newNote", json!({"cell": "B2", "text": "plain"})).unwrap();
+    let d = s.doc().unwrap();
+    let replaced = &d.wb.active().unwrap().comments[&CellRef::parse("B2").unwrap()];
+    assert!(!replaced.threaded && replaced.replies.is_empty());
 }
 
 /// A cut moves the block's notes, hyperlinks and merged areas with it. The source's cells and
@@ -4777,3 +4882,26 @@ fn a_script_cannot_switch_windows() {
 }
 
 mod seams;
+
+#[test]
+fn a_saved_workbook_keeps_its_values_until_an_edit_reaches_them() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "2"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "=A1*2"})).unwrap();
+    s.execute("cell.set", json!({"cell": "C1", "input": "=10"})).unwrap();
+    let mut wb = (*s.doc().unwrap().wb).clone();
+    // The values a file would have saved, not the ones the formulas give.
+    for (a, n) in [("B1", 99.0), ("C1", 7.0)] {
+        let sheet = std::sync::Arc::make_mut(&mut wb.sheets[0]);
+        let c = CellRef::parse(a).unwrap();
+        let mut cell = sheet.cells.get(c).unwrap().clone();
+        cell.value = Value::Number(n);
+        sheet.set_cell(c, cell);
+    }
+    let mut saved = Session::new();
+    saved.add_document(crate::DocState::from_saved(wb, None, "saved".into(), crate::Trust::FromFile));
+    assert_eq!(v(&saved, "B1"), Value::Number(99.0));
+    saved.execute("cell.set", json!({"cell": "A1", "input": "3"})).unwrap();
+    assert_eq!(v(&saved, "B1"), Value::Number(6.0));
+    assert_eq!(v(&saved, "C1"), Value::Number(7.0));
+}
