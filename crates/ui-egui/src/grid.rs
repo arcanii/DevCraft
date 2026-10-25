@@ -163,6 +163,11 @@ pub struct GridState {
     /// The PivotTable Fields pane's `pivot.fields` answer, cached per (doc uid, revision, pivot):
     /// it scans the whole source list, far too slow to repeat every frame (#2113).
     pub pivot_fields: Option<((u64, u64, String), serde_json::Value)>,
+    /// The cells of a PivotTable report where the cell menu offers Show Details, relative to the
+    /// report's top-left and cached per (doc uid, revision, sheet, pivot): finding them computes
+    /// the whole report. `None` when the report can't be computed or is out of date: every cell
+    /// of it offers Show Details, and running it says why.
+    pub show_details_cells: Option<((u64, u64, usize, usize), Option<std::collections::HashSet<(u32, u32)>>)>,
     pub header_menu: Option<(Pos2, bool)>,
     /// Page Layout view pagination, cached per (doc uid, revision, sheet, rows, columns).
     pub paper: Option<crate::paper_view::PaperCache>,
@@ -176,6 +181,11 @@ pub struct GridState {
     pub geo: Option<Geo>,
     /// The horizontal scrollbar's track in the sheet tab bar (hit-testing for tests).
     pub hscroll: Option<Rect>,
+    /// The handle between the sheet tabs and the horizontal scrollbar (hit-testing for tests).
+    pub tab_split: Option<Rect>,
+    /// The share of the tab bar each workbook's tabs (and New sheet) take after the handle was
+    /// dragged, by document uid. A workbook without one gives its tabs up to 60%.
+    pub tab_shares: std::collections::HashMap<u64, f32>,
     /// Ctrl+wheel zoom in progress (see [`WheelZoom`]).
     pub wheel_zoom: Option<WheelZoom>,
     /// A one-finger touch drag in progress: it pans the sheet instead of selecting.
@@ -252,8 +262,8 @@ impl Geo {
         let (fr, fc) = sh.freeze.unwrap_or((0, 0));
         let frozen_w = (ci.start(fc) as f32) * z;
         let frozen_h = (ri.start(fr) as f32) * z;
-        let row_outline = Arc::new(crate::outline::Axis::new(&sh.rows));
-        let col_outline = Arc::new(crate::outline::Axis::new(&sh.cols));
+        let row_outline = Arc::new(crate::outline::Axis::of(sh, true));
+        let col_outline = Arc::new(crate::outline::Axis::of(sh, false));
         // Show Outline Symbols off: no bands (the outline's hidden lines stay hidden).
         let symbols = sh.show_outline_symbols;
         let mut band_w = if symbols { crate::outline::band(row_outline.levels, zoom) } else { 0.0 };
@@ -3363,6 +3373,12 @@ fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
             if let Some(item) = insert_copied {
                 items.insert(6, item);
             }
+            if show_details_offered(app)
+                && let Some(i) = items.iter().position(|(_, id)| *id == "data.sortDescending")
+            {
+                items.insert(i + 1, ("-", ""));
+                items.insert(i + 2, ("Show Details", "pivot.showDetails"));
+            }
             let lang = crate::i18n::current(ui.ctx());
             for (label, id) in items {
                 if label == "-" {
@@ -3419,9 +3435,47 @@ fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Whether the cell menu offers Show Details (Excel's right-click › Show Details): the active cell
+/// is a value, subtotal or grand total cell of a PivotTable, or a cell of a report that is out of
+/// date, where running the command says so. Labels and headers of a current report don't offer it,
+/// and no cell does while the PivotTable's Enable show details option is off.
+fn show_details_offered(app: &mut SheetApp) -> bool {
+    let Some(d) = app.session.active() else { return false };
+    let (si, at) = (d.wb.active_sheet, d.selection.active);
+    let Some((pi, pt)) = d.wb.active().and_then(|sh| sh.pivots.iter().enumerate().find(|(_, pt)| pt.last_range.is_some_and(|r| r.contains(at))))
+    else {
+        return false;
+    };
+    if !pt.enable_show_details {
+        return false;
+    }
+    let origin = pt.last_range.map(|r| r.start).unwrap_or_default();
+    let cell = (at.row.saturating_sub(origin.row), at.col.saturating_sub(origin.col));
+    let key = (d.uid, d.revision, si, pi);
+    if let Some((k, cells)) = &app.grid.show_details_cells
+        && *k == key
+    {
+        return cells.as_ref().is_none_or(|c| c.contains(&cell));
+    }
+    let cells = gridcraft_engine::pivot::detail_cells(&d.wb, pt, si).ok();
+    let on = cells.as_ref().is_none_or(|c| c.contains(&cell));
+    app.grid.show_details_cells = Some((key, cells));
+    on
+}
+
 /// The ways to fill a dragged range, as the fill menu and the Auto Fill Options button list them.
 const FILL_MODES: [(&str, &str); 4] =
     [("Copy Cells", "copy"), ("Fill Series", "extend"), ("Fill Formatting Only", "formats"), ("Fill Without Formatting", "values")];
+
+/// The ways to fill from a date, which both menus add after [`FILL_MODES`] when the source starts
+/// with one.
+const DATE_FILL_MODES: [(&str, &str); 4] = [("Fill Days", "days"), ("Fill Weekdays", "weekdays"), ("Fill Months", "months"), ("Fill Years", "years")];
+
+/// The fill modes the menus list for a fill from `src` on the active sheet.
+fn fill_modes(app: &SheetApp, src: RangeRef) -> Vec<(&'static str, &'static str)> {
+    let dates = app.session.active().is_some_and(|d| gridcraft_engine::fill::starts_with_date(&d.wb, d.wb.active_sheet, src));
+    FILL_MODES.into_iter().chain(DATE_FILL_MODES.into_iter().filter(|_| dates)).collect()
+}
 
 /// Remembers the fill just made so the Auto Fill Options button can offer the other ways.
 fn set_fill_tag(app: &mut SheetApp, src: RangeRef, target: RangeRef) {
@@ -3431,7 +3485,8 @@ fn set_fill_tag(app: &mut SheetApp, src: RangeRef, target: RangeRef) {
 
 /// The Auto Fill Options button below the bottom-right corner of cells a left-drag of the fill
 /// handle just filled. Its menu redoes that fill as Copy Cells, Fill Series, Fill Formatting Only
-/// or Fill Without Formatting: it undoes the drag's fill, then runs `edit.autoFill` in that mode.
+/// or Fill Without Formatting, and from a date also as Fill Days, Fill Weekdays, Fill Months or
+/// Fill Years: it undoes the drag's fill, then runs `edit.autoFill` in that mode.
 /// The button goes away as soon as anything else changes the workbook or the selection moves.
 fn fill_options_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet) {
     let Some(tag) = app.grid.fill_tag.clone() else { return };
@@ -3474,9 +3529,10 @@ fn fill_options_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet
         Stroke::NONE,
     ));
     let mut chosen = None;
+    let modes = fill_modes(app, tag.src);
     egui::Popup::menu(&resp).show(|ui| {
         ui.set_min_width(190.0);
-        for (label, mode) in FILL_MODES {
+        for (label, mode) in modes {
             if ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(180.0, 20.0))).clicked() {
                 chosen = Some(mode);
                 ui.close();
@@ -3503,10 +3559,11 @@ fn fill_options_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet
 fn fill_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
     let Some((src, target, at)) = app.grid.fill_menu else { return };
     let mut close = false;
+    let mut items = fill_modes(app, src);
+    items.extend([("-", ""), ("Series…", "ui:series")]);
     let response = egui::Area::new(egui::Id::new("fill_menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(190.0);
-            let items = [FILL_MODES[0], FILL_MODES[1], FILL_MODES[2], FILL_MODES[3], ("-", ""), ("Series…", "ui:series")];
             let lang = crate::i18n::current(ui.ctx());
             for (label, mode) in items {
                 if label == "-" {

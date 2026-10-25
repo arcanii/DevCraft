@@ -293,7 +293,8 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
     let mut cancel = false;
     // A message box over the editor (a data validation alert, a formula error) gets Enter and Esc;
     // the editor used to take them, so the first Esc cancelled the edit behind the message.
-    if has_focus && mine && app.message.is_none() {
+    // So does a dialog opened from the editor (Paste Name): its OK takes Enter.
+    if has_focus && mine && app.message.is_none() && app.dialog.is_none() {
         let (enter, tab, esc, alt_enter, cmd_enter, ctrl_shift_enter, shift) = ui.input_mut(|i| {
             let m = i.modifiers;
             let alt_enter =
@@ -383,6 +384,10 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F4)) {
             cycle_anchor(&mut ed);
         }
+        // F3 opens Paste Name when the workbook has names; OK puts the name at the caret.
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F3)) {
+            app.open_dialog("pasteName", json!({"shortcut": true}));
+        }
         // Ctrl+Shift+A (Control+Shift+A on a Mac) inserts the argument names. Consumed anywhere,
         // as in Excel, so it never falls through to the text's select-all.
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, Key::A)) {
@@ -398,6 +403,10 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
                 state.set_undoer(undoer);
                 state.store(ui.ctx(), id);
             }
+        }
+        // Ctrl+Shift+U (Control+Shift+U on a Mac) expands or collapses the formula bar while editing too.
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, Key::U)) {
+            app.run_or_alert("view.expandFormulaBar", json!({}));
         }
     }
     // The text widget.
@@ -425,8 +434,16 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         ui.fonts_mut(|f| f.layout_job(job))
     };
     let chars_before = ed.text.chars().count();
-    let synced = mine && (ed.request_focus || ed.sync_caret);
+    // A dialog opened over the edit (Paste Name) takes the keyboard until it closes, and the
+    // editor takes it back afterwards.
+    let dialog_open = app.dialog.is_some();
+    if dialog_open && mine {
+        ed.request_focus = true;
+        ed.keep_selection = true;
+    }
+    let synced = mine && !dialog_open && (ed.request_focus || ed.sync_caret);
     let edit = if multiline || ed.text.contains('\n') { TextEdit::multiline(&mut ed.text) } else { TextEdit::singleline(&mut ed.text) };
+    let edit = edit.interactive(!dialog_open);
     let caret_index = ed.caret;
     // The in-cell editor grows with its text and never scrolls, so the field keeps its whole width
     // for the text (a scroll area would take the bar's width off it and wrap the text narrower
@@ -456,9 +473,16 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
             resp.request_focus();
         }
         ed.request_focus = false;
+        // Closing a dialog that changed nothing (Cancel) gives the selection back as it was.
+        let range = if ed.keep_selection && !ed.sync_caret {
+            egui::text::CCursorRange::two(egui::text::CCursor::new(ed.anchor), egui::text::CCursor::new(ed.caret))
+        } else {
+            ed.anchor = ed.caret;
+            egui::text::CCursorRange::one(egui::text::CCursor::new(ed.caret))
+        };
         ed.sync_caret = false;
-        let cursor = egui::text::CCursor::new(ed.caret);
-        output.state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+        ed.keep_selection = false;
+        output.state.cursor.set_char_range(Some(range));
         output.state.store(ui.ctx(), id);
     } else if resp.clicked() || resp.gained_focus() {
         // Clicking into the other editor moves editing there.
@@ -466,8 +490,12 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         ed.enter_mode = false;
         app.session.mode = gridcraft_engine::Mode::Edit;
     }
-    if !synced && let Some(r) = output.cursor_range {
+    if !synced
+        && !dialog_open
+        && let Some(r) = output.cursor_range
+    {
         ed.caret = r.primary.index.into();
+        ed.anchor = r.secondary.index.into();
     }
     if resp.changed() {
         ed.completion = None;

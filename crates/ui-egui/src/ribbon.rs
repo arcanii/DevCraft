@@ -8,7 +8,7 @@ use crate::SheetApp;
 use crate::icons::{self, Icon};
 use crate::keytips::keytip_table;
 use crate::theme::{self, Cat, Tokens};
-use crate::widgets::{big_button, big_split_button, color_palette, icon_button, small_button, split_button, toggle_button};
+use crate::widgets::{big_button, big_split_button, color_palette, icon_button, small_button, small_split_button, split_button, toggle_button};
 
 pub const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View", "Automate"];
 
@@ -431,6 +431,23 @@ fn theme_colors(app: &SheetApp) -> [u32; 12] {
 /// Runs a command from a ribbon click (menu-style: no params may open a dialog).
 fn act(app: &mut SheetApp, id: &str, params: serde_json::Value) {
     app.run_or_alert(id, params);
+}
+
+/// How many cells Formulas › Error Checking › Circular References lists.
+const CIRCULAR_MENU_LIMIT: usize = 100;
+
+/// The cell listed for each circular reference, for the Circular References submenu: each once, in the order
+/// the calculation found them, as (sheet index, cell, "Sheet!A1").
+fn circular_references(app: &SheetApp) -> Vec<(usize, String, String)> {
+    let Some(d) = app.session.active() else { return Vec::new() };
+    let mut seen = std::collections::HashSet::new();
+    d.calc
+        .circular
+        .iter()
+        .filter(|k| seen.insert(**k))
+        .filter_map(|(si, c)| d.wb.sheet(*si).map(|sh| (*si, c.a1(), format!("{}!{}", gridcraft_engine::formula::quote_sheet(&sh.name), c.a1()))))
+        .take(CIRCULAR_MENU_LIMIT)
+        .collect()
 }
 
 /// Keytips are painted, not focusable widgets: the grid retains keyboard focus.
@@ -1660,6 +1677,7 @@ fn insert(app: &mut SheetApp, ui: &mut Ui) {
                         ("100% Stacked Column", "column", "stacked100"),
                         ("Clustered Bar", "bar", ""),
                         ("Stacked Bar", "bar", "stacked"),
+                        ("100% Stacked Bar", "bar", "stacked100"),
                     ],
                 ),
                 (
@@ -1672,6 +1690,7 @@ fn insert(app: &mut SheetApp, ui: &mut Ui) {
                         ("Stacked Line", "line", "stacked"),
                         ("Area", "area", ""),
                         ("Stacked Area", "area", "stacked"),
+                        ("100% Stacked Area", "area", "stacked100"),
                     ],
                 ),
                 (Icon::ChartPie, "Pie or Doughnut", "insert.chart.pie", vec![("Pie", "pie", ""), ("Doughnut", "doughnut", "")]),
@@ -2033,14 +2052,36 @@ fn formulas(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("defineName", json!({}));
         }
         let use_in = small_button(ui, Icon::Function, "Use in Formula", "Use in Formula", true);
-        anchor_keytip(app, ui, &use_in, &["formulas.pasteName"]);
+        anchor_keytip(app, ui, &use_in, &["dialog:pasteName"]);
         egui::Popup::menu(&use_in).show(|ui| {
-            let names: Vec<String> = app.session.active().map(|d| d.wb.names.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
-            for n in names {
-                if ui.button(&n).clicked() {
-                    let cur = app.editor.as_ref().map(|e| e.text.clone()).unwrap_or_else(|| "=".into());
-                    app.begin_edit(Some(format!("{cur}{n}")), false);
+            // The menu lists the names Paste Names lists; clicking one runs `formulas.useInFormula`, which puts it at the caret.
+            // Listed when the menu opens, and again only after the workbook changes.
+            let cache = egui::Id::new("gridcraft.use_in_formula_names");
+            let key = app.session.active().map(|d| (d.uid, d.revision, d.wb.active_sheet));
+            let cached = ui.ctx().data(|m| m.get_temp::<(Option<(u64, u64, usize)>, std::sync::Arc<Vec<String>>)>(cache)).filter(|(k, _)| *k == key);
+            let names = match cached {
+                Some((_, names)) => names,
+                None => {
+                    let names: std::sync::Arc<Vec<String>> = std::sync::Arc::new(
+                        app.session
+                            .active()
+                            .map(|d| gridcraft_engine::cmd::formulas::pasteable_names(&d.wb).into_iter().map(|(n, _)| n).collect())
+                            .unwrap_or_default(),
+                    );
+                    ui.ctx().data_mut(|m| m.insert_temp(cache, (key, names.clone())));
+                    names
                 }
+            };
+            for n in names.iter() {
+                if ui.button(n).clicked() {
+                    app.run_or_alert("formulas.useInFormula", json!({"name": n}));
+                }
+            }
+            if !names.is_empty() {
+                ui.separator();
+            }
+            if ui.button(app.ui.language.tr("Paste Names…")).clicked() {
+                app.open_dialog("pasteName", json!({}));
             }
         });
         let __k = small_button(ui, Icon::Table, "Create from Selection", "Create from Selection", false);
@@ -2071,11 +2112,30 @@ fn formulas(app: &mut SheetApp, ui: &mut Ui) {
         if __k.clicked() {
             act(app, "formulas.showFormulas", json!({}));
         }
-        let __k = small_button(ui, Icon::Validation, "Error Checking", "Error Checking", false);
-        control_keytip(app, ui, &__k, "dialog:errorChecking");
-        if __k.clicked() {
+        let (ec, ec_arrow) = small_split_button(ui, Icon::Validation, "Error Checking", "Error Checking");
+        control_keytip(app, ui, &ec, "dialog:errorChecking");
+        if ec.clicked() {
             app.open_dialog("errorChecking", json!({}));
         }
+        egui::Popup::menu(&ec_arrow).show(|ui| {
+            let lang = app.ui.language;
+            if ui.button(format!("{}…", lang.tr("Error Checking"))).clicked() {
+                app.open_dialog("errorChecking", json!({}));
+            }
+            let circular = circular_references(app);
+            ui.add_enabled_ui(!circular.is_empty(), |ui| {
+                ui.menu_button(lang.tr("Circular References"), |ui| {
+                    egui::ScrollArea::vertical().id_salt("circular_references").max_height(400.0).show(ui, |ui| {
+                        for (sheet, cell, label) in circular {
+                            if ui.button(label).clicked() {
+                                act(app, "selection.set", json!({"range": cell, "sheet": sheet}));
+                                app.grid.ensure_visible = true;
+                            }
+                        }
+                    });
+                });
+            });
+        });
         let __k = small_button(ui, Icon::Calc, "Evaluate Formula", "Evaluate Formula", false);
         control_keytip(app, ui, &__k, "dialog:evaluateFormula");
         if __k.clicked() {
@@ -2237,6 +2297,9 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
         }
         if small_button(ui, Icon::Minus, "Hide Detail", "Hide Detail", false).clicked() {
             act(app, "data.hideDetail", json!({}));
+        }
+        if small_button(ui, Icon::Settings, "Settings", "Outline Settings", false).clicked() {
+            app.open_dialog("outlineSettings", json!({}));
         }
     });
     sep(ui);

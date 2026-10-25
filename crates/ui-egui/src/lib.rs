@@ -641,6 +641,10 @@ impl SheetApp {
             }
             "ui.customizeRibbon" => customize::customize_command(self, p),
             "ui.quickAccessToolbar" => customize::quick_access_command(self, p),
+            "view.expandFormulaBar" => {
+                self.ui.formula_bar_expanded = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.formula_bar_expanded);
+                Ok(json!({"on": self.ui.formula_bar_expanded}))
+            }
             "view.darkMode" => {
                 let current = if self.ui.system_theme { self.effective_dark } else { self.ui.dark };
                 self.ui.dark = p.get("on").and_then(Json::as_bool).unwrap_or(!current);
@@ -757,6 +761,7 @@ impl SheetApp {
                     });
                     self.begin_edit(text, false);
                 }
+                UiRequest::InsertName(name) => dialogs::insert_name(self, &name),
                 UiRequest::OpenUrl(u) => {
                     if let Some(f) = &self.services.open_url {
                         f(&u);
