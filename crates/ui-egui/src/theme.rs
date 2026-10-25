@@ -14,6 +14,11 @@ use std::sync::Arc;
 
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
 
+/// The light or dark value of a colour, by mode.
+fn pick<T>(dark: bool, light: T, dark_value: T) -> T {
+    if dark { dark_value } else { light }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
     pub dark: bool,
@@ -129,110 +134,70 @@ const SHEET_TRACK: Color32 = rgb(0xD6D6D6);
 
 impl Tokens {
     pub fn light() -> Tokens {
-        Tokens {
-            dark: false,
-            window: Color32::from_rgb(0xF3, 0xF3, 0xF3),
-            ribbon: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-            ribbon_border: Color32::from_rgb(0xE3, 0xE3, 0xE3),
-            text: Color32::from_rgb(0x24, 0x24, 0x24),
-            text_dim: Color32::from_rgb(0x61, 0x61, 0x61),
-            text_disabled: Color32::from_rgb(0xB0, 0xB0, 0xB0),
-            accent: Color32::from_rgb(0x10, 0x7C, 0x41),
-            accent_dark: Color32::from_rgb(0x0B, 0x5E, 0x31),
-            accent_soft: Color32::from_rgb(0xDF, 0xF1, 0xE6),
-            hover: Color32::from_rgb(0xEB, 0xEB, 0xEB),
-            pressed: Color32::from_rgb(0xDD, 0xDD, 0xDD),
-            separator: Color32::from_rgb(0xE0, 0xE0, 0xE0),
-            grid_bg: Color32::WHITE,
-            desk: Color32::from_rgb(0xDE, 0xDE, 0xDE),
-            gridline: Color32::from_rgb(0xE1, 0xE1, 0xE1),
-            header_bg: Color32::from_rgb(0xF8, 0xF8, 0xF8),
-            header_text: Color32::from_rgb(0x42, 0x42, 0x42),
-            header_line: Color32::from_rgb(0xD6, 0xD6, 0xD6),
-            header_sel_bg: Color32::from_rgb(0xE1, 0xE1, 0xE1),
-            header_sel_text: Color32::from_rgb(0x0B, 0x5E, 0x31),
-            header_all_bg: Color32::from_rgb(0xC8, 0xE6, 0xD3),
-            sel_fill: Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x1C),
-            sel_border: Color32::from_rgb(0x10, 0x7C, 0x41),
-            input_bg: Color32::WHITE,
-            input_border: Color32::from_rgb(0xD1, 0xD1, 0xD1),
-            tab_bar: Color32::from_rgb(0xF3, 0xF3, 0xF3),
-            tab_active: Color32::WHITE,
-            status_bar: Color32::from_rgb(0xF3, 0xF3, 0xF3),
-            cell_text: Color32::BLACK,
-            menu_bg: Color32::WHITE,
-            shadow: Color32::from_black_alpha(40),
-            danger: Color32::from_rgb(0xC4, 0x2B, 0x1C),
-            error_check_green: Color32::from_rgb(0x1E, 0x8E, 0x3E),
-            warning_fill: Color32::from_rgb(0xF2, 0xB7, 0x05),
-            warning_ink: Color32::BLACK,
-            notice_warn_bg: Color32::from_rgb(0xFF, 0xF4, 0xCE),
-            notice_warn_border: Color32::from_rgb(0xF0, 0xC3, 0x6E),
-            notice_info_bg: Color32::from_rgb(0xEA, 0xF2, 0xFB),
-            notice_info_border: Color32::from_rgb(0xB9, 0xD2, 0xEC),
-            on_accent: Color32::WHITE,
-            cat: [rgb(0x2F6FCF), rgb(0x1E8A4C), rgb(0xC8601A), rgb(0xC8372D), rgb(0x8350C8), rgb(0x13808A), rgb(0x9C6C00), rgb(0x5A6B7D)],
-            paper: Color32::WHITE,
-            ref_colors: SHEET_REF_COLORS,
-            sheet_ref_colors: SHEET_REF_COLORS,
-            syntax: LIGHT_SYNTAX,
-            warning: rgb(0xF2C32E),
-            on_warning: rgb(0x1F1F1F),
-            sheet_control_bg: SHEET_CONTROL_BG,
-            sheet_control_border: SHEET_CONTROL_BORDER,
-            sheet_control_text: SHEET_CONTROL_TEXT,
-            sheet_track: SHEET_TRACK,
-        }
+        Tokens::palette(false)
     }
 
     pub fn dark() -> Tokens {
+        Tokens::palette(true)
+    }
+
+    /// One palette for both modes: each colour is written once, with its light and dark values.
+    fn palette(dark: bool) -> Tokens {
         Tokens {
-            dark: true,
-            window: Color32::from_rgb(0x29, 0x29, 0x29),
-            ribbon: Color32::from_rgb(0x33, 0x33, 0x33),
-            ribbon_border: Color32::from_rgb(0x40, 0x40, 0x40),
-            text: Color32::from_rgb(0xEE, 0xEE, 0xEE),
-            text_dim: Color32::from_rgb(0xB0, 0xB0, 0xB0),
-            text_disabled: Color32::from_rgb(0x70, 0x70, 0x70),
-            accent: Color32::from_rgb(0x5C, 0xC5, 0x87),
-            accent_dark: Color32::from_rgb(0x3F, 0xA8, 0x6C),
-            accent_soft: Color32::from_rgb(0x23, 0x45, 0x31),
-            hover: Color32::from_rgb(0x42, 0x42, 0x42),
-            pressed: Color32::from_rgb(0x4D, 0x4D, 0x4D),
-            separator: Color32::from_rgb(0x48, 0x48, 0x48),
+            dark,
+            window: pick(dark, Color32::from_rgb(0xF3, 0xF3, 0xF3), Color32::from_rgb(0x29, 0x29, 0x29)),
+            ribbon: pick(dark, Color32::from_rgb(0xFF, 0xFF, 0xFF), Color32::from_rgb(0x33, 0x33, 0x33)),
+            ribbon_border: pick(dark, Color32::from_rgb(0xE3, 0xE3, 0xE3), Color32::from_rgb(0x40, 0x40, 0x40)),
+            text: pick(dark, Color32::from_rgb(0x24, 0x24, 0x24), Color32::from_rgb(0xEE, 0xEE, 0xEE)),
+            text_dim: pick(dark, Color32::from_rgb(0x61, 0x61, 0x61), Color32::from_rgb(0xB0, 0xB0, 0xB0)),
+            text_disabled: pick(dark, Color32::from_rgb(0xB0, 0xB0, 0xB0), Color32::from_rgb(0x70, 0x70, 0x70)),
+            accent: pick(dark, Color32::from_rgb(0x10, 0x7C, 0x41), Color32::from_rgb(0x5C, 0xC5, 0x87)),
+            accent_dark: pick(dark, Color32::from_rgb(0x0B, 0x5E, 0x31), Color32::from_rgb(0x3F, 0xA8, 0x6C)),
+            accent_soft: pick(dark, Color32::from_rgb(0xDF, 0xF1, 0xE6), Color32::from_rgb(0x23, 0x45, 0x31)),
+            hover: pick(dark, Color32::from_rgb(0xEB, 0xEB, 0xEB), Color32::from_rgb(0x42, 0x42, 0x42)),
+            pressed: pick(dark, Color32::from_rgb(0xDD, 0xDD, 0xDD), Color32::from_rgb(0x4D, 0x4D, 0x4D)),
+            separator: pick(dark, Color32::from_rgb(0xE0, 0xE0, 0xE0), Color32::from_rgb(0x48, 0x48, 0x48)),
             grid_bg: Color32::WHITE,
-            desk: Color32::from_rgb(0x3A, 0x3A, 0x3A),
+            desk: pick(dark, Color32::from_rgb(0xDE, 0xDE, 0xDE), Color32::from_rgb(0x3A, 0x3A, 0x3A)),
             gridline: Color32::from_rgb(0xE1, 0xE1, 0xE1),
-            header_bg: Color32::from_rgb(0x30, 0x30, 0x30),
-            header_text: Color32::from_rgb(0xCC, 0xCC, 0xCC),
-            header_line: Color32::from_rgb(0x45, 0x45, 0x45),
-            header_sel_bg: Color32::from_rgb(0x45, 0x45, 0x45),
-            header_sel_text: Color32::from_rgb(0x6F, 0xD3, 0x9A),
-            header_all_bg: Color32::from_rgb(0x2E, 0x55, 0x3E),
-            sel_fill: Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24),
+            header_bg: pick(dark, Color32::from_rgb(0xF8, 0xF8, 0xF8), Color32::from_rgb(0x30, 0x30, 0x30)),
+            header_text: pick(dark, Color32::from_rgb(0x42, 0x42, 0x42), Color32::from_rgb(0xCC, 0xCC, 0xCC)),
+            header_line: pick(dark, Color32::from_rgb(0xD6, 0xD6, 0xD6), Color32::from_rgb(0x45, 0x45, 0x45)),
+            header_sel_bg: pick(dark, Color32::from_rgb(0xE1, 0xE1, 0xE1), Color32::from_rgb(0x45, 0x45, 0x45)),
+            header_sel_text: pick(dark, Color32::from_rgb(0x0B, 0x5E, 0x31), Color32::from_rgb(0x6F, 0xD3, 0x9A)),
+            header_all_bg: pick(dark, Color32::from_rgb(0xC8, 0xE6, 0xD3), Color32::from_rgb(0x2E, 0x55, 0x3E)),
+            sel_fill: pick(dark, Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x1C), Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24)),
             sel_border: Color32::from_rgb(0x10, 0x7C, 0x41),
-            input_bg: Color32::from_rgb(0x1F, 0x1F, 0x1F),
-            input_border: Color32::from_rgb(0x50, 0x50, 0x50),
-            tab_bar: Color32::from_rgb(0x29, 0x29, 0x29),
-            tab_active: Color32::from_rgb(0x3A, 0x3A, 0x3A),
-            status_bar: Color32::from_rgb(0x29, 0x29, 0x29),
+            input_bg: pick(dark, Color32::WHITE, Color32::from_rgb(0x1F, 0x1F, 0x1F)),
+            input_border: pick(dark, Color32::from_rgb(0xD1, 0xD1, 0xD1), Color32::from_rgb(0x50, 0x50, 0x50)),
+            tab_bar: pick(dark, Color32::from_rgb(0xF3, 0xF3, 0xF3), Color32::from_rgb(0x29, 0x29, 0x29)),
+            tab_active: pick(dark, Color32::WHITE, Color32::from_rgb(0x3A, 0x3A, 0x3A)),
+            status_bar: pick(dark, Color32::from_rgb(0xF3, 0xF3, 0xF3), Color32::from_rgb(0x29, 0x29, 0x29)),
             cell_text: Color32::BLACK,
-            menu_bg: Color32::from_rgb(0x30, 0x30, 0x30),
-            shadow: Color32::from_black_alpha(90),
-            danger: Color32::from_rgb(0xFF, 0x95, 0x85),
-            error_check_green: Color32::from_rgb(0x4C, 0xC2, 0x6B),
+            menu_bg: pick(dark, Color32::WHITE, Color32::from_rgb(0x30, 0x30, 0x30)),
+            shadow: pick(dark, Color32::from_black_alpha(40), Color32::from_black_alpha(90)),
+            danger: pick(dark, Color32::from_rgb(0xC4, 0x2B, 0x1C), Color32::from_rgb(0xFF, 0x95, 0x85)),
+            error_check_green: pick(dark, Color32::from_rgb(0x1E, 0x8E, 0x3E), Color32::from_rgb(0x4C, 0xC2, 0x6B)),
             warning_fill: Color32::from_rgb(0xF2, 0xB7, 0x05),
             warning_ink: Color32::BLACK,
-            notice_warn_bg: Color32::from_rgb(0x4A, 0x3F, 0x1E),
-            notice_warn_border: Color32::from_rgb(0x7A, 0x67, 0x30),
-            notice_info_bg: Color32::from_rgb(0x24, 0x33, 0x44),
-            notice_info_border: Color32::from_rgb(0x3B, 0x55, 0x72),
-            on_accent: rgb(0x0F2A1A),
-            cat: [rgb(0x6EA8F7), rgb(0x5CC587), rgb(0xF0965A), rgb(0xF07B6E), rgb(0xB394EE), rgb(0x4CC7CF), rgb(0xF2C14E), rgb(0xA9B6C4)],
-            paper: rgb(0x454545),
-            ref_colors: [rgb(0x6FA3F5), rgb(0xF27C7C), rgb(0xB394EE), rgb(0x6CCB85), rgb(0xF0A061), rgb(0x5CC9DA), rgb(0xE77FC4), rgb(0xD4C25A)],
+            notice_warn_bg: pick(dark, Color32::from_rgb(0xFF, 0xF4, 0xCE), Color32::from_rgb(0x4A, 0x3F, 0x1E)),
+            notice_warn_border: pick(dark, Color32::from_rgb(0xF0, 0xC3, 0x6E), Color32::from_rgb(0x7A, 0x67, 0x30)),
+            notice_info_bg: pick(dark, Color32::from_rgb(0xEA, 0xF2, 0xFB), Color32::from_rgb(0x24, 0x33, 0x44)),
+            notice_info_border: pick(dark, Color32::from_rgb(0xB9, 0xD2, 0xEC), Color32::from_rgb(0x3B, 0x55, 0x72)),
+            on_accent: pick(dark, Color32::WHITE, rgb(0x0F2A1A)),
+            cat: pick(
+                dark,
+                [rgb(0x2F6FCF), rgb(0x1E8A4C), rgb(0xC8601A), rgb(0xC8372D), rgb(0x8350C8), rgb(0x13808A), rgb(0x9C6C00), rgb(0x5A6B7D)],
+                [rgb(0x6EA8F7), rgb(0x5CC587), rgb(0xF0965A), rgb(0xF07B6E), rgb(0xB394EE), rgb(0x4CC7CF), rgb(0xF2C14E), rgb(0xA9B6C4)],
+            ),
+            paper: pick(dark, Color32::WHITE, rgb(0x454545)),
+            ref_colors: pick(
+                dark,
+                SHEET_REF_COLORS,
+                [rgb(0x6FA3F5), rgb(0xF27C7C), rgb(0xB394EE), rgb(0x6CCB85), rgb(0xF0A061), rgb(0x5CC9DA), rgb(0xE77FC4), rgb(0xD4C25A)],
+            ),
             sheet_ref_colors: SHEET_REF_COLORS,
-            syntax: DARK_SYNTAX,
+            syntax: pick(dark, LIGHT_SYNTAX, DARK_SYNTAX),
             warning: rgb(0xF2C32E),
             on_warning: rgb(0x1F1F1F),
             sheet_control_bg: SHEET_CONTROL_BG,
@@ -382,7 +347,7 @@ fn try_load(paths: &[(&str, u32)]) -> Option<FontData> {
 /// looked for again next time.
 #[cfg(not(target_arch = "wasm32"))]
 fn font_file(path: &str, index: u32) -> Option<&'static [u8]> {
-    static FILES: std::sync::Mutex<std::collections::BTreeMap<String, &'static [u8]>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+    static FILES: std::sync::Mutex<std::collections::BTreeMap<String, &[u8]>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
     let mut files = FILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(&bytes) = files.get(path) {
         return font_parses(bytes, index).then_some(bytes);
@@ -422,6 +387,12 @@ fn home_fonts(file: &str) -> String {
     format!("{home}/Library/Fonts/{file}")
 }
 
+/// Every file in `files` under every directory in `dirs`, directory first, in the same order a
+/// nested loop over the directories would add them.
+fn in_dirs(dirs: &[&str], files: &[&str]) -> Vec<String> {
+    dirs.iter().flat_map(|d| files.iter().map(move |f| format!("{d}/{f}"))).collect()
+}
+
 /// Candidate font files per role, in preference order.
 fn candidates(role: &str) -> Vec<(String, u32)> {
     let mac_sys = "/System/Library/Fonts";
@@ -436,11 +407,11 @@ fn candidates(role: &str) -> Vec<(String, u32)> {
             add(format!("{mac_sys}/SFNS.ttf"), 0);
             add(format!("{mac_sys}/HelveticaNeue.ttc"), 0);
             add(format!("{win}\\segoeui.ttf"), 0);
-            for d in lin {
-                add(format!("{d}/cantarell/Cantarell-Regular.otf"), 0);
-                add(format!("{d}/noto/NotoSans-Regular.ttf"), 0);
-                add(format!("{d}/dejavu/DejaVuSans.ttf"), 0);
-                add(format!("{d}/liberation/LiberationSans-Regular.ttf"), 0);
+            for p in in_dirs(
+                &lin,
+                &["cantarell/Cantarell-Regular.otf", "noto/NotoSans-Regular.ttf", "dejavu/DejaVuSans.ttf", "liberation/LiberationSans-Regular.ttf"],
+            ) {
+                add(p, 0);
             }
             // Fedora keeps each family in its own package folder (#54).
             add("/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Regular.otf".into(), 0);
@@ -451,10 +422,8 @@ fn candidates(role: &str) -> Vec<(String, u32)> {
         "ui-bold" => {
             add(format!("{mac_sys}/HelveticaNeue.ttc"), 1);
             add(format!("{win}\\segoeuib.ttf"), 0);
-            for d in lin {
-                add(format!("{d}/noto/NotoSans-Bold.ttf"), 0);
-                add(format!("{d}/dejavu/DejaVuSans-Bold.ttf"), 0);
-                add(format!("{d}/liberation/LiberationSans-Bold.ttf"), 0);
+            for p in in_dirs(&lin, &["noto/NotoSans-Bold.ttf", "dejavu/DejaVuSans-Bold.ttf", "liberation/LiberationSans-Bold.ttf"]) {
+                add(p, 0);
             }
             add("/usr/share/fonts/google-noto/NotoSans-Bold.ttf".into(), 0);
             add("/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf".into(), 0);
@@ -497,18 +466,16 @@ fn candidates(role: &str) -> Vec<(String, u32)> {
             add(format!("/Library/Fonts/{calibri_mac}"), 0);
             add(home_fonts(calibri_mac), 0);
             add(format!("{win}\\{calibri_win}"), 0);
-            for d in lin {
-                add(format!("{d}/crosextra/{carlito}"), 0);
-                add(format!("{d}/carlito/{carlito}"), 0);
+            for p in in_dirs(&lin, &[&format!("crosextra/{carlito}"), &format!("carlito/{carlito}")]) {
+                add(p, 0);
             }
             // Fedora keeps each family in its own package folder, as for the UI fonts (#54).
             add(format!("/usr/share/fonts/google-carlito-fonts/{carlito}"), 0);
             add(home_fonts(carlito), 0);
             add(format!("{mac_sup}/{arial_mac}"), 0);
             add(format!("{win}\\{arial_win}"), 0);
-            for d in lin {
-                add(format!("{d}/liberation/{lib}"), 0);
-                add(format!("{d}/dejavu/{dejavu}"), 0);
+            for p in in_dirs(&lin, &[&format!("liberation/{lib}"), &format!("dejavu/{dejavu}")]) {
+                add(p, 0);
             }
             add(format!("/usr/share/fonts/liberation-sans-fonts/{lib}"), 0);
             add(format!("/usr/share/fonts/dejavu-sans-fonts/{dejavu}"), 0);
@@ -516,9 +483,8 @@ fn candidates(role: &str) -> Vec<(String, u32)> {
         "serif" => {
             add(format!("{mac_sup}/Times New Roman.ttf"), 0);
             add(format!("{win}\\times.ttf"), 0);
-            for d in lin {
-                add(format!("{d}/liberation/LiberationSerif-Regular.ttf"), 0);
-                add(format!("{d}/dejavu/DejaVuSerif.ttf"), 0);
+            for p in in_dirs(&lin, &["liberation/LiberationSerif-Regular.ttf", "dejavu/DejaVuSerif.ttf"]) {
+                add(p, 0);
             }
             add("/usr/share/fonts/liberation-serif-fonts/LiberationSerif-Regular.ttf".into(), 0);
             add("/usr/share/fonts/dejavu-serif-fonts/DejaVuSerif.ttf".into(), 0);
@@ -527,14 +493,14 @@ fn candidates(role: &str) -> Vec<(String, u32)> {
             add(format!("{mac_sys}/SFNSMono.ttf"), 0);
             add(format!("{mac_sys}/Menlo.ttc"), 0);
             add(format!("{win}\\consola.ttf"), 0);
-            for d in lin {
-                add(format!("{d}/dejavu/DejaVuSansMono.ttf"), 0);
+            for p in in_dirs(&lin, &["dejavu/DejaVuSansMono.ttf"]) {
+                add(p, 0);
             }
             add("/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf".into(), 0);
             // Fedora installs DejaVu Sans Mono only on request. Liberation Mono comes with LibreOffice
             // (in Workstation and KDE by default), Noto Sans Mono (variable, Regular by default) always.
-            for d in lin {
-                add(format!("{d}/liberation/LiberationMono-Regular.ttf"), 0);
+            for p in in_dirs(&lin, &["liberation/LiberationMono-Regular.ttf"]) {
+                add(p, 0);
             }
             add("/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf".into(), 0);
             add("/usr/share/fonts/google-noto-vf/NotoSansMono[wght].ttf".into(), 0);
@@ -725,6 +691,24 @@ const LINUX_CJK_DIRS: [&str; 22] = [
     "/usr/share/fonts/chromeos/notocjk",
 ];
 
+/// The Windows fonts folder (`%WINDIR%\Fonts`, or the default install location).
+#[cfg(not(target_arch = "wasm32"))]
+fn windows_fonts() -> String {
+    std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into())
+}
+
+/// The Noto Sans CJK faces for one locale (`jp`, `sc`, `kr`): the per-locale OTF, then the
+/// region-merged TTC at `face`, in every Linux font directory.
+#[cfg(not(target_arch = "wasm32"))]
+fn noto_cjk(locale: &str, face: u32) -> Vec<(String, u32)> {
+    let mut v = Vec::new();
+    for d in LINUX_CJK_DIRS {
+        v.push((format!("{d}/NotoSansCJK{locale}-Regular.otf"), 0));
+        v.push((format!("{d}/NotoSansCJK-Regular.ttc"), face));
+    }
+    v
+}
+
 /// Japanese Han + Kana faces (Japanese kanji glyph shapes).
 ///
 /// The region-merged `NotoSansCJK-Regular.ttc` holds one face per locale (JP 0, KR 1, SC 2, TC 3,
@@ -733,15 +717,12 @@ const LINUX_CJK_DIRS: [&str; 22] = [
 #[cfg(not(target_arch = "wasm32"))]
 fn cjk_han_japanese() -> Vec<(String, u32)> {
     let mac = "/System/Library/Fonts";
-    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    let win = windows_fonts();
     let mut v: Vec<(String, u32)> = Vec::new();
     v.push((format!("{win}\\YuGothR.ttc"), 0)); // Yu Gothic
     v.push((format!("{win}\\msgothic.ttc"), 0)); // MS Gothic
     v.push((format!("{mac}/ヒラギノ角ゴシック W3.ttc"), 0)); // Hiragino Sans
-    for d in LINUX_CJK_DIRS {
-        v.push((format!("{d}/NotoSansCJKjp-Regular.otf"), 0));
-        v.push((format!("{d}/NotoSansCJK-Regular.ttc"), 0)); // JP face
-    }
+    v.extend(noto_cjk("jp", 0));
     v
 }
 
@@ -750,17 +731,15 @@ fn cjk_han_japanese() -> Vec<(String, u32)> {
 #[cfg(not(target_arch = "wasm32"))]
 fn cjk_han_simplified() -> Vec<(String, u32)> {
     let mac = "/System/Library/Fonts";
-    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
-    let mut v: Vec<(String, u32)> = Vec::new();
-    v.push((format!("{win}\\msyh.ttc"), 0)); // Microsoft YaHei
-    v.push((format!("{win}\\simsun.ttc"), 0)); // SimSun
-    v.push((format!("{win}\\simhei.ttf"), 0)); // SimHei
-    v.push((format!("{mac}/Hiragino Sans GB.ttc"), 0)); // ships on every recent macOS
-    v.push((format!("{mac}/PingFang.ttc"), 0)); // older macOS only; now a downloadable asset
-    for d in LINUX_CJK_DIRS {
-        v.push((format!("{d}/NotoSansCJKsc-Regular.otf"), 0));
-        v.push((format!("{d}/NotoSansCJK-Regular.ttc"), 2)); // SC face
-    }
+    let win = windows_fonts();
+    let mut v: Vec<(String, u32)> = vec![
+        (format!("{win}\\msyh.ttc"), 0),            // Microsoft YaHei
+        (format!("{win}\\simsun.ttc"), 0),          // SimSun
+        (format!("{win}\\simhei.ttf"), 0),          // SimHei
+        (format!("{mac}/Hiragino Sans GB.ttc"), 0), // ships on every recent macOS
+        (format!("{mac}/PingFang.ttc"), 0),         // older macOS only; now a downloadable asset
+    ];
+    v.extend(noto_cjk("sc", 2));
     for d in LINUX_CJK_DIRS {
         v.push((format!("{d}/wqy/wqy-microhei.ttc"), 0));
         v.push((format!("{d}/wenquanyi/wqy-microhei.ttc"), 0));
@@ -774,45 +753,50 @@ fn cjk_han_simplified() -> Vec<(String, u32)> {
 #[cfg(not(target_arch = "wasm32"))]
 fn cjk_hangul() -> Vec<(String, u32)> {
     let mac = "/System/Library/Fonts";
-    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    let win = windows_fonts();
     let mut v: Vec<(String, u32)> = Vec::new();
     v.push((format!("{win}\\malgun.ttf"), 0)); // Malgun Gothic
     v.push((format!("{mac}/AppleSDGothicNeo.ttc"), 0));
-    for d in LINUX_CJK_DIRS {
-        v.push((format!("{d}/NotoSansCJKkr-Regular.otf"), 0));
-        v.push((format!("{d}/NotoSansCJK-Regular.ttc"), 1)); // KR face
-    }
+    v.extend(noto_cjk("kr", 1));
     v
 }
 
 /// Thai faces. Windows ships Leelawadee UI and Tahoma/Microsoft Sans Serif (both carry Thai);
-/// macOS has Thonburi; Linux usually has Noto Sans Thai or Garuda.
+/// Linux font directories searched by the Thai and Hebrew faces, in priority order.
 #[cfg(not(target_arch = "wasm32"))]
-fn thai() -> Vec<(String, u32)> {
-    let mac_sys = "/System/Library/Fonts";
-    let mac_sup = "/System/Library/Fonts/Supplemental";
-    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
-    let lin = [
+fn linux_noto_dirs() -> [&'static str; 5] {
+    [
         "/usr/share/fonts/truetype/noto",
         "/usr/share/fonts/opentype/noto",
         "/usr/share/fonts/truetype",
         "/usr/share/fonts",
         "/usr/share/fonts/chromeos/noto", // ChromeOS's Linux container (#1762)
-    ];
-    let mut v: Vec<(String, u32)> = Vec::new();
-    v.push((format!("{win}\\LeelawUI.ttf"), 0)); // Leelawadee UI
-    v.push((format!("{win}\\tahoma.ttf"), 0)); // Tahoma
-    v.push((format!("{win}\\micross.ttf"), 0)); // Microsoft Sans Serif
-    v.push((format!("{mac_sup}/Thonburi.ttc"), 0));
-    v.push((format!("{mac_sys}/SukhumvitSet.ttc"), 0));
-    for d in lin {
-        v.push((format!("{d}/NotoSansThai-Regular.ttf"), 0));
-        v.push((format!("{d}/tlwg/Garuda.ttf"), 0));
-        v.push((format!("{d}/garuda/Garuda.ttf"), 0));
-    }
-    // Fedora ships the variable Noto Sans Thai; its default instance is Regular.
-    v.push(("/usr/share/fonts/google-noto-vf/NotoSansThai[wght].ttf".into(), 0));
+    ]
+}
+
+/// Faces for one script: Windows files under `WINDIR\Fonts` first, then macOS paths, then the
+/// Noto/Linux files in every [`linux_noto_dirs`] directory, then the Fedora variable font.
+#[cfg(not(target_arch = "wasm32"))]
+fn script_fonts(win: &[&str], mac: &[&str], lin_files: &[&str], variable: &str) -> Vec<(String, u32)> {
+    let w = windows_fonts();
+    let mut v: Vec<(String, u32)> = win.iter().map(|f| (format!("{w}\\{f}"), 0)).collect();
+    v.extend(mac.iter().map(|p| (p.to_string(), 0)));
+    v.extend(in_dirs(&linux_noto_dirs(), lin_files).into_iter().map(|p| (p, 0)));
+    v.push((variable.into(), 0));
     v
+}
+
+/// macOS has Thonburi; Linux usually has Noto Sans Thai or Garuda.
+#[cfg(not(target_arch = "wasm32"))]
+fn thai() -> Vec<(String, u32)> {
+    script_fonts(
+        // Leelawadee UI, Tahoma, Microsoft Sans Serif
+        &["LeelawUI.ttf", "tahoma.ttf", "micross.ttf"],
+        &["/System/Library/Fonts/Supplemental/Thonburi.ttc", "/System/Library/Fonts/SukhumvitSet.ttc"],
+        &["NotoSansThai-Regular.ttf", "tlwg/Garuda.ttf", "garuda/Garuda.ttf"],
+        // Fedora ships the variable Noto Sans Thai; its default instance is Regular.
+        "/usr/share/fonts/google-noto-vf/NotoSansThai[wght].ttf",
+    )
 }
 
 /// Lao faces. Windows ships Leelawadee UI (and DokChampa on older versions); macOS has Lao Sangam
@@ -820,13 +804,14 @@ fn thai() -> Vec<(String, u32)> {
 #[cfg(not(target_arch = "wasm32"))]
 fn lao() -> Vec<(String, u32)> {
     let mac_sup = "/System/Library/Fonts/Supplemental";
-    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    let win = windows_fonts();
     let lin = ["/usr/share/fonts/truetype/noto", "/usr/share/fonts/opentype/noto", "/usr/share/fonts/truetype", "/usr/share/fonts"];
-    let mut v: Vec<(String, u32)> = Vec::new();
-    v.push((format!("{win}\\LeelawUI.ttf"), 0)); // Leelawadee UI
-    v.push((format!("{win}\\dokchamp.ttf"), 0)); // DokChampa
-    v.push((format!("{mac_sup}/Lao Sangam MN.ttf"), 0));
-    v.push((format!("{mac_sup}/Lao MN.ttc"), 0));
+    let mut v: Vec<(String, u32)> = vec![
+        (format!("{win}\\LeelawUI.ttf"), 0), // Leelawadee UI
+        (format!("{win}\\dokchamp.ttf"), 0), // DokChampa
+        (format!("{mac_sup}/Lao Sangam MN.ttf"), 0),
+        (format!("{mac_sup}/Lao MN.ttc"), 0),
+    ];
     for d in lin {
         v.push((format!("{d}/NotoSansLao-Regular.ttf"), 0));
         v.push((format!("{d}/lao/Phetsarath_OT.ttf"), 0));
@@ -839,33 +824,20 @@ fn lao() -> Vec<(String, u32)> {
 /// Arial Hebrew and David; Linux usually has Noto Sans Hebrew or DejaVu Sans.
 #[cfg(not(target_arch = "wasm32"))]
 fn hebrew() -> Vec<(String, u32)> {
-    let mac_sys = "/System/Library/Fonts";
-    let mac_sup = "/System/Library/Fonts/Supplemental";
-    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
-    let lin = [
-        "/usr/share/fonts/truetype/noto",
-        "/usr/share/fonts/opentype/noto",
-        "/usr/share/fonts/truetype",
-        "/usr/share/fonts",
-        "/usr/share/fonts/chromeos/noto", // ChromeOS's Linux container (#1762)
-    ];
-    let mut v: Vec<(String, u32)> = Vec::new();
-    v.push((format!("{win}\\david.ttf"), 0)); // David
-    v.push((format!("{win}\\frank.ttf"), 0)); // FrankRuehl
-    v.push((format!("{win}\\tahoma.ttf"), 0)); // Tahoma
-    v.push((format!("{mac_sys}/ArialHB.ttc"), 0)); // Arial Hebrew
-    v.push((format!("{mac_sys}/SFHebrew.ttf"), 0));
-    v.push((format!("{mac_sup}/Arial Hebrew.ttf"), 0));
-    v.push((format!("{mac_sup}/David.ttf"), 0));
-    v.push((format!("{mac_sys}/LucidaGrande.ttc"), 0));
-    v.push((format!("{mac_sys}/Lucida Grande.ttc"), 0));
-    for d in lin {
-        v.push((format!("{d}/NotoSansHebrew-Regular.ttf"), 0));
-        v.push((format!("{d}/dejavu/DejaVuSans.ttf"), 0));
-        v.push((format!("{d}/freefont/FreeSans.ttf"), 0));
-    }
-    v.push(("/usr/share/fonts/google-noto-vf/NotoSansHebrew[wght].ttf".into(), 0));
-    v
+    script_fonts(
+        // David, FrankRuehl, Tahoma
+        &["david.ttf", "frank.ttf", "tahoma.ttf"],
+        &[
+            "/System/Library/Fonts/ArialHB.ttc",
+            "/System/Library/Fonts/SFHebrew.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Hebrew.ttf",
+            "/System/Library/Fonts/Supplemental/David.ttf",
+            "/System/Library/Fonts/LucidaGrande.ttc",
+            "/System/Library/Fonts/Lucida Grande.ttc",
+        ],
+        &["NotoSansHebrew-Regular.ttf", "dejavu/DejaVuSans.ttf", "freefont/FreeSans.ttf"],
+        "/usr/share/fonts/google-noto-vf/NotoSansHebrew[wght].ttf",
+    )
 }
 
 /// Symbol faces behind the UI font. Interface fonts such as Noto Sans and Cantarell (and egui's
