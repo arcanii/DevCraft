@@ -571,6 +571,24 @@ fn lambda_helpers_check_shapes_and_parameters() {
 }
 
 #[test]
+fn lambda_calls_spend_one_work_budget_per_cell() {
+    // #2382: lambda nesting multiplies invocations, and the budget meters every one of them.
+    // Exhaustion itself is tested on a mock host in `eval::fuel_tests` (burning the real 16M
+    // budget in a full recalc needs tens of millions of calls, far too slow for a unit test);
+    // here the same nested shape runs inside it: 6 × 9 ≈ 59k scalar REDUCE invocations.
+    let mut t = T::new();
+    t.set(
+        "A1",
+        "=LET(s,SEQUENCE(9),REDUCE(0,s,LAMBDA(a,v,REDUCE(0,s,LAMBDA(a,v,REDUCE(0,s,LAMBDA(a,v,REDUCE(0,s,LAMBDA(a,v,REDUCE(0,s,LAMBDA(a,v,a+v)))))))))))",
+    );
+    // The bodies are the same inner reduce, so every level sums to 45 while the invocation
+    // count multiplies by 9 per level (9, 81, 729, 6561, 59049 calls).
+    assert_eq!(t.num("A1"), 45.0);
+    t.set("A2", "=REDUCE(0,SEQUENCE(4000),LAMBDA(a,v,a+v))");
+    assert_eq!(t.num("A2"), 4000.0 * 4001.0 / 2.0);
+}
+
+#[test]
 fn accounting_negative_text_coerces() {
     let mut t = T::new();
     t.set("A1", "'$(1,234)");

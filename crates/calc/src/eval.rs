@@ -22,6 +22,11 @@ const FULL_SIZE_CELLS: u64 = 16_384;
 /// range, so that formulas over them stay fast.
 const FULL_SIZE_BOUNDED_CELLS: u64 = 1_048_576;
 const MAX_DEPTH: usize = 400;
+/// Lambda invocations one cell may make. A semantically bounded formula in Excel can invoke
+/// its lambda at most once per cell of an array (capped here by `MAX_CELLS`), so this covers
+/// every legitimate call; hostile work that grows past one dimension (a LAMBDA that recurses
+/// or nest `MAP` into `MAP`) then stops at the same bound instead of squaring.
+const LAMBDA_FUEL: u64 = MAX_CELLS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Area {
@@ -88,6 +93,11 @@ pub struct Evaluator<'h> {
     pub at: CellRef,
     env: Vec<(String, Ev)>,
     depth: usize,
+    /// Lambda invocations this cell still has left. Every call spends one charge, so a
+    /// compact hostile formula (a LAMBDA that calls itself, nested `MAP`s over big arrays)
+    /// runs out of work after the same number of calls that a legitimately wide one could
+    /// make, instead of an amount of work that squares with array nesting (#2382).
+    fuel: u64,
 }
 
 struct FnCtx<'a, 'h> {
@@ -127,8 +137,11 @@ impl Ctx for FnCtx<'_, '_> {
                 _ => None,
             })
             .collect();
-        let mut ev = Evaluator { host: &mut *self.ev.host, sheet: area.sheet, at, env, depth: self.ev.depth };
-        Some(matches!(ev.value(&shifted).scalar().to_bool(), Ok(true)))
+        let mut ev = Evaluator { host: &mut *self.ev.host, sheet: area.sheet, at, env, depth: self.ev.depth, fuel: self.ev.fuel };
+        let v = matches!(ev.value(&shifted).scalar().to_bool(), Ok(true));
+        // The child's spend counts against this cell's budget.
+        self.ev.fuel = ev.fuel;
+        Some(v)
     }
     fn has_lambda(&self) -> bool {
         self.lambda.is_some()
@@ -147,7 +160,7 @@ impl Ctx for FnCtx<'_, '_> {
 
 impl<'h> Evaluator<'h> {
     pub fn new(host: &'h mut dyn Host, sheet: usize, at: CellRef) -> Self {
-        Evaluator { host, sheet, at, env: Vec::new(), depth: 0 }
+        Evaluator { host, sheet, at, env: Vec::new(), depth: 0, fuel: LAMBDA_FUEL }
     }
 
     /// Evaluates to a value (references are dereferenced; multi-cell → array).
@@ -983,6 +996,13 @@ impl<'h> Evaluator<'h> {
     }
 
     fn call_lambda_values(&mut self, l: &Lambda, bound: Vec<(String, Ev)>) -> Ev {
+        // #2382: one charge per invocation, so a cell's total work stays bounded however the
+        // lambdas nest. Foregrounding the charge here means every path into a body (direct
+        // `(2,3)` application, `MAP`/`REDUCE`/`BYROW` helpers, D-function criteria) meters.
+        self.fuel = match self.fuel.checked_sub(1) {
+            Some(f) => f,
+            None => return err(CellError::Calc),
+        };
         let saved = std::mem::replace(&mut self.env, l.env.clone());
         self.env.extend(bound);
         let r = self.eval(&l.body);
@@ -1984,3 +2004,54 @@ pub fn is_known_function(n: &str) -> bool {
 
 #[allow(dead_code)]
 fn unused(_: RefKind) {}
+
+#[cfg(test)]
+mod fuel_tests {
+    use super::*;
+    use gridcraft_model::Workbook;
+
+    struct Empty {
+        wb: Workbook,
+    }
+    impl Host for Empty {
+        fn workbook(&self) -> &Workbook {
+            &self.wb
+        }
+        fn cell_value(&mut self, _sheet: usize, _c: CellRef) -> Value {
+            Value::Empty
+        }
+        fn now_serial(&self) -> f64 {
+            0.0
+        }
+        fn random(&mut self) -> f64 {
+            0.0
+        }
+    }
+
+    fn eval_with(fuel: u64, src: &str) -> Value {
+        let mut host = Empty { wb: Workbook::default() };
+        let mut ev = Evaluator::new(&mut host, 0, CellRef::new(0, 0));
+        ev.fuel = fuel;
+        ev.value(&gridcraft_formula::parser::parse(src).unwrap_or_else(|e| panic!("{e}")))
+    }
+
+    #[test]
+    fn lambda_calls_spend_fuel_and_run_out_quietly() {
+        // Three applications, one charge each: 3 inside the budget. (A nested MAP wouldn't do
+        // here: an inner MAP result is an array, and MAP of array elements is #CALC! on shape,
+        // which happens well before the budget does.)
+        let r = eval_with(3, "=LAMBDA(x,LAMBDA(y,LAMBDA(z,z+1)(3))(2))(1)");
+        assert_eq!(r, Value::number(4.0), "{r:?}");
+        // One charge short: the nest bottoms out in #CALC! instead of running unbounded.
+        let r = eval_with(2, "=LAMBDA(x,LAMBDA(y,LAMBDA(z,z+1)(3))(2))(1)");
+        assert!(matches!(r, Value::Error(CellError::Calc)), "{r:?}");
+        // One charge short of a single application: #CALC! with a zero budget.
+        let r = eval_with(0, "=LAMBDA(x,x+1)(2)");
+        assert!(matches!(r, Value::Error(CellError::Calc)), "{r:?}");
+        let r = eval_with(1, "=LAMBDA(x,x+1)(2)");
+        assert_eq!(r, Value::number(3.0));
+        // A flat helper map keeps working (3 of 3 invokes inside the budget).
+        let r = eval_with(3, "=MAP({1,2,3},LAMBDA(x,x*2))");
+        assert!(matches!(r, Value::Array(_)) && !matches!(&r, Value::Array(a) if a.data.iter().any(|v| matches!(v, Value::Error(_)))), "{r:?}");
+    }
+}

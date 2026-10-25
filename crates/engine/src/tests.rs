@@ -4604,4 +4604,60 @@ fn html_export_without_pictures_or_charts_has_no_fixed_geometry() {
     let html = crate::io::to_html(&s.doc().unwrap().wb, 0).unwrap();
     assert!(!html.contains("<colgroup>") && !html.contains("table-layout") && !html.contains("<svg") && !html.contains("<img"), "{html}");
 }
+#[test]
+fn format_cells_permission_on_a_protected_sheet_cannot_unlock_cells() {
+    // Formatting may be allowed on a protected sheet; the permission can't serve as a key to
+    // content edits, so the format cells may not drop a cell's `locked` flag.
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "B2", "input": "hi"})).unwrap();
+    s.execute("review.protectSheet", json!({"formatCells": true})).unwrap();
+    s.execute("home.fontName", json!({"name": "Arial"})).unwrap();
+    let err = s.execute("home.lockCell", json!({"range": "B2", "on": false})).expect_err("unlock through formatting");
+    assert!(err.to_string().contains("protected"), "{err}");
+    assert!(s.execute("cell.set", json!({"cell": "B2", "input": "x"})).is_err(), "B2 stays locked");
+    // The same calls run once the sheet is unprotected.
+    s.execute("review.unprotectSheet", json!({})).unwrap();
+    s.execute("home.lockCell", json!({"range": "B2", "on": false})).unwrap();
+    s.execute("cell.set", json!({"cell": "B2", "input": "x"})).unwrap();
+    assert_eq!(v(&s, "B2"), Value::text("x"));
+}
+
+#[test]
+fn move_columns_checks_the_protection_of_the_named_sheet() {
+    // The move's protection checks must authorize the sheet it modifies, not whichever sheet
+    // happens to be active while the command names another one.
+    let mut s = s();
+    s.execute("home.insertSheet", json!({"name": "P"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2, 3, 4]]})).unwrap();
+    s.execute("review.protectSheet", json!({})).unwrap();
+    s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+    let err = s.execute("sheet.moveColumns", json!({"sheet": "P", "cols": "B:C", "before": 4})).expect_err("moving columns on a protected sheet");
+    assert!(err.to_string().contains("protected"), "{err}");
+    let pv: Vec<Value> = {
+        let d = s.doc().unwrap();
+        let sh = &d.wb.sheets[d.wb.sheet_index("P").unwrap()];
+        (0..4).map(|c| sh.value(CellRef::new(0, c as u32))).collect()
+    };
+    assert_eq!(pv, vec![Value::number(1.0), Value::number(2.0), Value::number(3.0), Value::number(4.0)]);
+    // The active, unprotected sheet moves fine.
+    s.execute("range.setValues", json!({"range": "A1", "values": [["A", "B", "C", "D"]]})).unwrap();
+    s.execute("sheet.moveColumns", json!({"cols": "B:B", "before": 4})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::text("A"));
+}
+
+#[test]
+fn a_script_cannot_switch_windows() {
+    // Stored scripts are scoped to their workbook: a step that activates another window would
+    // point every later step at another open document, so it is refused before any step runs.
+    let mut s = s();
+    s.execute("automate.newScript", json!({"name": "t", "commands": [{"command": "window.activate", "params": {"index": 0}}]})).unwrap();
+    s.execute("automate.trustScripts", json!({"trusted": true})).unwrap();
+    let err = s.execute("automate.runScript", json!({"name": "t"})).expect_err("script switching windows");
+    assert!(err.to_string().contains("window.activate"), "{err}");
+    // A benign script runs.
+    s.execute("automate.newScript", json!({"name": "ok", "commands": [{"command": "cell.set", "params": {"cell": "A1", "input": "=1+1"}}]})).unwrap();
+    s.execute("automate.runScript", json!({"name": "ok"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::number(2.0));
+}
+
 mod seams;
