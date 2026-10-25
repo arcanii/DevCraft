@@ -27,12 +27,12 @@ fn harness() -> Harness {
     session.execute("data.validation", json!({"range": "E3", "type": "list", "formula1": "\"First,Second\""})).unwrap();
     session.execute("home.insertSheet", json!({})).unwrap();
     session.execute("sheet.activate", json!({"sheet": 0})).unwrap();
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+    let mut h = crate::common::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SheetApp| {
             app.logic(ui.ctx());
             app.ui(ui);
         },
-        SheetApp::new(session, Default::default()),
+        crate::common::app(session),
     );
     h.run_steps(4);
     h
@@ -187,7 +187,7 @@ fn open_list_of(h: &mut Harness, cell: CellRef, count: usize) -> egui::Rect {
     let arrow = grid::validation_arrow(sh, &geometry, cell).unwrap().center();
     click(h, arrow, PointerButton::Primary);
     assert!(is_open(h, Menu::Validation));
-    h.ctx.memory(|m| m.area_rect(egui::Id::new("dv_list"))).unwrap()
+    h.ctx.memory(|m| m.area_rect(egui::Id::unique("dv_list"))).unwrap()
 }
 
 #[test]

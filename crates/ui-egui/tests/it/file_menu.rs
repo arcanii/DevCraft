@@ -8,18 +8,7 @@ use gridcraft_ui_egui::i18n::Language;
 use gridcraft_ui_egui::{Services, SheetApp};
 
 fn harness(services: Services) -> egui_kittest::Harness<'static, SheetApp> {
-    let mut session = Session::new();
-    session.new_workbook();
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
-        |ui, app: &mut SheetApp| {
-            let ctx = ui.ctx().clone();
-            app.logic(&ctx);
-            app.ui(ui);
-        },
-        SheetApp::new(session, services),
-    );
-    h.run_steps(4);
-    h
+    crate::support::services_harness(services, 4)
 }
 
 /// Opens File (the Backstage view) and clicks a navigation entry or page button.
@@ -110,17 +99,21 @@ fn save_actions_include_the_cell_draft_and_close_keeps_the_unsaved_prompt() {
 }
 
 #[test]
+/// Options opens, named Backstage pages are reachable and accessible, an invalid page errors, and both close and Back leave Backstage.
 fn file_options_opens_the_options_page_and_pages_are_reachable_by_command() {
     let mut h = harness(Services::default());
     let r = h.state_mut().run("file.options", serde_json::json!({})).unwrap();
     assert_eq!(r["calculation"]["mode"], "automatic");
     h.run_steps(3);
+    h.check_accessibility();
     assert_eq!(page(&h), Some("options"));
     click(&mut h, "Info");
+    h.check_accessibility();
     assert_eq!(page(&h), Some("info"));
     for id in ["print", "export", "saveAs", "new", "open", "home"] {
         h.state_mut().run("ui.backstage", serde_json::json!({"page": id})).unwrap();
         h.run_steps(2);
+        h.check_accessibility();
         assert_eq!(page(&h), Some(id));
     }
     assert!(h.state_mut().run("ui.backstage", serde_json::json!({"page": "feedback"})).is_err());
@@ -130,6 +123,7 @@ fn file_options_opens_the_options_page_and_pages_are_reachable_by_command() {
     h.state_mut().run("ui.backstage", serde_json::json!({})).unwrap();
     h.run_steps(2);
     click(&mut h, "Back");
+    h.check_accessibility();
     assert!(h.state().backstage.is_none());
 }
 
@@ -340,23 +334,20 @@ fn options_sets_maximum_iterations_and_change_only_while_iteration_is_on() {
     let mut session = Session::new();
     session.new_workbook();
     // Tall enough that the Formulas section is on screen without scrolling.
-    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 1400.0)).build_ui_state(
+    let mut h = crate::common::builder().with_size(egui::vec2(1200.0, 1400.0)).build_ui_state(
         |ui, app: &mut SheetApp| {
             let ctx = ui.ctx().clone();
             app.logic(&ctx);
             app.ui(ui);
         },
-        SheetApp::new(session, Services::default()),
+        crate::common::prepare(SheetApp::new(session, Services::default())),
     );
     h.run_steps(4);
     h.state_mut().run("file.options", serde_json::json!({})).unwrap();
     h.run_steps(3);
     let calc = |h: &egui_kittest::Harness<'static, SheetApp>| h.state().session.active().unwrap().wb.calc.clone();
-    // The text field on the same row as `label`.
-    let field = |h: &egui_kittest::Harness<'static, SheetApp>, label: &str| {
-        let l = h.get_by_label(label).rect();
-        h.get_all_by_role(Role::TextInput).map(|n| n.rect()).find(|r| r.left() > l.left() && (r.center().y - l.center().y).abs() < 8.0).unwrap()
-    };
+    // Resolve the field by its accessible name in both the disabled and enabled states.
+    let field = |h: &egui_kittest::Harness<'static, SheetApp>, label: &str| h.get_by_role_and_label(Role::TextInput, label).rect();
     let disabled = |h: &egui_kittest::Harness<'static, SheetApp>, rect: egui::Rect| {
         h.get_all_by_role(Role::TextInput).find(|n| n.rect() == rect).unwrap().accesskit_node().is_disabled()
     };

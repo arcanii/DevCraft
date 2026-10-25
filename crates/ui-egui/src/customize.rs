@@ -560,7 +560,7 @@ fn command_button(app: &SheetApp, ui: &mut Ui, id: &str, with_label: bool, quiet
     if let Some(r) = &reason {
         tip = format!("{tip}\n{}", crate::clean_error(r));
     }
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
     resp.on_hover_text(tip)
 }
 
@@ -598,7 +598,7 @@ enum Request {
 }
 
 fn request_id() -> egui::Id {
-    egui::Id::new("gridcraft.customize.requests")
+    egui::Id::unique("gridcraft.customize.requests")
 }
 
 fn request(ui: &Ui, r: Request) {
@@ -700,7 +700,7 @@ pub fn quick_access(app: &mut SheetApp, ui: &mut Ui, height: f32) {
         }
     }
     let more = crate::widgets::icon_button(ui, Icon::More, t.text_dim, "Customize Quick Access Toolbar", vec2(26.0, height));
-    more.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, app.ui.language.tr("Customize Quick Access Toolbar")));
+    more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, app.ui.language.tr("Customize Quick Access Toolbar")));
     egui::Popup::menu(&more).show(|ui| {
         let lang = app.ui.language;
         ui.label(egui::RichText::new(lang.tr("Customize Quick Access Toolbar")).strong());
@@ -1026,7 +1026,7 @@ fn ribbon_page(app: &mut SheetApp, ui: &mut Ui, d: &mut crate::dialogs::Dialog) 
                 let mut shown = !app.ui.ribbon.hidden.contains(key);
                 let name = if app.ui.ribbon.is_custom(key) { app.ui.ribbon.tab_label(key).to_string() } else { lang.tr(key).to_string() };
                 let check = ui.checkbox(&mut shown, "");
-                check.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, shown, format!("{} {name}", lang.tr("Show"))));
+                check.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, shown, format!("{} {name}", lang.tr("Show"))));
                 if check.on_hover_text(lang.tr("Show this tab")).changed() {
                     app.ui.ribbon.set_hidden(key, !shown);
                 }

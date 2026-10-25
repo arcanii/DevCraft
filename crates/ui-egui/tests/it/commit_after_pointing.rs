@@ -13,12 +13,12 @@ fn pointing_on_second_sheet(range: &str) -> egui_kittest::Harness<'static, Sheet
     session.execute("home.insertSheet", json!({})).unwrap();
     session.execute("sheet.activate", json!({"sheet": 0})).unwrap();
     session.execute("selection.set", json!({"range": range})).unwrap();
-    let mut h = egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
+    let mut h = crate::common::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
         |ui, app: &mut SheetApp| {
             app.logic(ui.ctx());
             app.ui(ui);
         },
-        SheetApp::new(session, Default::default()),
+        crate::common::app(session),
     );
     h.run_steps(4);
     h.state_mut().begin_edit(Some("=1+2".into()), false);

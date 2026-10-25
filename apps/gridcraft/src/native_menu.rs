@@ -172,6 +172,7 @@ fn tree() -> Vec<(&'static str, Vec<Entry>)> {
         (
             "Help",
             vec![
+                ("Check for Updates…", "app.checkForUpdates", None),
                 ("Agent Control (MCP)…", "dialog:agents", None),
                 ("Contributors…", "dialog:about:Contributors", None),
                 ("GridCraft on getartcraft.com", "url:https://getartcraft.com/apps/gridcraft", None),
@@ -335,6 +336,16 @@ mod tests {
         let item = file.iter().find(|e| e.0 == "Export as PDF…").expect("Export as PDF… in the File menu");
         assert_eq!(item.1, "file.exportPdf");
         assert!(gridcraft_engine::find_command("file.exportPdf").is_some());
+    }
+
+    #[test]
+    fn help_menu_checks_for_updates_through_the_registered_command() {
+        let tree = tree();
+        let (_, help) = tree.iter().find(|(title, _)| *title == "Help").expect("Help menu");
+        let item = help.iter().find(|e| e.0 == "Check for Updates…").expect("Check for Updates… in the Help menu");
+        assert_eq!(item.1, "app.checkForUpdates");
+        let mut app = SheetApp::new(gridcraft_engine::Session::new(), Default::default());
+        assert!(app.run(item.1, serde_json::json!({})).is_ok());
     }
 
     #[test]

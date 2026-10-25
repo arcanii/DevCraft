@@ -10,6 +10,7 @@ fn harness(width: f32, active: usize) -> Harness {
     harness_with(width, 30, active)
 }
 
+/// Builds a tab strip with the caller's width, sheet count and active sheet, using pinned fonts and an explicit grid rect.
 fn harness_with(width: f32, sheets: usize, active: usize) -> Harness {
     let mut s = Session::new();
     s.new_workbook();
@@ -19,17 +20,17 @@ fn harness_with(width: f32, sheets: usize, active: usize) -> Harness {
     }
     s.execute("sheet.activate", json!({"sheet":active})).unwrap();
     let mut fonts_ready = false;
-    let mut h = Harness::builder().with_step_dt(1.0 / 60.0).with_size(vec2(width, 120.0)).build_ui_state(
+    let mut h = crate::common::builder().with_step_dt(1.0 / 60.0).with_size(vec2(width, 120.0)).build_ui_state(
         move |ui, app: &mut SheetApp| {
             if !fonts_ready {
-                ui.ctx().set_fonts(gridcraft_ui_egui::theme::font_definitions());
+                ui.ctx().set_fonts(gridcraft_ui_egui::theme::pinned_font_definitions());
                 fonts_ready = true;
                 return;
             }
             app.grid.cells_rect = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(ui.max_rect().width(), 80.0)));
             gridcraft_ui_egui::tabs::sheet_tabs(app, ui);
         },
-        SheetApp::new(s, Default::default()),
+        crate::common::app(s),
     );
     h.run_steps(20);
     h
@@ -85,6 +86,7 @@ fn navigation_arrows_reveal_the_selected_tab() {
 }
 
 #[test]
+/// Horizontal wheel/trackpad browsing leaves the workbook unchanged, does not snap back on idle frames, and activating a sheet still reveals its tab.
 fn manual_wheel_and_trackpad_browsing_does_not_change_selection_or_snap_back() {
     for delta in [vec2(0.0, -350.0), vec2(-350.0, 0.0)] {
         let mut h = harness(700.0, 0);
@@ -94,6 +96,7 @@ fn manual_wheel_and_trackpad_browsing_does_not_change_selection_or_snap_back() {
             Event::PointerMoved(clip.center()),
             Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Point,
+                source: egui::MouseWheelSource::Unknown,
                 phase: egui::TouchPhase::Start,
                 delta: vec2(0.0, 0.0),
                 modifiers: Modifiers::NONE,
@@ -102,6 +105,7 @@ fn manual_wheel_and_trackpad_browsing_does_not_change_selection_or_snap_back() {
         h.step();
         h.input_mut().events.push(Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
+            source: egui::MouseWheelSource::Unknown,
             phase: egui::TouchPhase::Move,
             delta,
             modifiers: Modifiers::NONE,
@@ -109,6 +113,7 @@ fn manual_wheel_and_trackpad_browsing_does_not_change_selection_or_snap_back() {
         h.step();
         h.input_mut().events.push(Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
+            source: egui::MouseWheelSource::Unknown,
             phase: egui::TouchPhase::End,
             delta: vec2(0.0, 0.0),
             modifiers: Modifiers::NONE,
