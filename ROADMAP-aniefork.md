@@ -824,6 +824,20 @@ included.
 
 Newest first.
 
+- **2026-10-25 (AutoSum over a selected row):** The owner found that in Excel a row selected
+  and AutoSum puts the total in the next column to the right, while GridCraft only summed
+  columns. In GridCraft, any selection of more than one cell got a total under each column, so a
+  row (B2:E2) got four one-cell totals in row 3 instead of `=SUM(B2:E2)` in F2. Fixed for
+  upstream on the branch `autosum-across-a-row` from `upstream/main` (`17b9f6f`), in `auto_sum`
+  (`crates/engine/src/cmd/formulas.rs`). As in Excel, totals go in the selection's empty last
+  row or column, else past it: a single row's to its right (in its last cell when that is empty);
+  a block's empty last column takes each row's total, its empty last row each column's, and both
+  the corner too; otherwise totals under each column, as before. A whole-row selection stops at
+  the data's last column, and all totals are one undo step. Three engine tests, each failing
+  without the change. The gate's steps passed on macOS (2,407 tests). On the owner's word,
+  committed (`802c782`), pushed and offered as
+  [storytold/gridcraft#2561](https://github.com/storytold/gridcraft/pull/2561), with Auto-fix on.
+  The fork's `main` takes it with the next merge of upstream once it is merged there.
 - **2026-10-25 (merge of upstream `17b9f6f`):** On the owner's word ("Merge upstream main into
   the fork's main, check the hooks, bring the fork crate's Cargo.lock entry to the new version,
   run the gate's steps, log it in ROADMAP-aniefork.md, then commit and push main to origin").
