@@ -2,6 +2,13 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-25: upstream `17b9f6f` merged and pushed** on the owner's word: 163 commits, no
+release. Two conflicts (the ribbon's new scroll area beside the Developer arm; the cell editor,
+where upstream's new `editor_width` is now unused and allowed so, in the hooks table). **On a
+Mac, `cargo xtask ci` now stops at listing the tests** (nextest and upstream's custom-harness
+`mac_menu_appkit`): run its steps one by one, as the log entry shows. ROADMAP-aniefork.md's log
+has the rest.
+
 **2026-10-23: upstream 0.11.1 merged and pushed** on the owner's word: 7 commits (releases
 0.11.0 and 0.11.1, scripts from a file need trust #2178, a macOS packaging retry), no
 conflict, every hook present, the gate green. ROADMAP-aniefork.md's log has it.

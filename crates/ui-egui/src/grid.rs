@@ -12,7 +12,7 @@ use gridcraft_engine::model::{BorderLine, BorderStyle, Color, HAlign, LineIndex,
 use serde_json::json;
 
 use crate::SheetApp;
-use crate::editor::{EditState, REF_COLORS};
+use crate::editor::EditState;
 use crate::theme::{self, Tokens};
 
 pub const COL_HEADER_H: f32 = 21.0;
@@ -102,6 +102,19 @@ pub enum Drag {
     },
 }
 
+/// The fill a left-drag of the handle just made, which the Auto Fill Options button can redo
+/// another way. It only applies while nothing else changed the workbook (`revision`) and the
+/// filled cells are still selected.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FillTag {
+    pub src: RangeRef,
+    pub target: RangeRef,
+    pub uid: u64,
+    pub sheet: usize,
+    pub revision: u64,
+    pub undo_len: usize,
+}
+
 #[derive(Default)]
 pub struct GridState {
     pub drag: Drag,
@@ -109,6 +122,10 @@ pub struct GridState {
     /// With `ensure_visible`: scroll to the moving end of the selection instead of the active cell
     /// (Shift/Ctrl+Shift+arrows keep the active cell on the anchor while the far corner moves).
     pub reveal_moving_end: bool,
+    /// With `ensure_visible`: the cell an arrow or paging key moved from (the moving end when
+    /// extending), set only by those keys. A move from the scrolled rows or columns into the
+    /// frozen ones scrolls them back to their top or left.
+    pub reveal_from: Option<CellRef>,
     pub last_title: Option<String>,
     pub drag_select: bool,
     pub rect: Option<Rect>,
@@ -120,6 +137,8 @@ pub struct GridState {
     pub context_menu_frame: u64,
     /// After a right-drag of the fill handle: the source, the dragged range and where to open the menu.
     pub fill_menu: Option<(RangeRef, RangeRef, Pos2)>,
+    /// After a left-drag of the fill handle: the Auto Fill Options button beside the filled cells.
+    pub fill_tag: Option<FillTag>,
     /// The right-clicked chart, picture, shape or slicer: where to open its menu, its kind and id.
     pub object_menu: Option<(Pos2, &'static str, u32)>,
     pub marching_phase: f32,
@@ -144,6 +163,11 @@ pub struct GridState {
     /// The PivotTable Fields pane's `pivot.fields` answer, cached per (doc uid, revision, pivot):
     /// it scans the whole source list, far too slow to repeat every frame (#2113).
     pub pivot_fields: Option<((u64, u64, String), serde_json::Value)>,
+    /// The cells of a PivotTable report where the cell menu offers Show Details, relative to the
+    /// report's top-left and cached per (doc uid, revision, sheet, pivot): finding them computes
+    /// the whole report. `None` when the report can't be computed or is out of date: every cell
+    /// of it offers Show Details, and running it says why.
+    pub show_details_cells: Option<((u64, u64, usize, usize), Option<std::collections::HashSet<(u32, u32)>>)>,
     pub header_menu: Option<(Pos2, bool)>,
     /// Page Layout view pagination, cached per (doc uid, revision, sheet, rows, columns).
     pub paper: Option<crate::paper_view::PaperCache>,
@@ -157,6 +181,11 @@ pub struct GridState {
     pub geo: Option<Geo>,
     /// The horizontal scrollbar's track in the sheet tab bar (hit-testing for tests).
     pub hscroll: Option<Rect>,
+    /// The handle between the sheet tabs and the horizontal scrollbar (hit-testing for tests).
+    pub tab_split: Option<Rect>,
+    /// The share of the tab bar each workbook's tabs (and New sheet) take after the handle was
+    /// dragged, by document uid. A workbook without one gives its tabs up to 60%.
+    pub tab_shares: std::collections::HashMap<u64, f32>,
     /// Ctrl+wheel zoom in progress (see [`WheelZoom`]).
     pub wheel_zoom: Option<WheelZoom>,
     /// A one-finger touch drag in progress: it pans the sheet instead of selecting.
@@ -233,15 +262,17 @@ impl Geo {
         let (fr, fc) = sh.freeze.unwrap_or((0, 0));
         let frozen_w = (ci.start(fc) as f32) * z;
         let frozen_h = (ri.start(fr) as f32) * z;
-        let row_outline = Arc::new(crate::outline::Axis::new(&sh.rows));
-        let col_outline = Arc::new(crate::outline::Axis::new(&sh.cols));
-        let mut band_w = crate::outline::band(row_outline.levels, zoom);
-        let mut band_h = crate::outline::band(col_outline.levels, zoom);
+        let row_outline = Arc::new(crate::outline::Axis::of(sh, true));
+        let col_outline = Arc::new(crate::outline::Axis::of(sh, false));
+        // Show Outline Symbols off: no bands (the outline's hidden lines stay hidden).
+        let symbols = sh.show_outline_symbols;
+        let mut band_w = if symbols { crate::outline::band(row_outline.levels, zoom) } else { 0.0 };
+        let mut band_h = if symbols { crate::outline::band(col_outline.levels, zoom) } else { 0.0 };
         // Without headings the level buttons still need a corner to sit in.
-        if row_outline.levels > 0 && header_h == 0.0 {
+        if symbols && row_outline.levels > 0 && header_h == 0.0 {
             band_h = band_h.max(crate::outline::lane(zoom) + 3.0);
         }
-        if col_outline.levels > 0 && header_w == 0.0 {
+        if symbols && col_outline.levels > 0 && header_w == 0.0 {
             band_w = band_w.max(crate::outline::lane(zoom) + 3.0);
         }
         let cells = Rect::from_min_max(pos2(rect.left() + band_w + header_w, rect.top() + band_h + header_h), rect.max);
@@ -681,6 +712,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     if app.grid.ensure_visible {
         app.grid.ensure_visible = false;
         let cell = if std::mem::take(&mut app.grid.reveal_moving_end) { sel.moving_end() } else { sel.active };
+        let from = app.grid.reveal_from.take();
         let target = app.editor.as_ref().and_then(|e| e.point_cell).unwrap_or(cell);
         if paper {
             crate::paper_view::ensure_covers(app, &wb, si, target);
@@ -694,6 +726,11 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
             } else if cr.bottom() > area.bottom() - 2.0 {
                 view.scroll.y += (cr.bottom() - area.bottom() + 2.0) / geo.z;
             }
+        } else if from.is_some_and(|f| f.row >= geo.fr) {
+            // A move from the scrolled rows into the frozen ones (Page Up or Ctrl+Up onto a frozen
+            // row 1) brings the scrolled rows back to their top; the rows it passed over would
+            // otherwise stay out of sight.
+            view.scroll.y = 0.0;
         }
         if target.col >= geo.fc {
             if cr.left() < area.left() {
@@ -701,6 +738,8 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
             } else if cr.right() > area.right() - 2.0 {
                 view.scroll.x += ((cr.right() - area.right() + 2.0) / geo.z).min(cr.left() - area.left());
             }
+        } else if from.is_some_and(|f| f.col >= geo.fc) {
+            view.scroll.x = 0.0;
         }
         view.scroll = view.scroll.max(egui::Vec2::ZERO);
         geo = make_geo(app, view.scroll);
@@ -790,6 +829,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     header_menu(app, ui, previous_popups.2 == app.grid.header_menu);
     context_menu(app, ui);
     fill_menu(app, ui, previous_popups.3 == app.grid.fill_menu);
+    fill_options_tag(app, ui, &geo, sh);
     object_menu(app, ui);
     error_check_tag(app, ui, &geo, sh);
     let track_x = if rtl { (available.left(), rect.left()) } else { (rect.right(), available.right()) };
@@ -1199,7 +1239,7 @@ pub(crate) fn paint_quadrant(
                 StrokeKind::Inside,
             );
             if on {
-                crate::icons::paint(p, b.shrink(1.5), crate::icons::Icon::Check, Color32::WHITE);
+                crate::icons::paint_on_sheet(p, b.shrink(1.5), crate::icons::Icon::Check, Color32::WHITE);
             }
             continue;
         }
@@ -1270,13 +1310,18 @@ pub(crate) fn paint_quadrant(
         let mut galley = p.layout_no_wrap(first_line.clone(), font.clone(), color);
         let mut w = galley.size().x;
         // Numbers and dates never overflow: they show #### when too narrow.
-        if !shrunk && (numeric || matches!(v, Value::Number(_))) && w > avail_w - 2.0 * pad && st.align.h != HAlign::Fill {
-            let n = ((avail_w - 2.0 * pad) / char_w).floor().max(1.0) as usize;
+        let hashed = !shrunk && (numeric || matches!(v, Value::Number(_))) && w > avail_w - 2.0 * pad && st.align.h != HAlign::Fill;
+        if hashed {
+            // Measured on `#` itself: it is wider than `0` in some fonts, and #### must fit its cell.
+            let hash_w = p.layout_no_wrap("#".to_string(), font.clone(), color).size().x.max(1.0);
+            let n = ((avail_w - 2.0 * pad) / hash_w).floor().max(1.0) as usize;
             galley = p.layout_no_wrap("#".repeat(n), font.clone(), color);
             w = galley.size().x;
         }
-        // Repeat fill (`*` in number formats) / Fill alignment.
+        // Repeat fill (`*` in number formats) / Fill alignment. A number already shown as #### keeps
+        // it: rebuilding it from the text would overflow and clip its leading digits.
         if let Some((ch, pos)) = fill_char
+            && !hashed
             && pos <= first_line.len()
         {
             let base_w = w;
@@ -1525,9 +1570,15 @@ pub fn table_headings(geo: &Geo, sh: &Sheet, active: CellRef) -> Vec<TableHeadin
 }
 
 fn paint_filter_button(p: &Painter, r: Rect, filtered: bool) {
-    p.rect_filled(r, 2.0, Color32::from_gray(250));
-    p.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_gray(170)), StrokeKind::Inside);
-    crate::icons::paint(p, r.shrink(1.5), if filtered { crate::icons::Icon::Filter } else { crate::icons::Icon::Chevron }, Color32::from_gray(70));
+    let t = Tokens::get(p.ctx());
+    p.rect_filled(r, 2.0, t.sheet_control_bg);
+    p.rect_stroke(r, 2.0, Stroke::new(1.0, t.sheet_control_border), StrokeKind::Inside);
+    crate::icons::paint_on_sheet(
+        p,
+        r.shrink(1.5),
+        if filtered { crate::icons::Icon::Filter } else { crate::icons::Icon::Chevron },
+        t.sheet_control_text,
+    );
 }
 
 /// The outline segments of merged area `m` drawn at `rect`: the top and left edges come from the
@@ -1758,7 +1809,7 @@ pub(crate) fn paint_selection(
                 continue;
             }
             let rr = geo.range_rect(sh, r);
-            let col = REF_COLORS[idx];
+            let col = Tokens::get(p.ctx()).ref_color(idx, true);
             p.rect_filled(rr, 0.0, col.gamma_multiply(0.12));
             p.rect_stroke(rr, 0.0, Stroke::new(1.5, col), StrokeKind::Inside);
             for corner in [rr.left_top(), rr.right_top(), rr.left_bottom(), rr.right_bottom()] {
@@ -2304,6 +2355,19 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             app.grid.filter_menu = Some((c.col, c.row, geo.mirror_pos(p)));
             return;
         }
+        // A dialog's formula box in point mode (New Formatting Rule) takes the reference; the
+        // selection, which the dialog acts on, stays.
+        if let Some(d) = app.dialog.as_mut().filter(|d| d.picks_references()) {
+            d.pick_reference(c, &sh.name, false);
+            app.grid.drag = Drag::Select;
+            app.grid.drag_select = true;
+            if resp.drag_started()
+                && let Some(p) = pos
+            {
+                select_to_pointer(app, geo, sh, wb, p);
+            }
+            return;
+        }
         // Point mode while editing a formula: clicking inserts a reference.
         if let Some(ed) = app.editor.as_mut()
             && ed.can_point()
@@ -2356,6 +2420,20 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             && !mods.shift
         {
             app.grid.last_click = None;
+            // A PivotTable's value cell shows its source records on a new sheet (Excel's Show
+            // Details); its labels and headers still edit.
+            if sh.pivots.iter().any(|pt| pt.last_range.is_some_and(|r| r.contains(c))) {
+                let not_a_value_cell =
+                    gridcraft_engine::EngineError::Disabled("pivot.showDetails".into(), gridcraft_engine::pivot::NOT_A_VALUE_CELL.into()).to_string();
+                match app.run("pivot.showDetails", json!({"cell": c.a1()})) {
+                    Ok(_) => return,
+                    Err(e) if e == not_a_value_cell => {}
+                    Err(e) => {
+                        app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+                        return;
+                    }
+                }
+            }
             // Following a hyperlink requires a single click in Excel; double-click edits.
             app.begin_edit(None, false);
             return;
@@ -2367,7 +2445,16 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                 d.selection.anchor = sel.anchor;
             }
         } else if mods.command {
-            select_ranges(app, RangeRef::cell(c), true, c);
+            // Ctrl+click (without Alt) on a hyperlink's text follows it instead of adding the cell to the selection.
+            if let Some(h) = sh.hyperlinks.get(&c).cloned()
+                && primary_clicked
+                && !mods.alt
+                && p.x < geo.cell_rect(sh, c).left() + geo.cell_rect(sh, c).width() * 0.8
+            {
+                follow_link(app, &h.target);
+            } else {
+                select_ranges(app, RangeRef::cell(c), true, c);
+            }
         } else {
             let _ = app.session.run("selection.set", json!({"cell": c.a1()}));
             if primary_clicked && wb.styles.get(sh.style_id(c)).num_fmt.as_str() == "checkbox" {
@@ -2536,8 +2623,9 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                 if t != src {
                     // Ctrl (Cmd on macOS) swaps copying and extending, as in Excel.
                     let mode = if mods.command { "alternate" } else { "series" };
-                    if let Err(e) = app.run("edit.autoFill", json!({"source": src.a1(), "target": t.a1(), "mode": mode})) {
-                        app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+                    match app.run("edit.autoFill", json!({"source": src.a1(), "target": t.a1(), "mode": mode})) {
+                        Ok(_) => set_fill_tag(app, src, t),
+                        Err(e) => app.message = Some(("GridCraft".into(), crate::clean_error(&e))),
                     }
                 }
             }
@@ -2602,7 +2690,10 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
 /// An armed Format Painter pastes onto the cells just clicked or dragged over (not while
 /// pointing a formula reference, which also drags a Select).
 fn format_painter_apply(app: &mut SheetApp) {
-    if app.session.format_painter.is_some() && !app.editor.as_ref().is_some_and(|ed| ed.can_point()) {
+    if app.session.format_painter.is_some()
+        && !app.editor.as_ref().is_some_and(|ed| ed.can_point())
+        && !app.dialog.as_ref().is_some_and(|d| d.picks_references())
+    {
         let dest = app.session.active().map(|d| d.selection.current().a1());
         if let Some(dest) = dest
             && let Err(e) = app.run("edit.formatPainter", json!({"apply": dest}))
@@ -2655,7 +2746,9 @@ fn select_to_pointer(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, p
         geo.row_at(sh, p.y.clamp(geo.cells.top() + 1.0, geo.cells.bottom() - 1.0)),
         geo.col_at(sh, p.x.clamp(geo.cells.left() + 1.0, geo.cells.right() - 1.0)),
     );
-    if let Some(ed) = app.editor.as_mut()
+    if let Some(d) = app.dialog.as_mut().filter(|d| d.picks_references()) {
+        d.pick_reference(cell, &sh.name, true);
+    } else if let Some(ed) = app.editor.as_mut()
         && ed.point.is_some()
     {
         if let Some(start) = ed.point_anchor.filter(|(sheet, _)| *sheet == wb.active_sheet).map(|(_, cell)| cell).or(ed.point_cell) {
@@ -2970,9 +3063,11 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                 let cmd = m.command;
                 let shift = m.shift;
                 let mv = |app: &mut SheetApp, dr: i64, dc: i64| {
+                    let from = app.session.active().map(|d| if shift { d.selection.moving_end() } else { d.selection.active });
                     let _ = app.session.run("selection.move", json!({"dr": dr, "dc": dc, "extend": shift, "jump": cmd}));
                     app.grid.ensure_visible = true;
                     app.grid.reveal_moving_end = shift;
+                    app.grid.reveal_from = from;
                 };
                 match key {
                     Key::ArrowUp => mv(app, -1, 0),
@@ -3046,6 +3141,22 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
     }
 }
 
+/// Room the in-cell editor keeps right of its text. It is sized from the text of the last frame, so
+/// the next typed character must still fit: a fixed 14 px was less than one glyph at high zoom,
+/// and the field scrolled and snapped back on every key (#2336). `size` is the font size in px.
+fn editor_slack(size: f32) -> f32 {
+    14.0 + size
+}
+
+/// Width of the one-line in-cell editor. While the text fits the cell (with the usual 14 px margin) the
+/// editor is exactly the cell wide, as in Excel; once it overflows, the extra `editor_slack` applies.
+// (aniefork) The fork sizes the one-line editor itself (`aniefork::selection::editor_size`), so
+// this is left to upstream's test of it.
+#[allow(dead_code)]
+fn editor_width(text_w: f32, cell_w: f32, size: f32) -> f32 {
+    if text_w + 14.0 <= cell_w { cell_w } else { text_w + editor_slack(size) }
+}
+
 fn in_cell_editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet, wb: &Workbook) {
     let Some(ed) = app.editor.as_ref() else { return };
     if ed.sheet != wb.active_sheet {
@@ -3060,13 +3171,16 @@ fn in_cell_editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet, 
     let size = st.font.size * 96.0 / 72.0 * geo.z;
     let font = FontId::new(size, theme::cell_family(&st.font.name, st.font.bold, st.font.italic));
     let lines = ed.text.lines().count().max(1) as f32 + if ed.text.ends_with('\n') { 1.0 } else { 0.0 };
+    // Grows with the text: the in-cell editor shows every line and never scrolls (the formula bar
+    // is the one that stops at five lines).
+    let shown = lines;
     // Wrap Text: the editor keeps the column's width and wraps, growing down as Excel's does.
     let wrap = st.align.wrap;
     let (grown, text_w) = if wrap {
         // The field wraps at the width it is given (the editor's less its 2 px inset a side): its
         // frame is `Frame::NONE`, so no text margin is taken off.
         let wrapped = ui.painter().layout(ed.text.clone(), font.clone(), Color32::BLACK, (rect.width() - 4.0).max(1.0));
-        (vec2(rect.width(), (wrapped.size().y.max(size * 1.3 * lines) + 4.0).max(rect.height())), wrapped.size().x)
+        (vec2(rect.width(), (wrapped.size().y.max(size * 1.3 * shown) + 4.0).max(rect.height())), wrapped.size().x)
     } else {
         // Otherwise the fork grows the editor a whole cell at a time, and not at all while its
         // text fits (aniefork).
@@ -3094,7 +3208,8 @@ fn in_cell_editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet, 
     // The theme's caret is meant for the UI chrome and vanishes on some fills (and, in the dark
     // theme, on the white paper): pick black or white against the fill, like Excel.
     child.visuals_mut().text_cursor.stroke.color = ink_on(fill);
-    crate::formula_bar::editor_widget(app, &mut child, id, font, wrap, erect.width() - 4.0);
+    crate::formula_bar::editor_widget(app, &mut child, id, font, wrap, erect.width() - 4.0, erect.height() - 2.0);
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("gridcraft.cell_editor.rect"), erect));
 }
 
 /// Test the popup itself, not whether the pointer is over any part of the app.
@@ -3263,6 +3378,12 @@ fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
             if let Some(item) = insert_copied {
                 items.insert(6, item);
             }
+            if show_details_offered(app)
+                && let Some(i) = items.iter().position(|(_, id)| *id == "data.sortDescending")
+            {
+                items.insert(i + 1, ("-", ""));
+                items.insert(i + 2, ("Show Details", "pivot.showDetails"));
+            }
             let lang = crate::i18n::current(ui.ctx());
             for (label, id) in items {
                 if label == "-" {
@@ -3319,21 +3440,135 @@ fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Whether the cell menu offers Show Details (Excel's right-click › Show Details): the active cell
+/// is a value, subtotal or grand total cell of a PivotTable, or a cell of a report that is out of
+/// date, where running the command says so. Labels and headers of a current report don't offer it,
+/// and no cell does while the PivotTable's Enable show details option is off.
+fn show_details_offered(app: &mut SheetApp) -> bool {
+    let Some(d) = app.session.active() else { return false };
+    let (si, at) = (d.wb.active_sheet, d.selection.active);
+    let Some((pi, pt)) = d.wb.active().and_then(|sh| sh.pivots.iter().enumerate().find(|(_, pt)| pt.last_range.is_some_and(|r| r.contains(at))))
+    else {
+        return false;
+    };
+    if !pt.enable_show_details {
+        return false;
+    }
+    let origin = pt.last_range.map(|r| r.start).unwrap_or_default();
+    let cell = (at.row.saturating_sub(origin.row), at.col.saturating_sub(origin.col));
+    let key = (d.uid, d.revision, si, pi);
+    if let Some((k, cells)) = &app.grid.show_details_cells
+        && *k == key
+    {
+        return cells.as_ref().is_none_or(|c| c.contains(&cell));
+    }
+    let cells = gridcraft_engine::pivot::detail_cells(&d.wb, pt, si).ok();
+    let on = cells.as_ref().is_none_or(|c| c.contains(&cell));
+    app.grid.show_details_cells = Some((key, cells));
+    on
+}
+
+/// The ways to fill a dragged range, as the fill menu and the Auto Fill Options button list them.
+const FILL_MODES: [(&str, &str); 4] =
+    [("Copy Cells", "copy"), ("Fill Series", "extend"), ("Fill Formatting Only", "formats"), ("Fill Without Formatting", "values")];
+
+/// The ways to fill from a date, which both menus add after [`FILL_MODES`] when the source starts
+/// with one.
+const DATE_FILL_MODES: [(&str, &str); 4] = [("Fill Days", "days"), ("Fill Weekdays", "weekdays"), ("Fill Months", "months"), ("Fill Years", "years")];
+
+/// The fill modes the menus list for a fill from `src` on the active sheet.
+fn fill_modes(app: &SheetApp, src: RangeRef) -> Vec<(&'static str, &'static str)> {
+    let dates = app.session.active().is_some_and(|d| gridcraft_engine::fill::starts_with_date(&d.wb, d.wb.active_sheet, src));
+    FILL_MODES.into_iter().chain(DATE_FILL_MODES.into_iter().filter(|_| dates)).collect()
+}
+
+/// Remembers the fill just made so the Auto Fill Options button can offer the other ways.
+fn set_fill_tag(app: &mut SheetApp, src: RangeRef, target: RangeRef) {
+    app.grid.fill_tag =
+        app.session.active().map(|d| FillTag { src, target, uid: d.uid, sheet: d.wb.active_sheet, revision: d.revision, undo_len: d.undo.len() });
+}
+
+/// The Auto Fill Options button below the bottom-right corner of cells a left-drag of the fill
+/// handle just filled. Its menu redoes that fill as Copy Cells, Fill Series, Fill Formatting Only
+/// or Fill Without Formatting, and from a date also as Fill Days, Fill Weekdays, Fill Months or
+/// Fill Years: it undoes the drag's fill, then runs `edit.autoFill` in that mode.
+/// The button goes away as soon as anything else changes the workbook or the selection moves.
+fn fill_options_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet) {
+    let Some(tag) = app.grid.fill_tag.clone() else { return };
+    let current = app.session.active().is_some_and(|d| {
+        d.uid == tag.uid
+            && d.wb.active_sheet == tag.sheet
+            && d.revision == tag.revision
+            && d.undo.len() == tag.undo_len
+            && d.selection.ranges.len() == 1
+            && d.selection.ranges.first().is_some_and(|r| *r == tag.target)
+    });
+    if !current {
+        app.grid.fill_tag = None;
+        return;
+    }
+    if app.editor.is_some() || app.dialog.is_some() || app.grid.drag != Drag::None {
+        return;
+    }
+    let size = vec2(18.0, 18.0);
+    let corner = geo.range_rect(sh, tag.target).right_bottom();
+    let button = geo.mirror_rect(Rect::from_min_size(corner + vec2(2.0, 2.0), size));
+    // `button` is in screen space, so compare it with the mirrored cells area.
+    if !geo.mirror_rect(geo.cells).contains_rect(button) {
+        return;
+    }
+    let lang = crate::i18n::current(ui.ctx());
+    let resp = ui.interact(button, egui::Id::new("gridcraft.fill_options_tag"), Sense::click()).on_hover_text(lang.tr("Auto Fill Options"));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, lang.tr("Auto Fill Options")));
+    let t = Tokens::get(ui.ctx());
+    let p = ui.painter();
+    p.rect_filled(button, 3.0, if resp.hovered() { t.hover } else { t.window });
+    p.rect_stroke(button, 3.0, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
+    // Two small cells and a drop-down arrow.
+    let c = button.center();
+    p.rect_stroke(Rect::from_min_size(pos2(c.x - 6.0, c.y - 6.0), vec2(6.0, 6.0)), 0.0, Stroke::new(1.0, t.text), egui::StrokeKind::Inside);
+    p.rect_stroke(Rect::from_min_size(pos2(c.x - 3.0, c.y - 3.0), vec2(6.0, 6.0)), 0.0, Stroke::new(1.0, t.text), egui::StrokeKind::Inside);
+    p.add(egui::Shape::convex_polygon(
+        vec![pos2(c.x + 1.0, c.y + 5.0), pos2(c.x + 7.0, c.y + 5.0), pos2(c.x + 4.0, c.y + 8.0)],
+        t.text,
+        Stroke::NONE,
+    ));
+    let mut chosen = None;
+    let modes = fill_modes(app, tag.src);
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.set_min_width(190.0);
+        for (label, mode) in modes {
+            if ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(180.0, 20.0))).clicked() {
+                chosen = Some(mode);
+                ui.close();
+            }
+        }
+    });
+    if let Some(mode) = chosen {
+        if let Err(e) = app.run("edit.undo", json!({})) {
+            app.grid.fill_tag = None;
+            app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+            return;
+        }
+        match app.run("edit.autoFill", json!({"source": tag.src.a1(), "target": tag.target.a1(), "mode": mode})) {
+            Ok(_) => set_fill_tag(app, tag.src, tag.target),
+            Err(e) => {
+                app.grid.fill_tag = None;
+                app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+            }
+        }
+    }
+}
+
 /// The menu a right-drag of the fill handle opens on release, as in Excel.
 fn fill_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
     let Some((src, target, at)) = app.grid.fill_menu else { return };
     let mut close = false;
+    let mut items = fill_modes(app, src);
+    items.extend([("-", ""), ("Series…", "ui:series")]);
     let response = egui::Area::new(egui::Id::new("fill_menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(190.0);
-            let items = [
-                ("Copy Cells", "copy"),
-                ("Fill Series", "extend"),
-                ("Fill Formatting Only", "formats"),
-                ("Fill Without Formatting", "values"),
-                ("-", ""),
-                ("Series…", "ui:series"),
-            ];
             let lang = crate::i18n::current(ui.ctx());
             for (label, mode) in items {
                 if label == "-" {
@@ -3499,9 +3734,10 @@ pub(crate) fn paint_overlays(
     if app.editor.is_none()
         && let Some(r) = validation_arrow(sh, geo, sel.active)
     {
-        p.rect_filled(r, 2.0, Color32::from_gray(245));
-        p.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_gray(160)), StrokeKind::Inside);
-        crate::icons::paint(p, r.shrink(3.0), crate::icons::Icon::Chevron, Color32::from_gray(60));
+        let t = Tokens::get(p.ctx());
+        p.rect_filled(r, 2.0, t.sheet_control_bg);
+        p.rect_stroke(r, 2.0, Stroke::new(1.0, t.sheet_control_border), StrokeKind::Inside);
+        crate::icons::paint_on_sheet(p, r.shrink(3.0), crate::icons::Icon::Chevron, t.sheet_control_text);
     }
     // Input message of the active cell's validation, hidden while its list is open: it would cover the items.
     if app.editor.is_none()
@@ -3889,6 +4125,23 @@ pub(crate) fn heading_font_size(zoom: f32) -> f32 {
 mod tests {
 
     #[test]
+    fn editor_matches_the_cell_while_the_text_fits() {
+        use super::editor_width;
+        assert_eq!(editor_width(10.0, 80.0, 7.0), 80.0);
+        assert_eq!(editor_width(66.0, 80.0, 7.0), 80.0);
+        assert_eq!(editor_width(67.0, 80.0, 7.0), 88.0);
+    }
+
+    #[test]
+    fn editor_slack_fits_one_more_glyph_at_high_zoom() {
+        use super::editor_slack;
+        // A glyph is at most about one em wide; at 400% an em is ~60 px, far over the old fixed 14 px.
+        for size in [14.7_f32, 25.0, 60.0] {
+            assert!(editor_slack(size) - 4.0 >= size, "slack {} too small for a {size} px glyph", editor_slack(size));
+        }
+    }
+
+    #[test]
     fn explicit_left_and_right_keep_their_side_on_a_right_to_left_sheet() {
         use super::{HAlign, painted_halign};
         // Painted before the mirror: swapped, so they land where the user put them.
@@ -4216,6 +4469,34 @@ mod pane_tests {
         let sel = rng(5, 0, 7, 6);
         assert!(range_in_pane(sel, (2, 20), (0, 1)));
         assert!(range_in_pane(sel, (2, 20), (2, 10)));
+    }
+
+    #[test]
+    fn hidden_outline_symbols_take_no_room() {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let mut sh = Sheet::new("S");
+        sh.rows.entry(3).or_default().outline = 1;
+        sh.cols.entry(2).or_default().outline = 2;
+        let shown = Geo::new(&sh, rect, vec2(0.0, 0.0));
+        assert!(shown.band_w > 0.0 && shown.band_h > 0.0);
+        sh.show_outline_symbols = false;
+        let hidden = Geo::new(&sh, rect, vec2(0.0, 0.0));
+        assert_eq!((hidden.band_w, hidden.band_h), (0.0, 0.0));
+        assert!(hidden.cells.left() < shown.cells.left() && hidden.cells.top() < shown.cells.top());
+        // Without headings too.
+        sh.show_headings = false;
+        let bare = Geo::new(&sh, rect, vec2(0.0, 0.0));
+        assert_eq!((bare.band_w, bare.band_h), (0.0, 0.0));
+        // No button answers a click on the empty bands' edges (the grid's left and top), where the
+        // level buttons would sit with no headings to hold them.
+        for geo in [&hidden, &bare] {
+            for i in 0..400 {
+                let t = i as f32 * 0.5;
+                for p in [pos2(geo.rect.left(), geo.rect.top() + t), pos2(geo.rect.left() + t, geo.rect.top())] {
+                    assert_eq!(crate::outline::hit(geo, &sh, p), None, "{p:?}");
+                }
+            }
+        }
     }
 
     /// Two frozen rows and columns, scrolled right so that columns C:E lie under the frozen columns.

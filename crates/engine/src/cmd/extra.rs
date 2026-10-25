@@ -212,6 +212,15 @@ pub fn specs() -> Vec<CommandSpec> {
             trust_scripts
         ),
         cmd!("automate.deleteScript", "Delete Script", [], None, "{name}", has_doc, delete_script),
+        cmd!(
+            noundo "automate.stopAction",
+            "Stop Action",
+            [],
+            None,
+            "{} → {stopped: bool}: stops an action left running on the active workbook (an open undo group, such as a debugger's) and puts back the workbook and its undo history as they were when it began",
+            has_doc,
+            stop_action
+        ),
         // Cell controls, themes, borders, styles
         cmd!(
             "insert.checkbox",
@@ -800,7 +809,7 @@ fn split(s: &mut Session, _: &Json) -> Result<Json> {
 
 fn new_window(s: &mut Session, _: &Json) -> Result<Json> {
     let d = s.doc()?.clone();
-    let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()));
+    let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()), d.trust);
     copy.selection = d.selection.clone();
     copy.scripts_trusted = d.scripts_trusted;
     let i = s.add_document(copy);
@@ -1025,6 +1034,11 @@ fn denied_script_step(id: &str, params: &Json) -> Option<String> {
     if id.starts_with("file.") || id.starts_with("link.") {
         return Some(format!("scripts can't run `{id}`: it reaches outside the workbook"));
     }
+    // Scripts are scoped to their workbook: a step that switches the active window would
+    // point every later step at another open document, so those are refused too.
+    if id.starts_with("window.") {
+        return Some(format!("scripts can't run `{id}`: it reaches outside the workbook"));
+    }
     if params.get("path").is_some() {
         return Some(format!("scripts can't pass a file `path` to `{id}`"));
     }
@@ -1085,6 +1099,13 @@ fn run_script(s: &mut Session, p: &Json) -> Result<Json> {
         n += 1;
     }
     Ok(json!({"ran": n}))
+}
+
+/// Automate › Stop Action: rolls back the undo groups open on the active workbook, so Undo and
+/// Redo work there again.
+fn stop_action(s: &mut Session, _: &Json) -> Result<Json> {
+    let uid = s.doc()?.uid;
+    Ok(json!({"stopped": s.abort_groups(uid)}))
 }
 
 fn delete_script(s: &mut Session, p: &Json) -> Result<Json> {
@@ -1249,7 +1270,7 @@ fn recently_used(s: &mut Session, _: &Json) -> Result<Json> {
 
 fn use_in_formula(s: &mut Session, p: &Json) -> Result<Json> {
     let name = str_param(p, "name").ok_or_else(|| bad("formulas.useInFormula", "missing `name`"))?;
-    s.ui_requests.push(crate::UiRequest::EditCell(Some(format!("={name}"))));
+    s.ui_requests.push(crate::UiRequest::InsertName(name.to_string()));
     ok()
 }
 

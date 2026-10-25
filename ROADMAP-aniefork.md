@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-23, upstream `ac8da7d` (7 commits since the merge before, 5 of them not merges: releases 0.11.0 and 0.11.1) |
+| Last merge of upstream | 2026-10-25, upstream `17b9f6f` (163 commits since the merge before, 101 of them not merges; no release) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -738,7 +738,8 @@ still there:
 | `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
 | `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
 | `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
-| `crates/ui-egui/tests/in_cell_editor_size.rs` (upstream's #1755), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
+| `crates/ui-egui/tests/it/in_cell_editor_size.rs` (upstream's #1755; `tests/` until upstream gathered each crate's tests into one binary), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
+| `crates/ui-egui/src/grid.rs`, `editor_width` (upstream's width of the one-line editor) | `#[allow(dead_code)]` and a comment marked (aniefork): the fork sizes that editor with `editor_size` instead, so outside upstream's own test nothing calls it. Basing the fork's growth on it would change the fork's sizes (its margin grows with the font, so the editor would sometimes skip a column) |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
@@ -823,6 +824,37 @@ included.
 
 Newest first.
 
+- **2026-10-25 (merge of upstream `17b9f6f`):** On the owner's word ("Merge upstream main into
+  the fork's main, check the hooks, bring the fork crate's Cargo.lock entry to the new version,
+  run the gate's steps, log it in ROADMAP-aniefork.md, then commit and push main to origin").
+  163 commits since the merge before, 101 of them not merges, and no release (the workspace
+  stays 0.11.1, so `Cargo.lock` needed no change). Among them: PivotTable Show Details, Go To
+  and Paste Name (F3) over every sheet's names, the status bar's statistics menu, circular
+  references listed in Error Checking, Fill Days/Weekdays/Months/Years, ribbon overflow arrows
+  and one scroll position per tab, a multi-line formula bar (Ctrl+Shift+U), undo groups and
+  document trust in the engine, security hardening of file import, print and lambdas, and CI
+  moved to one test binary per crate run by nextest.
+  - **Two conflicts.** `ribbon.rs`: upstream's new scroll area (per-tab offset, overflow
+    arrows) with the fork's Developer arm in its tab match. `grid.rs`, the cell editor:
+    upstream now sizes the one-line editor with `editor_width` and a wrapping one with `shown`
+    lines; the wrapping branch takes `shown`, and the one-line branch stays the fork's
+    `editor_size`. `editor_width` is then called only by upstream's test, so it carries an
+    `allow(dead_code)` marked (aniefork), in the hooks table.
+  - **Moved without a conflict:** upstream gathered `crates/ui-egui/tests/*.rs` into
+    `tests/it/`; the two ignored editor tests moved with their file, and the hooks table says
+    where.
+  - **The gate on macOS** now fails at listing the tests: upstream's `cargo xtask ci` runs
+    nextest when it is installed, and `apps/gridcraft/tests/mac_menu_appkit.rs` (a custom
+    harness, macOS only) prints "mac_menu_appkit: ok" when nextest asks for its list. Upstream's
+    CI is Linux only. Its steps were run one by one instead (below), with that binary run by
+    `cargo test`. A fix is for upstream to take; until then run the steps by hand on a Mac, or
+    uninstall cargo-nextest so the gate uses `cargo test`.
+  - Every hook in the table was checked present. Nothing came into `docs/brand/` or
+    `ATTRIBUTION.md`. The fork's mentions in upstream's code: 80, the 79 of the merge before
+    and the note on `editor_width`.
+  - Checked on the result, on macOS, step by step: fmt, clippy, nextest (2,741 tests, 3
+    skipped, `mac_menu_appkit` left out and run with `cargo test`, which passes), doctests,
+    assets, layers, wasm, parity, keytips.
 - **2026-10-23 (merge of upstream `ac8da7d`, GridCraft 0.11.1):** On the owner's word ("Merge
   upstream main (0.11.1) into the fork's main, check the hooks, bring the fork crate's
   Cargo.lock entry to the new version, run cargo xtask ci, log it in ROADMAP-aniefork.md, then

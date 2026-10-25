@@ -19,6 +19,7 @@ pub mod sheet;
 pub mod slicer;
 pub mod solver;
 pub mod spelling;
+pub mod stash;
 pub mod view;
 pub mod whatif;
 
@@ -96,11 +97,18 @@ pub fn has_doc(s: &Session) -> std::result::Result<(), String> {
 }
 pub fn can_undo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
+    not_grouping(s)?;
     if s.active().is_some_and(|d| !d.undo.is_empty()) { Ok(()) } else { Err("nothing to undo".into()) }
 }
 pub fn can_redo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
+    not_grouping(s)?;
     if s.active().is_some_and(|d| !d.redo.is_empty()) { Ok(()) } else { Err("nothing to redo".into()) }
+}
+/// Undo and Redo wait while an undo group is open on the active document (an action that spans
+/// several calls is still running).
+fn not_grouping(s: &Session) -> std::result::Result<(), String> {
+    if s.active().is_some_and(|d| s.in_group(d.uid)) { Err("finish or stop the running action first (automate.stopAction)".into()) } else { Ok(()) }
 }
 pub fn has_clipboard(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
@@ -175,6 +183,23 @@ pub fn register_test_command(id: &'static str, run: Run) {
         run,
         journal: true,
         undoable: false,
+    }));
+    test_commands().push(spec);
+}
+
+/// Test-only: an undoable command, to exercise how `execute` records its step.
+#[cfg(test)]
+pub(crate) fn register_undoable_test_command(id: &'static str, run: Run) {
+    let spec: &'static CommandSpec = Box::leak(Box::new(CommandSpec {
+        id,
+        label: id,
+        menu: &[],
+        shortcut: None,
+        params: "",
+        enabled: |_| Ok(()),
+        run,
+        journal: false,
+        undoable: true,
     }));
     test_commands().push(spec);
 }
@@ -527,9 +552,15 @@ pub fn auto_row_height(wb: &mut Workbook, si: usize, row: u32) {
         return;
     }
     let mut need: f32 = default;
+    // The cell loop must not rescan every merge per cell: the merges touching this row are
+    // picked out once, and per cell the candidates are re-checked (normally none or a couple;
+    // a sheet with many merges and many saved columns would otherwise scan all of them per
+    // cell, rows × merges × columns).
+    let row_merges: Vec<gridcraft_core::RangeRef> =
+        sh.merges.iter().copied().filter(|m| !m.is_single() && m.start.row <= row && row <= m.end.row).collect();
     for (c, cell) in sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1) {
         // Merged cells never auto-fit their rows, like Excel (column autofit skips them too).
-        if sh.merge_at(CellRef::new(row, c)).is_some_and(|m| !m.is_single()) {
+        if row_merges.iter().any(|m| m.contains(CellRef::new(row, c))) {
             continue;
         }
         let st = wb.styles.get(cell.style);

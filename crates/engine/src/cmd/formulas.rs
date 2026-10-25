@@ -1,7 +1,7 @@
 //! Formulas tab: AutoSum, Insert Function, names, auditing, calculation.
 
 use gridcraft_core::{CellError, CellRef, RangeRef, Value};
-use gridcraft_model::{CalcMode, DefinedName, Formula};
+use gridcraft_model::{CalcMode, Cell, DefinedName, Formula, Workbook};
 use serde_json::{Value as Json, json};
 
 use super::*;
@@ -32,20 +32,37 @@ pub fn specs() -> Vec<CommandSpec> {
             "Define Name…",
             ["Formulas", "Defined Names"],
             None,
-            "{name, refersTo?: \"=Sheet1!$A$1:$A$10\" (default: the selection), scope?: \"Workbook\"|sheet name, comment?, oldName?, oldScope?} (oldName: edit that name (Name Manager › Edit); a new name also renames it in formulas)",
+            "{name, refersTo?: \"=Sheet1!$A$1:$A$10\" (default: the selection), scope?: \"Workbook\"|sheet name, comment?, oldName?, oldScope?, force?: bool} (oldName: edit that name (Name Manager › Edit); a new name also renames it in formulas; a hidden name GridCraft keeps its own data in, `_gc_<key>_<n>` or `_sc_<key>`, is refused unless force is true)",
             has_doc,
             define_name
         ),
-        cmd!("formulas.deleteName", "Delete Name", [], None, "{name, scope?: \"Workbook\"|sheet name (default: every scope)}", has_doc, delete_name),
+        cmd!(
+            "formulas.deleteName",
+            "Delete Name",
+            [],
+            None,
+            "{name, scope?: \"Workbook\"|sheet name (default: every scope), force?: bool} (a hidden name GridCraft keeps its own data in, `_gc_<key>_<n>` or `_sc_<key>`, is refused unless force is true)",
+            has_doc,
+            delete_name
+        ),
         cmd!(query "formulas.nameManager", "Name Manager", ["Formulas", "Defined Names"], Some("Cmd+F3"), "{} → names with values", has_doc, name_manager),
         cmd!(
             "formulas.createFromSelection",
             "Create from Selection",
             ["Formulas", "Defined Names"],
             Some("Cmd+Shift+F3"),
-            "{range?, top?: true, left?: false, bottom?: false, right?: false, replace?: false (existing names are kept and listed in `skipped`)}",
+            "{range?, top?: true, left?: false, bottom?: false, right?: false, replace?: false (existing names are kept and listed in `skipped`), force?: false (labels of the shape GridCraft keeps its own data in, `_gc_<key>_<n>` and `_sc_<key>`, are listed in `skipped` unless force is true)}",
             has_doc,
             create_from_selection
+        ),
+        cmd!(
+            "formulas.pasteName",
+            "Paste Names…",
+            ["Formulas", "Defined Names"],
+            Some("F3"),
+            "{name?: \"Sales\" (one of the names listed; OK: puts the name at the caret of the cell being edited, or starts `=Sales` in the active cell), list?: true (Paste List: writes each name and what it refers to in two columns, from `at`), at?: cell (default the active cell)} → {names: [{name, refersTo}]}: the names the Paste Name dialog lists (workbook names and the active sheet's own, hidden names left out, in alphabetical order). With neither nothing changes; the menu opens the dialog.",
+            has_doc,
+            paste_name
         ),
         cmd!(query "formulas.tracePrecedents", "Trace Precedents", ["Formulas", "Formula Auditing"], None, "{cell?} → ranges", has_doc, trace_precedents),
         cmd!(query "formulas.traceDependents", "Trace Dependents", ["Formulas", "Formula Auditing"], None, "{cell?} → cells", has_doc, trace_dependents),
@@ -268,6 +285,9 @@ fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
     if !valid_name(&name) {
         return Err(EngineError::Other("The name that you entered is not valid.".into()));
     }
+    for n in [Some(name.as_str()), str_param(p, "oldName")].into_iter().flatten() {
+        refuse_stash_name(&s.doc()?.wb, p, n)?;
+    }
     let d = s.doc()?;
     let scope = match str_param(p, "scope") {
         None | Some("Workbook") => None,
@@ -374,8 +394,29 @@ fn rename_name_in_formulas(wb: &mut gridcraft_model::Workbook, old: &str, old_sc
     }
 }
 
+/// Refuses a name of the shape GridCraft keeps its own workbook data in ([`super::stash`]):
+/// defining, renaming or deleting one would replace or remove part of an item (a stored macro,
+/// script or view) and leave the rest behind. `force: true` lets the call go ahead.
+/// Whether `name` is one the workbook holds GridCraft's own data in: a hidden workbook-scope
+/// name of an item's shape. A visible name of that shape is the person's own (see `stash`), and
+/// the name commands may change it.
+fn holds_gridcraft_data(wb: &Workbook, name: &str) -> bool {
+    // The stash's own rule, so the two never disagree: a legacy `_sc_` item is read visible or not.
+    stash::holds_item(wb, name)
+}
+
+fn refuse_stash_name(wb: &Workbook, p: &Json, name: &str) -> Result<()> {
+    if holds_gridcraft_data(wb, name) && !bool_param(p, "force").unwrap_or(false) {
+        return Err(EngineError::Other(format!(
+            "'{name}' is a name GridCraft keeps its own data in (stored macros, scripts or views). Pass `force: true` to change it anyway."
+        )));
+    }
+    Ok(())
+}
+
 fn delete_name(s: &mut Session, p: &Json) -> Result<Json> {
     let name = str_param(p, "name").ok_or_else(|| bad("formulas.deleteName", "missing `name`"))?.to_string();
+    refuse_stash_name(&s.doc()?.wb, p, &name)?;
     let scope = match str_param(p, "scope") {
         None => None,
         Some("Workbook") => Some(None),
@@ -461,7 +502,11 @@ fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
     // Excel asks before replacing an existing name; here it's kept unless `replace` is set, and
     // reported.
     let exists = |n: &str| d.wb.names.iter().any(|x| x.name.eq_ignore_ascii_case(n) && x.scope.is_none());
-    let (made, skipped): (Vec<_>, Vec<_>) = made.into_iter().partition(|(n, _)| replace || !exists(n));
+    // A label that names one of GridCraft's own hidden data names would replace part of an item
+    // (see `refuse_stash_name`).
+    let force = bool_param(p, "force").unwrap_or(false);
+    let ours = |n: &str| !force && holds_gridcraft_data(&d.wb, n);
+    let (made, skipped): (Vec<_>, Vec<_>) = made.into_iter().partition(|(n, _)| !ours(n) && (replace || !exists(n)));
     let skipped: Vec<String> = skipped.into_iter().map(|(n, _)| n).collect();
     let n = made.len();
     edit(s, |cx| {
@@ -471,6 +516,61 @@ fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
         }
         cx.structural = true;
         Ok(json!({"created": n, "skipped": skipped}))
+    })
+}
+
+/// The names Paste Names lists, as (name, refers-to text with `=`): the workbook's names and the
+/// active sheet's own, without hidden names, in alphabetical order. A sheet's name hides the
+/// workbook name it shares.
+pub fn pasteable_names(wb: &Workbook) -> Vec<(String, String)> {
+    let sheet = wb.active_sheet;
+    let shown = |local: bool| wb.names.iter().filter(move |n| !n.hidden && n.scope.is_some() == local && n.scope.is_none_or(|i| i == sheet));
+    let local: std::collections::HashSet<String> = shown(true).map(|n| gridcraft_formula::fold_name(&n.name)).collect();
+    let mut out: Vec<(String, String)> = shown(true).map(|n| (n.name.clone(), format!("={}", n.formula))).collect();
+    for n in shown(false) {
+        if !local.contains(&gridcraft_formula::fold_name(&n.name)) {
+            out.push((n.name.clone(), format!("={}", n.formula)));
+        }
+    }
+    out.sort_by_cached_key(|(n, _)| n.to_lowercase());
+    out
+}
+
+fn paste_name(s: &mut Session, p: &Json) -> Result<Json> {
+    let d = s.doc()?;
+    let names = pasteable_names(&d.wb);
+    let listed: Vec<Json> = names.iter().map(|(n, r)| json!({"name": n, "refersTo": r})).collect();
+    if !bool_param(p, "list").unwrap_or(false) {
+        if let Some(name) = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
+            let Some((listed_name, _)) = names.iter().find(|(n, _)| gridcraft_formula::same_name(n, name)) else {
+                return Err(EngineError::Other(format!("There's no name \"{name}\" to paste.")));
+            };
+            s.ui_requests.push(crate::UiRequest::InsertName(listed_name.clone()));
+        }
+        return Ok(json!({"names": listed}));
+    }
+    if names.is_empty() {
+        return Err(EngineError::Other("This workbook has no names to paste.".into()));
+    }
+    let at = cell_param(s, p, "at")?.unwrap_or(d.selection.active);
+    let rows = u32::try_from(names.len()).unwrap_or(u32::MAX);
+    if at.row.saturating_add(rows) > gridcraft_core::MAX_ROWS || at.col.saturating_add(2) > gridcraft_core::MAX_COLS {
+        return Err(EngineError::Other("There isn't room on the sheet for the list of names.".into()));
+    }
+    let sheet = d.wb.active_sheet;
+    let range = RangeRef::new(at, CellRef::new(at.row + rows - 1, at.col + 1));
+    edit(s, |cx| {
+        for (row, (name, refers)) in (at.row..).zip(&names) {
+            for (col, text) in [(at.col, name), (at.col + 1, refers)] {
+                let c = CellRef::new(row, col);
+                let sh = cx.sheet_mut(sheet)?;
+                let style = sh.style_id(c);
+                // The second column holds the refers-to text as a text value, with no formula.
+                sh.set_cell(c, Cell { value: Value::text(text.as_str()), formula: None, style });
+                cx.touch(sheet, c);
+            }
+        }
+        Ok(json!({"names": listed, "range": range.a1()}))
     })
 }
 
@@ -628,8 +728,12 @@ fn error_checking(s: &mut Session, _: &Json) -> Result<Json> {
             }
         }
     }
-    let circ: Vec<String> =
-        d.calc.circular.iter().map(|(si, c)| format!("{}!{}", d.wb.sheet(*si).map(|s| s.name.clone()).unwrap_or_default(), c.a1())).collect();
+    let circ: Vec<String> = d
+        .calc
+        .circular
+        .iter()
+        .map(|(si, c)| format!("{}!{}", d.wb.sheet(*si).map(|s| gridcraft_formula::quote_sheet(&s.name)).unwrap_or_default(), c.a1()))
+        .collect();
     Ok(json!({"errors": out, "circular": circ}))
 }
 
@@ -743,6 +847,57 @@ mod tests {
     }
 
     #[test]
+    fn the_name_commands_leave_gridcraft_data_alone() {
+        // Defining, renaming or deleting a name of a stored item's shape would replace or remove
+        // one of its chunks and leave the rest behind: refused unless `force` is true.
+        let mut s = Session::new();
+        s.new_workbook();
+        let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+        let text = "m".repeat(9_000);
+        stash::set(wb, "macro_1", &text).unwrap();
+        wb.names.push(DefinedName { name: "_sc_watch".into(), scope: None, formula: "\"[]\"".into(), comment: String::new(), hidden: true });
+        // A legacy item is read whether or not it is hidden, so a visible one is data too.
+        wb.names.push(DefinedName { name: "_sc_old".into(), scope: None, formula: "\"[]\"".into(), comment: String::new(), hidden: false });
+        let names = |s: &Session| s.doc().unwrap().wb.names.clone();
+        let before = names(&s);
+        assert!(before.len() >= 3, "the item takes two chunks");
+        for params in [
+            json!({"name": "_gc_macro_1_0", "refersTo": "=1"}),
+            json!({"name": "_SC_Watch", "refersTo": "=1"}),
+            json!({"name": "Mine", "refersTo": "=1", "oldName": "_gc_macro_1_1"}),
+            json!({"name": "_gc_macro_1_0", "refersTo": "=1", "force": false}),
+            json!({"name": "Mine2", "refersTo": "=1", "oldName": "_SC_old"}),
+        ] {
+            let err = s.execute("formulas.defineName", params.clone()).unwrap_err().to_string();
+            assert!(err.contains("force"), "{params}: {err}");
+        }
+        for name in ["_gc_macro_1_1", "_sc_watch", "_sc_old"] {
+            let err = s.execute("formulas.deleteName", json!({"name": name})).unwrap_err().to_string();
+            assert!(err.contains("force"), "{name}: {err}");
+        }
+        s.execute("range.setValues", json!({"range": "A1:B2", "values": [["_gc_macro_1_0", "Rate"], [1, 2]]})).unwrap();
+        let r = s.execute("formulas.createFromSelection", json!({"range": "A1:B2", "top": true, "replace": true})).unwrap();
+        assert_eq!((r["created"].clone(), r["skipped"].clone()), (json!(1), json!(["_gc_macro_1_0"])));
+        let after = names(&s);
+        assert_eq!(after.iter().filter(|n| n.name != "Rate").cloned().collect::<Vec<_>>(), before);
+        assert_eq!(stash::get(&s.doc().unwrap().wb, "macro_1").as_deref(), Some(text.as_str()));
+        // A visible name of the shape is the person's own (the stash never reads it): the name
+        // commands change and remove it without `force`, as Name Manager cannot pass one.
+        let own = DefinedName { name: "_gc_rate_0".into(), scope: None, formula: "=1".into(), comment: String::new(), hidden: false };
+        std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).names.push(own.clone());
+        s.execute("formulas.defineName", json!({"name": "Rate0", "refersTo": "=2", "oldName": "_gc_rate_0"})).unwrap();
+        s.execute("formulas.deleteName", json!({"name": "Rate0"})).unwrap();
+        std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).names.push(own);
+        s.execute("formulas.deleteName", json!({"name": "_gc_rate_0"})).unwrap();
+        assert_eq!(stash::get(&s.doc().unwrap().wb, "macro_1").as_deref(), Some(text.as_str()), "the hidden item is untouched");
+        // Ordinary names and forced calls go ahead.
+        s.execute("formulas.deleteName", json!({"name": "Rate"})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "_gc_macro_1_1", "refersTo": "=1", "force": true})).unwrap();
+        s.execute("formulas.deleteName", json!({"name": "_gc_macro_1_1", "force": true})).unwrap();
+        assert!(!names(&s).iter().any(|n| n.name == "_gc_macro_1_1"));
+    }
+
+    #[test]
     fn arabic_defined_names_count_characters_not_bytes() {
         let mut s = Session::new();
         s.new_workbook();
@@ -789,5 +944,93 @@ mod tests {
         let u = list.as_array().and_then(|l| l.iter().find(|n| n["name"] == "u")).cloned().unwrap();
         // The union parses as one, so the preview is what the union gives in a cell, not #NAME?.
         assert_eq!(u["value"], json!({"error": "#VALUE!"}));
+    }
+
+    /// A workbook with `Sales` and `rate`, a hidden name, a name of Sheet1 that hides a workbook
+    /// `Tax`, and a name of another sheet.
+    fn named_workbook() -> Session {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("formulas.defineName", json!({"name": "Sales", "refersTo": "=Sheet1!$A$1:$A$3"})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "rate", "refersTo": "=0.07"})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "Tax", "refersTo": "=0.2"})).unwrap();
+        let d = s.doc_mut().unwrap();
+        let wb = std::sync::Arc::make_mut(&mut d.wb);
+        let name = |name: &str, scope, formula: &str, hidden| DefinedName {
+            name: name.into(),
+            scope,
+            formula: formula.into(),
+            comment: String::new(),
+            hidden,
+        };
+        wb.names.push(name("_Filter", None, "Sheet1!$A$1:$B$9", true));
+        wb.names.push(name("TAX", Some(0), "0.25", false));
+        wb.names.push(name("Other", Some(1), "1", false));
+        s
+    }
+
+    fn text_at(s: &Session, cell: &str) -> Value {
+        s.doc().unwrap().wb.active().unwrap().value(CellRef::parse(cell).unwrap())
+    }
+
+    #[test]
+    fn paste_names_lists_the_names_the_active_sheet_can_use() {
+        let mut s = named_workbook();
+        let r = s.execute("formulas.pasteName", json!({})).unwrap();
+        assert_eq!(
+            r["names"],
+            json!([
+                {"name": "rate", "refersTo": "=0.07"},
+                {"name": "Sales", "refersTo": "=Sheet1!$A$1:$A$3"},
+                {"name": "TAX", "refersTo": "=0.25"},
+            ])
+        );
+        assert_eq!(text_at(&s, "A1"), Value::Empty, "listing the names writes nothing");
+    }
+
+    #[test]
+    fn paste_names_and_use_in_formula_ask_the_ui_to_insert_the_name() {
+        let mut s = named_workbook();
+        s.take_ui_requests();
+        s.execute("formulas.pasteName", json!({"name": "Sales"})).unwrap();
+        s.execute("formulas.useInFormula", json!({"name": "rate"})).unwrap();
+        assert_eq!(s.take_ui_requests(), vec![crate::UiRequest::InsertName("Sales".into()), crate::UiRequest::InsertName("rate".into())]);
+        assert_eq!(text_at(&s, "A1"), Value::Empty, "the cell changes only when the edit is entered");
+        // A name Paste Name doesn't list is refused; one typed in another case is pasted as listed.
+        assert!(s.execute("formulas.pasteName", json!({"name": "NoSuchName"})).is_err());
+        s.execute("formulas.pasteName", json!({"name": "SALES"})).unwrap();
+        assert_eq!(s.take_ui_requests(), vec![crate::UiRequest::InsertName("Sales".into())]);
+    }
+
+    #[test]
+    fn paste_list_writes_each_name_and_what_it_refers_to() {
+        let mut s = named_workbook();
+        s.execute("selection.set", json!({"range": "D2"})).unwrap();
+        let r = s.execute("formulas.pasteName", json!({"list": true})).unwrap();
+        assert_eq!(r["range"], json!("D2:E4"));
+        let rows = [("D2", "rate"), ("E2", "=0.07"), ("D3", "Sales"), ("E3", "=Sheet1!$A$1:$A$3"), ("D4", "TAX"), ("E4", "=0.25")];
+        for (cell, text) in rows {
+            assert_eq!(text_at(&s, cell), Value::text(text), "{cell}");
+        }
+        assert!(s.doc().unwrap().wb.active().unwrap().cell(CellRef::parse("E3").unwrap()).is_some_and(|c| c.formula.is_none()), "refers-to is text");
+        s.execute("edit.undo", json!({})).unwrap();
+        for (cell, _) in rows {
+            assert_eq!(text_at(&s, cell), Value::Empty, "{cell} after Undo");
+        }
+        s.execute("formulas.pasteName", json!({"list": true, "at": "B7"})).unwrap();
+        assert_eq!(text_at(&s, "B7"), Value::text("rate"));
+    }
+
+    #[test]
+    fn paste_list_needs_names_and_room() {
+        let mut s = named_workbook();
+        let last = format!("A{}", gridcraft_core::MAX_ROWS - 1);
+        assert!(s.execute("formulas.pasteName", json!({"list": true, "at": last})).is_err(), "three rows don't fit below the second-to-last row");
+        let last_col = format!("{}1", gridcraft_core::col_to_letters(gridcraft_core::MAX_COLS - 1));
+        assert!(s.execute("formulas.pasteName", json!({"list": true, "at": last_col})).is_err(), "two columns don't fit in the last column");
+        let mut empty = Session::new();
+        empty.new_workbook();
+        assert!(empty.execute("formulas.pasteName", json!({"list": true})).is_err());
+        assert_eq!(empty.execute("formulas.pasteName", json!({})).unwrap()["names"], json!([]));
     }
 }

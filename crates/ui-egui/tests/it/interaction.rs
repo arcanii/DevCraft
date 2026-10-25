@@ -4,6 +4,7 @@ use egui::{Event, Key, Modifiers, PointerButton};
 use egui_kittest::kittest::Queryable as _;
 use gridcraft_engine::Session;
 use gridcraft_engine::core::{CellRef, Value};
+use gridcraft_ui_egui::i18n::Language;
 use gridcraft_ui_egui::{SheetApp, grid::Geo};
 use serde_json::json;
 
@@ -84,7 +85,7 @@ fn horizontal_scrollbar_pages_and_drags_across_a_wide_sheet() {
     // Column A frozen: a page is the scrolling part only.
     sh.freeze = Some((0, 1));
     let mut s = Session::new();
-    s.add_document(gridcraft_engine::DocState::new(wb, None, "Book1".into()));
+    s.add_document(gridcraft_engine::DocState::new(wb, None, "Book1".into(), gridcraft_engine::Trust::Local));
     let mut h = harness(s);
     let track = h.state().grid.hscroll.expect("the tab bar has a horizontal scrollbar");
     assert!(track.width() >= 200.0, "the scrollbar gets a usable share of the tab bar: {track:?}");
@@ -387,6 +388,30 @@ fn inserted_chart_is_selected_so_delete_removes_it() {
 }
 
 #[test]
+fn insert_column_or_bar_menu_inserts_a_hundred_percent_stacked_bar() {
+    // Insert › Column or Bar (keytip N, C1) lists the column and bar types of the All Charts list.
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Quarter", "North", "South"], ["Q1", 10, 30], ["Q2", 30, 10]]})).unwrap();
+    s.execute("selection.set", json!({"range": "A1:C3"})).unwrap();
+    let mut h = harness(s);
+    key(&mut h, Key::F10, Modifiers::NONE);
+    for (k, t) in [(Key::N, "n"), (Key::C, "c"), (Key::Num1, "1")] {
+        h.input_mut().events.push(Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
+        h.input_mut().events.push(Event::Text(t.into()));
+        h.input_mut().events.push(Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    h.run_steps(2);
+    for label in ["Clustered Column", "Stacked Column", "100% Stacked Column", "Clustered Bar", "Stacked Bar", "100% Stacked Bar"] {
+        assert!(h.query_by_role_and_label(egui::accesskit::Role::Button, label).is_some(), "the menu lists {label}");
+    }
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "100% Stacked Bar").click();
+    h.run_steps(2);
+    let kinds: Vec<_> = h.state().session.active().unwrap().wb.active().unwrap().charts.iter().map(|c| c.kind).collect();
+    assert_eq!(kinds, [gridcraft_engine::model::ChartKind::BarStacked100]);
+}
+
+#[test]
 fn renders_every_ribbon_tab_without_panicking() {
     let mut s = Session::new();
     s.execute("file.new", json!({"sample": "sales"})).unwrap();
@@ -400,8 +425,7 @@ fn renders_every_ribbon_tab_without_panicking() {
 }
 
 #[test]
-fn language_switch_translates_the_ribbon_and_persists() {
-    use gridcraft_ui_egui::i18n::Language;
+fn language_switch_renders_the_ribbon_and_persists() {
     let mut h = harness(blank());
     // English by default whatever the host's locale: only the desktop app reads the system language.
     assert_eq!(h.state().ui.language, Language::En);
@@ -415,31 +439,13 @@ fn language_switch_translates_the_ribbon_and_persists() {
     for id in ["app.language.set", "app.language.english", "app.language.japanese"] {
         assert!(ids.contains(&id), "engine.commands lists {id}");
     }
-    for (language, expected) in [
-        (Language::Zh, "数据"),
-        (Language::Ja, "データ"),
-        (Language::Ko, "데이터"),
-        (Language::Ru, "Данные"),
-        (Language::PtBr, "Dados"),
-        (Language::De, "Daten"),
-        (Language::Fr, "Données"),
-        (Language::Tr, "Veri"),
-        (Language::It, "Dati"),
-    ] {
+    for language in Language::ALL {
         h.state_mut().run("app.language.set", json!({"language": language.code()})).unwrap();
         h.run_steps(2); // every locale renders the ribbon without panicking
         assert_eq!(h.state().ui.language, language);
-        assert_eq!(language.tr("Data"), expected);
         let restored: gridcraft_ui_egui::UiState = serde_json::from_str(&serde_json::to_string(&h.state().ui).unwrap()).unwrap();
         assert_eq!(restored.language, language);
     }
-    // Czech spells "Data" as English does, so the Czech table is checked on a label that differs.
-    h.state_mut().run("app.language.set", json!({"language": "cs"})).unwrap();
-    h.run_steps(2);
-    assert_eq!(h.state().ui.language, Language::Cs);
-    assert_eq!(Language::Cs.tr("Formulas"), "Vzorce");
-    let restored: gridcraft_ui_egui::UiState = serde_json::from_str(&serde_json::to_string(&h.state().ui).unwrap()).unwrap();
-    assert_eq!(restored.language, Language::Cs);
     h.state_mut().run("app.language.set", json!({"language": "en"})).unwrap();
     assert_eq!(h.state().ui.language, Language::En);
 }
@@ -452,16 +458,21 @@ fn pivot_fields_pane_follows_the_interface_language() {
     h.state_mut().run("insert.pivotTable", json!({"source": "Sheet1!$A$1:$B$3", "rows": ["Region"]})).unwrap();
     h.state_mut().run("app.language.set", json!({"language": "es"})).unwrap();
     h.run_steps(4);
-    for label in ["Campos de tabla dinámica", "Filas", "Valores", "Actualizar", "Campo calculado…"] {
-        assert!(h.query_by_label(label).is_some(), "the pane shows `{label}`");
+    let es = |english| Language::Es.tr(english);
+    for english in ["PivotTable Fields", "Rows", "Values", "Refresh", "Calculated Field…"] {
+        assert!(h.query_by_label(es(english)).is_some(), "the pane shows `{}`", es(english));
     }
-    assert!(h.query_by_label("PivotTable Fields").is_none());
+    if es("PivotTable Fields") != "PivotTable Fields" {
+        assert!(h.query_by_label("PivotTable Fields").is_none());
+    }
     h.get_by_label("Region ▾").click();
     h.run_steps(2);
-    for label in ["Mover a rótulos de columna", "Agrupar por años", "Quitar campo"] {
-        assert!(h.query_by_label(label).is_some(), "the field menu shows `{label}`");
+    for english in ["Move to Column Labels", "Group by Years", "Remove Field"] {
+        assert!(h.query_by_label(es(english)).is_some(), "the field menu shows `{}`", es(english));
     }
-    assert!(h.query_by_label("Remove Field").is_none());
+    if es("Remove Field") != "Remove Field" {
+        assert!(h.query_by_label("Remove Field").is_none());
+    }
 }
 
 #[test]
@@ -492,9 +503,12 @@ fn format_cells_draws_its_labels_in_the_interface_language() {
     h.state_mut().run("app.language.set", json!({"language": "de"})).unwrap();
     h.state_mut().open_dialog("formatCells", json!({"tab": "Number"}));
     h.run_steps(2);
-    assert!(h.query_by_label("Wissenschaftlich").is_some(), "the Number tab's categories are translated");
-    assert!(h.query_by_label("Scientific").is_none(), "no English category is left");
-    h.get_by_label("Wissenschaftlich").click();
+    let scientific = Language::De.tr("Scientific");
+    assert!(h.query_by_label(scientific).is_some(), "the Number tab's categories are translated");
+    if scientific != "Scientific" {
+        assert!(h.query_by_label("Scientific").is_none(), "no English category is left");
+    }
+    h.get_by_label(scientific).click();
     h.run_steps(2);
     let style = &h.state().dialog.as_ref().unwrap().values["style"];
     assert_eq!(style["num_fmt"], json!("0.00E+00"), "a translated category still applies its code");
@@ -566,6 +580,33 @@ fn recommended_charts_dialog_inserts_the_chosen_chart() {
     h.state_mut().open_dialog("recommendedCharts", json!({}));
     assert!(h.state().dialog.is_none());
     assert!(h.state().message.is_some());
+}
+
+#[test]
+fn all_charts_inserts_a_hundred_percent_stacked_area() {
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Quarter", "North", "South"], ["Q1", 10, 30], ["Q2", 30, 10]]})).unwrap();
+    s.execute("selection.set", json!({"range": "A1:C3"})).unwrap();
+    let mut h = harness(s);
+    h.state_mut().open_dialog("recommendedCharts", json!({"tab": "All Charts"}));
+    h.run_steps(4);
+    // The entry sits below the list's visible height: scroll the list with the wheel first.
+    let first = h.get_by_label("Pie").rect().center();
+    h.input_mut().events.push(Event::PointerMoved(first));
+    h.input_mut().events.push(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, -10.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(20);
+    h.get_by_label("100% Stacked Area").click();
+    h.run_steps(2);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    let kinds: Vec<_> = h.state().session.active().unwrap().wb.active().unwrap().charts.iter().map(|c| c.kind).collect();
+    assert_eq!(kinds, [gridcraft_engine::model::ChartKind::AreaStacked100]);
 }
 
 #[test]
@@ -930,6 +971,43 @@ fn status_bar_shows_macro_badge() {
     h.run_steps(3);
     h.state_mut().ui.dark = true;
     h.run_steps(2);
+}
+
+#[test]
+fn status_bar_names_a_circular_reference_by_its_address() {
+    let mut s = blank();
+    s.execute("home.insertSheet", json!({"name": "Bob's Q1"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B2", "input": "=B2+1"})).unwrap();
+    let h = harness(s);
+    assert!(h.query_by_label("Circular References: B2").is_some(), "the status bar names the cell on the active sheet without its sheet");
+}
+
+#[test]
+fn status_bar_names_no_cell_when_every_circular_reference_is_on_another_sheet() {
+    let mut s = blank();
+    s.execute("home.insertSheet", json!({"name": "Data"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B2", "input": "=B2+1"})).unwrap();
+    s.execute("sheet.activate", json!({"sheet": "Sheet1"})).unwrap();
+    let mut h = harness(s);
+    assert!(h.query_by_label("Circular References").is_some(), "the status bar still reports circular references");
+    assert!(h.query_by_label("Circular References: B2").is_none(), "no cell address from another sheet");
+    h.state_mut().session.execute("sheet.activate", json!({"sheet": "Data"})).unwrap();
+    h.run_steps(2);
+    assert!(h.query_by_label("Circular References: B2").is_some(), "the active sheet's loop is named");
+}
+
+#[test]
+fn status_bar_names_a_circular_reference_on_the_active_sheet() {
+    let mut s = blank();
+    s.execute("cell.set", json!({"cell": "A1", "input": "=A1+1"})).unwrap();
+    s.execute("home.insertSheet", json!({"name": "Data"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B2", "input": "=B2+1"})).unwrap();
+    s.execute("formulas.calculateNow", json!({})).unwrap();
+    let circular = s.active().unwrap().calc.circular.clone();
+    assert_eq!(circular, vec![(0, CellRef::new(0, 0)), (1, CellRef::new(1, 1))], "Sheet1's loop is listed first");
+    let h = harness(s);
+    assert!(h.query_by_label("Circular References: B2").is_some(), "the status bar names the loop on the active sheet");
+    assert!(h.query_by_label("Circular References: A1").is_none(), "not the first loop listed");
 }
 
 #[test]

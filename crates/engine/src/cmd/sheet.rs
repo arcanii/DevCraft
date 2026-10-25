@@ -401,8 +401,10 @@ fn move_columns(s: &mut Session, p: &Json) -> Result<Json> {
     {
         return Err(EngineError::Other("To prevent possible loss of data, columns cannot be shifted off of the worksheet.".into()));
     }
-    check_lines_protection(s, &json!({"cols": RangeRef::cols(before, before).a1()}), Axis::Cols, before, count, true)?;
-    check_lines_protection(s, &json!({"cols": RangeRef::cols(from, end - 1).a1()}), Axis::Cols, from, count, false)?;
+    // The checks must authorize the sheet this command modifies (`target_sheet`), not whatever
+    // sheet is active: both carry the command's own `sheet` parameter on.
+    check_lines_protection(s, &json!({"cols": RangeRef::cols(before, before).a1(), "sheet": p.get("sheet")}), Axis::Cols, before, count, true)?;
+    check_lines_protection(s, &json!({"cols": RangeRef::cols(from, end - 1).a1(), "sheet": p.get("sheet")}), Axis::Cols, from, count, false)?;
 
     let moved_from = if before <= from { from + count } else { from };
     if moved_from.checked_add(count).is_none_or(|end| end > MAX_COLS) {
@@ -586,11 +588,15 @@ fn insert_copied_cells(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let revision = d.revision;
     let before = (d.wb.clone(), d.selection.clone());
+    // Inside an undo group the nested steps add no undo entries of their own.
+    let nested_entries = !s.in_group(d.uid);
     let result = insert_copied_steps(s, &clip, sheet, at, shift, cut);
     let d = s.doc_mut()?;
     // The nested steps collapse into this command's single undo step.
-    for _ in 0..d.revision.saturating_sub(revision) {
-        d.undo.pop();
+    if nested_entries {
+        for _ in 0..d.revision.saturating_sub(revision) {
+            d.undo.pop();
+        }
     }
     match result {
         Ok((final_range, out)) => {

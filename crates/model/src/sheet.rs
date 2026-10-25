@@ -76,6 +76,17 @@ pub struct Sheet {
     pub show_headings: bool,
     pub show_formulas: bool,
     pub show_zeros: bool,
+    /// The outline's level buttons and brackets (Excel's Show Outline Symbols, Ctrl+8); the
+    /// outline itself stays.
+    #[serde(default = "yes")]
+    pub show_outline_symbols: bool,
+    /// Outline summary rows sit below their detail, and summary columns right of it (Data ▸
+    /// Outline ▸ Settings; off puts them above / left). Saved as `outlinePr summaryBelow` and
+    /// `summaryRight`.
+    #[serde(default = "yes")]
+    pub summary_below: bool,
+    #[serde(default = "yes")]
+    pub summary_right: bool,
     pub right_to_left: bool,
     pub zoom: u16,
     pub cond_formats: Vec<CondFormat>,
@@ -113,6 +124,10 @@ pub struct Sheet {
     pub preserved: Option<Arc<crate::preserved::Preserved>>,
 }
 
+fn yes() -> bool {
+    true
+}
+
 /// Default width of a column and height of a row (pixels at 96 dpi) for the default font.
 pub const DEFAULT_COL_WIDTH: f32 = 64.0;
 pub const DEFAULT_ROW_HEIGHT: f32 = 20.0;
@@ -140,6 +155,9 @@ impl Sheet {
             tab_color: None,
             visibility: Visibility::Visible,
             show_gridlines: true,
+            show_outline_symbols: true,
+            summary_below: true,
+            summary_right: true,
             show_headings: true,
             show_formulas: false,
             show_zeros: true,
