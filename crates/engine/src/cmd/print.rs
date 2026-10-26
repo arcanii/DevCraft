@@ -388,13 +388,13 @@ pub fn layouts(wb: &Workbook, opts: &PrintOptions) -> Vec<SheetLayout> {
     let sheets: Vec<usize> = if opts.all_sheets {
         (0..wb.sheets.len()).filter(|i| wb.sheet(*i).is_some_and(|s| s.visibility == Visibility::Visible)).collect()
     } else {
-        vec![wb.active_sheet]
+        vec![wb.active_sheet()]
     };
     for si in sheets {
         if pages >= MAX_PAGES {
             break;
         }
-        let ovr = if si == wb.active_sheet { opts.range } else { None };
+        let ovr = if si == wb.active_sheet() { opts.range } else { None };
         if opts.all_sheets && ovr.is_none() && wb.sheet(si).is_some_and(|s| print_range(s).is_none()) {
             continue;
         }
@@ -405,7 +405,7 @@ pub fn layouts(wb: &Workbook, opts: &PrintOptions) -> Vec<SheetLayout> {
         }
     }
     if out.is_empty() && opts.all_sheets {
-        out.extend(layout_sheet(wb, wb.active_sheet, opts, None));
+        out.extend(layout_sheet(wb, wb.active_sheet(), opts, None));
     }
     out
 }
@@ -617,7 +617,7 @@ pub fn expand_header_footer(spec: &str, cx: &HfContext) -> [HfSection; 3] {
                 i += rest.chars().count() + 1;
             }
             d if d.is_ascii_digit() => {
-                let digits: String = std::iter::once(d).chain(chars[i..].iter().copied().take_while(|c| c.is_ascii_digit())).take(3).collect();
+                let digits: String = std::iter::once(d).chain(chars[i..].iter().copied().take_while(char::is_ascii_digit)).take(3).collect();
                 i += digits.len() - 1;
                 if let Ok(v) = digits.parse::<f32>() {
                     sec.size = Some(v.clamp(1.0, 409.0));

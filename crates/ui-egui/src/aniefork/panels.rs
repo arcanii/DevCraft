@@ -38,7 +38,7 @@ const CALLS_A_FRAME: usize = 16;
 const UNDO_LIMIT: usize = 100;
 
 fn bridge_id() -> egui::Id {
-    egui::Id::new("aniefork.panels.bridge")
+    egui::Id::unique("aniefork.panels.bridge")
 }
 
 fn kind(spec: &CommandSpec) -> Kind {
@@ -143,7 +143,7 @@ struct Told {
 }
 
 fn told_id() -> egui::Id {
-    egui::Id::new("aniefork.panels.told")
+    egui::Id::unique("aniefork.panels.told")
 }
 
 fn showing(app: &SheetApp) -> Told {

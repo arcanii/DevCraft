@@ -17,6 +17,18 @@ pub const RIBBON_ABOUT: &str = "About\nDevCraft";
 /// The fork's own application id, not upstream's: Wayland and X11 name the window by it.
 pub const APP_ID: &str = "io.github.arcanii.devcraft";
 
+/// Hook of upstream's Check for Updates… (`app.checkForUpdates`, `help.checkForUpdates`), run in
+/// its place. Upstream's updater looks for GridCraft's releases (storytold/gridcraft) and offers
+/// to install one over the running program, which would replace this fork with GridCraft. The
+/// fork has no releases of its own: it is built from its repository. So it says that instead.
+pub fn no_updates(app: &mut crate::SheetApp) -> Result<serde_json::Value, String> {
+    let text = format!(
+        "{APP_NAME} doesn't update itself: GridCraft's releases would replace it with GridCraft. Build the latest from its repository, github.com/arcanii/DevCraft."
+    );
+    app.message = Some((APP_NAME.to_string(), text.clone()));
+    Ok(serde_json::json!({"message": text}))
+}
+
 /// A title as the fork shows it, where upstream's names the application: a message box's
 /// "GridCraft", the About window's "About GridCraft". Any other title is left as it is.
 pub fn titled(title: &str) -> String {
@@ -77,6 +89,21 @@ mod tests {
 
     use super::*;
     use crate::SheetApp;
+
+    /// Check for Updates… says the fork doesn't update itself, and starts no check of GridCraft's
+    /// releases: installing one would replace the fork.
+    #[test]
+    fn check_for_updates_says_the_fork_updates_from_its_repository() {
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        for id in ["app.checkForUpdates", "help.checkForUpdates"] {
+            app.message = None;
+            let r = app.run(id, json!({})).unwrap();
+            assert!(r["message"].as_str().is_some_and(|m| m.contains("doesn't update itself")), "{id}: {r}");
+            assert_eq!(app.message.as_ref().map(|(title, _)| title.as_str()), Some(APP_NAME));
+        }
+    }
 
     #[test]
     fn the_fork_names_upstream_in_plain_text_and_carries_none_of_its_marks() {

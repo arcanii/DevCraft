@@ -13,8 +13,11 @@ mod cell_pictures;
 pub mod chartview;
 pub mod code_editor;
 pub mod control;
+mod craft_fonts_policy;
 pub mod credits;
 pub mod dialogs;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod doc_windows;
 pub mod editor;
 mod floating_pictures;
 pub mod fonts;
@@ -35,7 +38,12 @@ pub mod selection_glide;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+#[cfg(not(target_arch = "wasm32"))]
+mod updates_ui;
 pub mod widgets;
+mod window_ui;
+
+pub use window_ui::WindowUi;
 
 use std::collections::HashMap;
 
@@ -180,6 +188,34 @@ pub struct Notice {
     pub action: Option<(String, String)>,
 }
 
+/// An answer to the Save Changes question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveAnswer {
+    Save,
+    DontSave,
+    Cancel,
+}
+
+/// One open window, as View › Switch Windows and the macOS Window menu list it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenWindow {
+    /// The window's id, the `window` param of `view.switchWindows`.
+    pub window: u64,
+    /// Its workbook's `DocState::uid`.
+    pub doc: u64,
+    pub title: String,
+    pub dirty: bool,
+    pub active: bool,
+}
+
+impl OpenWindow {
+    /// The title ("Book1", or "Book1:2" for a workbook's second window), with a bullet after it
+    /// while the workbook has unsaved changes.
+    pub fn label(&self) -> String {
+        if self.dirty { format!("{} •", self.title) } else { self.title.clone() }
+    }
+}
+
 /// Host services the platform shell provides (file pickers, opening URLs).
 #[derive(Default)]
 pub struct Services {
@@ -256,6 +292,7 @@ pub struct SheetApp {
     pub ui: UiState,
     /// The window chrome to draw (see [`Chrome`]).
     pub chrome: Chrome,
+    /// Scroll position per (window id, sheet index).
     pub views: HashMap<(u64, usize), SheetView>,
     pub editor: Option<editor::EditState>,
     pub text_box_editor: Option<text_box::EditState>,
@@ -269,17 +306,27 @@ pub struct SheetApp {
     pub services: Services,
     pub printing: printing::State,
     print_feedback_seen: Option<printing::Feedback>,
-    /// Synthetic input from agents, one batch per frame (drags need several frames).
+    /// Synthetic input from agents, one batch per step (drags need several steps).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
+    /// The front synthetic batch was injected into `RawInput` but no `ui` pass has applied it
+    /// yet. eframe retains that unconsumed input across hidden logic-only ticks; the flag makes
+    /// the hook offer it once and asks for a hidden paint until a UI pass applies it.
+    pub(crate) synthetic_pending: bool,
+    /// `cumulative_pass_nr` when the front batch was last injected. A completed egui pass that
+    /// did not apply it (the font gate's early return) consumed the events with `begin_pass`
+    /// without reaching input handling, so the hook must offer the same step again.
+    pub(crate) synthetic_injected_at_pass: Option<u64>,
     pub control_rx: Option<std::sync::mpsc::Receiver<ControlRequest>>,
     pub grid: grid::GridState,
     pub perf: Perf,
     pub fonts_ready: bool,
     fonts_set: bool,
+    /// Test harness set: rebuilds use the deterministic pinned font set instead of the host scan.
+    prepared_fonts: bool,
     /// Workbook fonts bound into the current font set; a change rebinds (installed fonts only).
     fonts_bound: Vec<String>,
-    /// The (doc uid, revision) `fonts_bound` was computed for, so the style table is walked only
-    /// when the workbook changes.
+    /// The open workbooks' (uid, revision), folded, that `fonts_bound` was computed for, so the
+    /// style tables are walked only when a workbook changes.
     fonts_seen: (u64, u64),
     /// Set while a font-set change is pending activation: skip this frame's paint, like the
     /// startup `fonts_ready` gate (egui applies new definitions at the next pass).
@@ -296,6 +343,16 @@ pub struct SheetApp {
     /// Transient ribbon keyboard navigation; never saved with UI preferences.
     pub keytips: keytips::KeyTips,
     pub(crate) shots: control::Shots,
+    /// Monotonic epoch of [`control::CaptureGeometry`]: any resize/DPI/zoom/surface change bumps
+    /// it, including a change back to an earlier value, so a capture taken in another layout is
+    /// never saved against the current geometry.
+    pub(crate) capture_epoch: u64,
+    /// The geometry `capture_epoch` describes; `None` before the first frame.
+    pub(crate) capture_geometry: Option<control::CaptureGeometry>,
+    /// The recorded geometry came from a native `RawInput` frame (see `raw_input_hook`). When
+    /// false (a bare test/embedder that never runs the hook) capture code falls back to egui's
+    /// current input instead of reusing a stale recorded value.
+    pub(crate) capture_geometry_from_raw: bool,
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
     /// The system clipboard's text when GridCraft last copied without publishing to it (a
@@ -313,9 +370,27 @@ pub struct SheetApp {
     /// Every unsaved workbook has been answered for quitting (or `app.quit` asked): the next
     /// window close goes through.
     pub allow_close: bool,
+    /// View › Switch Windows opens its list on the next frame the View tab draws (asked for by a
+    /// key tip, the command search or a menu, possibly while another tab was showing).
+    pub(crate) open_switch_windows: bool,
+    /// The window whose interface state the per-window fields above hold (see [`WindowUi`]).
+    ui_window: Option<u64>,
+    /// The other windows' interface state, by window id.
+    parked: HashMap<u64, WindowUi>,
+    /// Each window is a native window of its own ([`doc_windows`] on the desktop): a window's
+    /// close button closes that window, and quitting is asked for separately. Without it (web,
+    /// tests, embedding hosts) one window shows the active workbook window, and its close button
+    /// quits.
+    pub native_windows: bool,
+    /// View › Arrange All's layout and windows, waiting for the native windows to move.
+    pub arrange_windows: Option<(String, Vec<u64>)>,
+    /// The update check, the startup prompt and a running self-update (desktop only).
+    #[cfg(not(target_arch = "wasm32"))]
+    updates_rt: updates_ui::Runtime,
 }
 
 impl SheetApp {
+    /// Constructs a `SheetApp` with default UI, grid, printing, control and screenshot state and the caller's session and services.
     pub fn new(session: Session, services: Services) -> SheetApp {
         SheetApp {
             session,
@@ -333,6 +408,8 @@ impl SheetApp {
             printing: Default::default(),
             print_feedback_seen: None,
             synthetic: Default::default(),
+            synthetic_pending: false,
+            synthetic_injected_at_pass: None,
             control_rx: None,
             grid: grid::GridState {
                 last_border: "bottom".into(),
@@ -343,6 +420,7 @@ impl SheetApp {
             perf: Perf::default(),
             fonts_ready: false,
             fonts_set: false,
+            prepared_fonts: false,
             fonts_bound: Vec::new(),
             fonts_seen: (0, 0),
             fonts_rebind: false,
@@ -353,12 +431,22 @@ impl SheetApp {
             name_box: None,
             keytips: keytips::KeyTips::default(),
             shots: control::Shots::default(),
+            capture_epoch: 0,
+            capture_geometry: None,
+            capture_geometry_from_raw: false,
             selected_chart: None,
             clipboard_text_at_copy: None,
             cut_text: None,
             tab_run: None,
             started: now_ms(),
             allow_close: false,
+            open_switch_windows: false,
+            ui_window: None,
+            parked: HashMap::new(),
+            native_windows: false,
+            arrange_windows: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            updates_rt: Default::default(),
         }
     }
 
@@ -377,11 +465,27 @@ impl SheetApp {
         theme::apply(ctx, dark);
     }
 
-    /// The font names the active workbook uses: every style's font plus the theme's heading/body
-    /// fonts. These are the families [`fonts`] binds an installed file for.
+    /// Test-harness setup: mark a deterministic font set (see
+    /// [`theme::pinned_font_definitions`]) as already installed, so the first `logic` pass neither
+    /// starts the host font scan nor replaces the harness's pinned set. Production uses
+    /// [`Self::setup_context`] instead.
+    #[doc(hidden)]
+    pub fn use_prepared_fonts(&mut self) {
+        self.prepared_fonts = true;
+        self.fonts_ready = true;
+        self.fonts_set = true;
+        self.fonts_rebind = false;
+        self.fonts_han = Some(theme::HanOrder::of(self.ui.language));
+        self.fonts_bound = self.used_fonts();
+        self.fonts_seen = self.fonts_key();
+    }
+
+    /// The font names the open workbooks use: every style's font plus the theme's heading/body
+    /// fonts. These are the families [`fonts`] binds an installed file for. Every workbook's, as
+    /// each may be showing in a window of its own.
     pub fn used_fonts(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
-        if let Some(d) = self.session.active() {
+        for d in self.session.documents() {
             names.extend(d.wb.styles.iter().map(|(_, s)| s.font.name.clone()));
             names.push(d.wb.theme.major_font.clone());
             names.push(d.wb.theme.minor_font.clone());
@@ -389,6 +493,14 @@ impl SheetApp {
             names.extend(d.wb.sheets.iter().flat_map(|sh| sh.shapes.iter().filter_map(|s| s.format.font.clone())));
         }
         names
+    }
+
+    /// The open workbooks' (uid, revision), folded: [`Self::used_fonts`] changes only with it.
+    fn fonts_key(&self) -> (u64, u64) {
+        self.session
+            .documents()
+            .iter()
+            .fold((0u64, 0u64), |(uid, rev), d| (uid.wrapping_mul(31).wrapping_add(d.uid), rev.wrapping_mul(31).wrapping_add(d.revision)))
     }
 
     /// Runs an engine command (or a UI command) and handles UI requests it makes.
@@ -404,37 +516,52 @@ impl SheetApp {
     }
 
     fn run_command(&mut self, id: &str, params: Json) -> Result<Json, String> {
+        let switches_window = id.starts_with("window.")
+            || matches!(id, "view.newWindow" | "view.hideWindow" | "view.unhideWindow")
+            || (id == "view.switchWindows" && ["window", "doc"].iter().any(|k| params.get(*k).is_some_and(|d| !d.is_null())));
+        if id.starts_with("file.") || switches_window {
+            self.settle_drafts()?;
+        }
         if matches!(id, "file.save" | "file.saveAs" | "file.saveBytes") {
             self.store_view_state();
         }
-        if id.starts_with("file.")
-            || matches!(
-                id,
-                "window.activate"
-                    | "sheet.activate"
-                    | "sheet.next"
-                    | "sheet.previous"
-                    | "sheet.move"
-                    | "sheet.hide"
-                    | "sheet.unhide"
-                    | "view.newWindow"
-                    | "view.hideWindow"
-                    | "view.unhideWindow"
-                    | "home.insertSheet"
-                    | "home.deleteSheet"
-                    | "edit.undo"
-                    | "edit.redo"
-                    | "object.delete"
-                    | "object.move"
-            )
-        {
+        if matches!(
+            id,
+            "sheet.activate"
+                | "sheet.next"
+                | "sheet.previous"
+                | "sheet.move"
+                | "sheet.hide"
+                | "sheet.unhide"
+                | "home.insertSheet"
+                | "home.deleteSheet"
+                | "edit.undo"
+                | "edit.redo"
+                | "object.delete"
+                | "object.move"
+        ) {
             self.commit_text_box_edit()?;
         }
         if let Some(r) = self.run_ui_command(id, &params) {
             return r;
         }
+        let before = self.session.active_window();
         let r = self.session.run(id, params);
+        if id.starts_with("file.") && self.session.active_window() != before {
+            // File › New or Open from the Backstage view: the window it was in goes back to its sheet.
+            self.backstage = None;
+        }
+        // Requests the command made (a dialog, a draft) belong to the window it left active.
+        self.follow_active_window();
         self.after_engine();
+        if id == "view.arrangeAll"
+            && self.native_windows
+            && let Ok(r) = &r
+        {
+            let arrange = r.get("arrange").and_then(Json::as_str).unwrap_or("tiled").to_string();
+            let windows = r.get("windows").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_u64).collect()).unwrap_or_default();
+            self.arrange_windows = Some((arrange, windows));
+        }
         // The new chart is selected, as after inserting any object, so Delete removes it, not its data.
         if id == "insert.chart"
             && let Ok(r) = &r
@@ -563,8 +690,19 @@ impl SheetApp {
         if id == "insert.recommendedCharts" && params.get("type").is_none() {
             return self.open_dialog("recommendedCharts", json!({}));
         }
-        if let Err(e) = self.run(id, params) {
-            self.alert(e);
+        // Switch Windows with no window named (key tip, command search) opens the View tab's
+        // list to choose from; programmatic callers of `run` get the list back.
+        if id == "view.switchWindows" && ["window", "doc"].iter().all(|k| params.get(*k).is_none_or(Json::is_null)) {
+            self.ui.ribbon_tab = "View".into();
+            self.ui.ribbon_collapsed = false;
+            self.open_switch_windows = true;
+            return;
+        }
+        match self.run(id, params) {
+            // A refused cell draft already shows its own message (with the rule's title).
+            Err(e) if self.message.as_ref().is_some_and(|(_, m)| *m == e) => {}
+            Err(e) => self.alert(e),
+            Ok(_) => {}
         }
     }
 
@@ -575,7 +713,7 @@ impl SheetApp {
             return;
         }
         let title = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
-        let stem = std::path::Path::new(&title).file_stem().and_then(|s| s.to_str()).unwrap_or("Book1").to_string();
+        let stem = std::path::Path::new(&title).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
         let Some(pick) = &self.services.pick_save else { return };
         let Some(path) = pick(&format!("{stem}.pdf")) else { return };
         // The picker may suggest a workbook extension; the export writes a PDF.
@@ -593,6 +731,8 @@ impl SheetApp {
 
     /// Shows a command error: a toast for an unavailable command, else a message box.
     fn alert(&mut self, e: String) {
+        // Shown in the window the user ends up in, also after a command that switched windows.
+        self.follow_active_window();
         if e.contains("is not available right now") {
             self.toast = Some((e, now_ms()));
         } else {
@@ -635,6 +775,10 @@ impl SheetApp {
             return Some(r);
         }
         let r = match id {
+            "app.checkForUpdates" | "help.checkForUpdates" => {
+                self.check_for_updates();
+                Ok(Json::Null)
+            }
             "ui.printSettings" => printing::settings(&mut self.printing, p, self.services.printers.as_ref()),
             "ui.printSubmit" => self.submit_print(p.clone()),
             "ui.ribbonTab" => {
@@ -752,6 +896,8 @@ impl SheetApp {
 
     /// Picks up requests commands made (dialogs, edit mode…).
     pub fn after_engine(&mut self) {
+        // The requests belong to the window the command left active.
+        self.follow_active_window();
         for req in self.session.take_ui_requests() {
             match req {
                 UiRequest::Dialog(name, params) => self.open_dialog(&name, params),
@@ -760,7 +906,7 @@ impl SheetApp {
                     let text = text.map(|text| {
                         self.session
                             .active()
-                            .map(|d| formula_locale::display_template(&text, self.ui.language.formula_locale(), &d.wb, d.wb.active_sheet))
+                            .map(|d| formula_locale::display_template(&text, self.ui.language.formula_locale(), &d.wb, d.wb.active_sheet()))
                             .unwrap_or(text)
                     });
                     self.begin_edit(text, false);
@@ -878,6 +1024,9 @@ impl SheetApp {
     /// most important one (a preserved VBA project outranks, say, a skipped optional part).
     /// Kept deliberately generic: any open-time warning can reach the user this way.
     pub fn show_open_warnings(&mut self, r: &Json) {
+        // The opened workbook's window shows them, however it was opened (a script may have run
+        // `file.open` on the session directly).
+        self.follow_active_window();
         let Some(list) = r.get("warnings").and_then(Json::as_array) else {
             self.notice = None;
             return;
@@ -908,16 +1057,36 @@ impl SheetApp {
         }
     }
 
+    /// The open windows in order, for the Switch Windows lists.
+    pub fn open_windows(&self) -> Vec<OpenWindow> {
+        let active = self.session.active_window();
+        self.session
+            .windows()
+            .iter()
+            .filter_map(|w| {
+                let d = self.session.documents().iter().find(|d| d.uid == w.doc_uid)?;
+                let title = self.session.window_title(w.id)?;
+                Some(OpenWindow { window: w.id, doc: d.uid, title, dirty: d.is_dirty(), active: active == Some(w.id) })
+            })
+            .collect()
+    }
+
+    /// The active workbook and sheet: what drafts, text boxes and picture targets belong to.
     pub fn view_key(&self) -> Option<(u64, usize)> {
-        self.session.active().map(|d| (d.uid, d.wb.active_sheet))
+        self.session.active().map(|d| (d.uid, d.wb.active_sheet()))
+    }
+
+    /// The active window and sheet: each window scrolls on its own.
+    fn scroll_key(&self) -> Option<(u64, usize)> {
+        Some((self.session.active_window()?, self.session.active()?.wb.active_sheet()))
     }
 
     pub fn view(&self) -> SheetView {
-        self.view_key().and_then(|k| self.views.get(&k).copied()).unwrap_or_else(|| self.saved_view())
+        self.scroll_key().and_then(|k| self.views.get(&k).copied()).unwrap_or_else(|| self.saved_view())
     }
 
     pub fn view_mut(&mut self) -> Option<&mut SheetView> {
-        let k = self.view_key()?;
+        let k = self.scroll_key()?;
         let saved = self.saved_view();
         Some(self.views.entry(k).or_insert(saved))
     }
@@ -939,10 +1108,11 @@ impl SheetApp {
     /// cell to the engine so a save writes them (`sheetView topLeftCell`). Normal view only:
     /// Page Layout view scrolls over pages, not cells.
     pub fn store_view_state(&mut self) {
+        let window = self.session.active_window();
         let Some(d) = self.session.active_mut() else { return };
         let mut tops = Vec::new();
-        for (&(uid, si), v) in &self.views {
-            let Some(sh) = d.wb.sheets.get(si).filter(|sh| uid == d.uid && sh.view == gridcraft_engine::model::SheetViewMode::Normal) else {
+        for (&(w, si), v) in &self.views {
+            let Some(sh) = d.wb.sheets.get(si).filter(|sh| Some(w) == window && sh.view == gridcraft_engine::model::SheetViewMode::Normal) else {
                 continue;
             };
             let (fr, fc) = sh.freeze.unwrap_or((0, 0));
@@ -979,7 +1149,7 @@ impl SheetApp {
             String::new()
         } else {
             match sh.cell(at) {
-                Some(c) if c.formula.is_some() => formula_locale::display(&c.input_text(), locale, &d.wb, d.wb.active_sheet),
+                Some(c) if c.formula.is_some() => formula_locale::display(&c.input_text(), locale, &d.wb, d.wb.active_sheet()),
                 _ => gridcraft_engine::display::edit_text(&d.wb, sh, at),
             }
         };
@@ -987,7 +1157,8 @@ impl SheetApp {
             Some(t) => (t, true),
             None => (current.clone(), false),
         };
-        let mut ed = editor::EditState::new(d.wb.active_sheet, at, text, replace, from_formula_bar);
+        let mut ed = editor::EditState::new(d.uid, d.wb.active_sheet(), at, text, replace, from_formula_bar);
+        ed.window = self.session.active_window();
         ed.locale = locale;
         if replace && self.ui.autocomplete && !ed.is_formula() {
             ed.completion = editor::column_completion(sh, at, &ed.text);
@@ -997,13 +1168,63 @@ impl SheetApp {
     }
 
     /// Commits the edit; `then` moves the selection (dr, dc) afterwards.
+    ///
+    /// The draft goes into the window and workbook it was typed in. If another window is
+    /// showing, that window stays active afterwards; a draft its own workbook refuses
+    /// (validation, a bad formula) brings its window back to the front with the draft still open.
     pub fn commit_edit(&mut self, dr: i64, dc: i64, array: bool, fill_selection: bool) -> bool {
+        let Some((doc, window)) = self.editor.as_ref().map(|ed| (ed.doc, ed.window)) else { return true };
+        if !self.draft_elsewhere() {
+            return self.commit_edit_here(dr, dc, array, fill_selection);
+        }
+        // Its window, or (when that window closed) its workbook's most recent one.
+        let Some(owner) = window.filter(|w| self.session.window(*w).is_some()).or_else(|| self.session.doc_window(doc)) else {
+            self.cancel_edit();
+            return true;
+        };
+        let back = self.session.active_window();
+        self.session.activate_window(owner);
+        if !self.commit_edit_here(dr, dc, array, fill_selection) {
+            // Refused: its window stays in front with the draft open and the reason shown.
+            return false;
+        }
+        if let Some(back) = back {
+            self.session.activate_window(back);
+        }
+        true
+    }
+
+    /// The cell draft belongs to a window or workbook other than the one showing.
+    fn draft_elsewhere(&self) -> bool {
+        self.editor.as_ref().is_some_and(|ed| {
+            self.session.active().map(|d| d.uid) != Some(ed.doc) || ed.window.is_some_and(|w| self.session.active_window() != Some(w))
+        })
+    }
+
+    /// Commits the cell and text-box drafts, as Enter would, before a command that can show
+    /// another workbook or write this one to a file, so a draft never lands in another workbook.
+    /// A draft its workbook refuses stays open with the reason shown, and the command doesn't run.
+    pub(crate) fn settle_drafts(&mut self) -> Result<(), String> {
+        if !self.commit_edit(0, 0, false, false) {
+            return Err(self.message.as_ref().map(|(_, m)| m.clone()).unwrap_or_else(|| "The cell being edited can't be entered.".into()));
+        }
+        self.commit_text_box_edit()
+    }
+
+    fn commit_edit_here(&mut self, dr: i64, dc: i64, array: bool, fill_selection: bool) -> bool {
         let Some(ed) = self.editor.take() else { return true };
         self.session.mode = gridcraft_engine::Mode::Ready;
         let text = match &ed.completion {
             Some(full) if full.to_lowercase().starts_with(&ed.text.to_lowercase()) => full.clone(),
             _ => ed.text.clone(),
         };
+        // F2 then Enter (or a file command) on an untouched draft: nothing to write.
+        if !fill_selection && !array && ed.original.as_ref() == Some(&text) {
+            if dr != 0 || dc != 0 {
+                self.move_after_enter(dr, dc);
+            }
+            return true;
+        }
         let text = match self.session.active().map(|d| formula_locale::canonical(&text, ed.locale, &d.wb, ed.sheet, ed.cell)) {
             Some(Ok(text)) => text,
             Some(Err(error)) => {
@@ -1028,7 +1249,7 @@ impl SheetApp {
             self.toast = Some((msg, now_ms()));
         }
         // Point mode can leave another sheet active; the edit belongs to the sheet it started on.
-        if self.session.active().is_some_and(|d| d.wb.active_sheet != ed.sheet)
+        if self.session.active().is_some_and(|d| d.wb.active_sheet() != ed.sheet)
             && let Err(e) = self.session.run("sheet.activate", json!({"sheet": ed.sheet}))
         {
             self.message = Some(("GridCraft".into(), clean_error(&e)));
@@ -1089,7 +1310,7 @@ impl SheetApp {
         let multi = self.session.active().is_some_and(|d| !d.selection.is_single_cell());
         // Any other move (arrows, clicks, another sheet) leaves the selection off the cell the
         // last Tab landed on, which ends the run.
-        let here = self.session.active().map(|d| (d.uid, d.wb.active_sheet, d.selection.active));
+        let here = self.session.active().map(|d| (d.uid, d.wb.active_sheet(), d.selection.active));
         let run = self.tab_run.take().filter(|&(uid, sheet, _, at)| here == Some((uid, sheet, at)));
         if multi {
             let fwd = dr > 0 || dc > 0;
@@ -1102,7 +1323,7 @@ impl SheetApp {
             if dr == 0 && dc != 0 {
                 let start = run.map(|r| r.2);
                 self.tab_run = self.session.active().and_then(|d| {
-                    let (uid, sheet) = (d.uid, d.wb.active_sheet);
+                    let (uid, sheet) = (d.uid, d.wb.active_sheet());
                     let col = start.or(here.map(|h| h.2.col))?;
                     Some((uid, sheet, col, d.selection.active))
                 });
@@ -1112,6 +1333,8 @@ impl SheetApp {
     }
 
     /// Terminal feedback also reaches the normal window when printing starts through control.
+    /// Polls printing feedback. Called once per frame from [`Self::logic`]; the direct calls in
+    /// `tests/native_print.rs` deliberately bypass the lifecycle to test this helper alone.
     pub fn poll_printing(&mut self, ctx: &egui::Context) {
         self.printing.poll(ctx);
         if self.printing.message == self.print_feedback_seen {
@@ -1134,7 +1357,7 @@ impl SheetApp {
     /// Holds back a window close (the close button, Alt+F4, the OS quitting the app) while a
     /// workbook has unsaved changes, and asks about them first.
     fn guard_window_close(&mut self, ctx: &egui::Context) {
-        if self.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
+        if self.native_windows || self.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
         // A cell still being edited is part of the workbook, as for File › Close.
@@ -1155,72 +1378,195 @@ impl SheetApp {
         }
     }
 
-    /// Asks about the next unsaved workbook before quitting, or closes the window once none is left.
+    /// Asks about the next unsaved workbook before quitting, in its window, or closes the app
+    /// once none is left.
     pub(crate) fn continue_quit(&mut self, ctx: &egui::Context) {
-        match self.session.documents().iter().position(|d| d.is_dirty()) {
-            Some(i) => {
-                self.session.set_active(i);
+        let dirty = self.session.documents().iter().find(|d| d.is_dirty()).map(|d| d.uid);
+        match dirty.and_then(|uid| self.session.doc_window(uid)) {
+            Some(window) => {
+                // Its window comes forward (the native window too: see `doc_windows`).
+                self.enter_window(window);
                 let title = self.session.active().map(|d| d.display_title()).unwrap_or_default();
                 self.open_dialog("saveChanges", json!({"title": title, "quit": true}));
             }
             None => {
                 self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
             }
         }
     }
 
+    /// Answers the Save Changes question about the active workbook (its buttons). While quitting,
+    /// the next unsaved workbook is asked about once this one is answered; Cancel stops the quit.
+    /// Returns whether the question is settled: Save keeps it open when the cell being edited
+    /// can't be entered.
+    pub fn answer_save_changes(&mut self, answer: SaveAnswer, quitting: bool, ctx: &egui::Context) -> bool {
+        match answer {
+            SaveAnswer::Cancel => {}
+            SaveAnswer::DontSave => {
+                self.run_or_alert("file.close", json!({"force": true, "document": true}));
+                if quitting {
+                    self.continue_quit(ctx);
+                }
+            }
+            SaveAnswer::Save => {
+                // File operations include the cell still being edited, as File › Save does.
+                if !self.commit_edit(0, 0, false, false) {
+                    return false;
+                }
+                self.run_or_alert("file.save", json!({}));
+                if self.session.active().is_some_and(|x| !x.is_dirty()) {
+                    self.run_or_alert("file.close", json!({"force": true, "document": true}));
+                    if quitting {
+                        self.continue_quit(ctx);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Quit (the macOS app menu, ⌘Q): commits every window's cell draft as Enter would, then asks
+    /// about each unsaved workbook in its window; Cancel on any of them stops the quit. A draft its
+    /// workbook refuses stops the quit too, with its window in front and the reason shown.
+    pub fn request_quit(&mut self, ctx: &egui::Context) {
+        while let Some(window) = self.parked_window_with_draft() {
+            self.enter_window(window);
+            if self.settle_drafts().is_err() {
+                return;
+            }
+        }
+        if self.settle_drafts().is_err() {
+            return;
+        }
+        if let Some(d) = self.dialog.as_mut().filter(|d| d.name() == "saveChanges") {
+            // Already asking about a workbook (File › Close): answering it goes on to quit.
+            d.values.insert("quit".into(), json!(true));
+            return;
+        }
+        self.continue_quit(ctx);
+    }
+
     /// Per-frame logic (control channel, screenshots). Call before `ui`.
     pub fn logic(&mut self, ctx: &egui::Context) {
-        if self.session.text_width.is_none() {
-            let ctx = ctx.clone();
-            self.session.text_width = Some(std::sync::Arc::new(move |text, font, exact| theme::cell_text_width(&ctx, text, font, exact)));
-        }
+        self.ensure_text_width(ctx);
         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
         // anything that never reached a control (collapsed ribbon, tab switch) is dropped.
         self.ui.keytip_invoke = None;
         // Floating pictures' textures go with their workbook, even when no sheet is painted.
         let open: Vec<u64> = self.session.documents().iter().map(|d| d.uid).collect();
         floating_pictures::forget_closed(ctx, &open);
-        if self.fonts_han.is_some_and(|han| han != theme::HanOrder::of(self.ui.language)) {
+        self.apply_font_state(ctx);
+        if let Some(answer) = self.desktop_theme.take_change() {
+            self.desktop_dark = Some(answer);
+        }
+        self.sync_theme_preference(ctx);
+        self.sync_input_options(ctx);
+        // The geometry captures are bound to. Native frames recorded it from their fresh
+        // `RawInput` in `raw_input_hook` (including hidden logic-only ticks); the epoch is
+        // monotonic, so a resize back to the original values is still a new epoch and old pixels
+        // are never saved with new geometry.
+        let capture_geometry = control::current_capture_geometry(self, ctx);
+        control::note_capture_geometry(self, capture_geometry);
+        // Drain before admission: completed or timed-out captures release their slots and
+        // reservation first, so a new request is never refused for budget that is about to free.
+        // Screenshot results, deadlines and geometry validation belong to `logic`; `ui` only
+        // issues the capture command (after every widget, so a command cannot be missed).
+        control::drain_screenshots(self, ctx);
+        control::poll(self, ctx);
+        // The fork's work of every frame: its projects' panels (aniefork).
+        aniefork::poll(self, ctx);
+        // Printing feedback is polled once per frame, here, so hidden windows and logic-only
+        // frames still see worker completion. `ui` and the desktop app no longer poll it.
+        self.poll_printing(ctx);
+        self.guard_window_close(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        updates_ui::tick(self, ctx);
+        // Files read asynchronously (web file picker, dropped files).
+        self.poll_async_opens();
+        self.autosave(ctx);
+        self.update_title(ctx);
+        self.request_hidden_paint(ctx);
+        // One window always shows a workbook, unless each workbook has a native window of its own
+        // (`doc_windows` decides what having none left means).
+        if self.session.active().is_none() && !self.native_windows {
+            self.session.new_workbook();
+        }
+        self.follow_active_window();
+    }
+
+    /// Installs the text-width closure once, on the first frame.
+    fn ensure_text_width(&mut self, ctx: &egui::Context) {
+        if self.session.text_width.is_some() {
+            return;
+        }
+        let ctx = ctx.clone();
+        self.session.text_width = Some(std::sync::Arc::new(move |text, font, exact| theme::cell_text_width(&ctx, text, font, exact)));
+    }
+
+    /// Applies the font gates: a language Han-order change, startup/prepared fonts and workbook
+    /// font binding. Every branch keeps its one-frame paint gate.
+    fn apply_font_state(&mut self, ctx: &egui::Context) {
+        // A pending synthetic step owns the next real `ui` pass: `ui` returns at the font gate
+        // before it handles input, so a font change requested now would consume the step without
+        // applying it. Delay the change one frame; the hidden-paint request keeps it coming.
+        let defer_font_change = self.synthetic_pending || !self.synthetic.is_empty();
+        if !defer_font_change && self.fonts_han.is_some_and(|han| han != theme::HanOrder::of(self.ui.language)) {
             self.fonts_ready = false;
             self.fonts_set = false;
         }
         if !self.fonts_ready {
-            // New fonts apply from the next frame on: paint nothing until then.
-            if self.fonts_set {
-                self.fonts_ready = true;
-            } else {
-                SheetApp::setup_context_for_language(ctx, self.ui.dark, self.ui.language);
-                self.fonts_set = true;
-                // The rebuilt set has no workbook fonts yet: bind them again once it is active.
-                self.fonts_bound.clear();
-                self.fonts_seen = (0, 0);
-                self.fonts_han = Some(theme::HanOrder::of(self.ui.language));
-                ctx.request_repaint();
-            }
+            self.start_font_setup(ctx);
         } else if self.fonts_rebind {
             // A font-set change made last frame is active now.
             self.fonts_rebind = false;
-        } else if fonts::scan_done() {
-            // Bind the workbook's installed fonts once the background scan has finished. Adding
-            // fonts re-applies the font set, which egui activates at the next pass, so skip this
-            // frame's paint (same one-frame cost as startup). Only when the workbook changed.
-            let seen = self.session.active().map(|d| (d.uid, d.revision)).unwrap_or((0, 0));
-            if seen != self.fonts_seen {
-                let used = self.used_fonts();
-                self.fonts_seen = seen;
-                if used != self.fonts_bound {
-                    ctx.set_fonts(theme::font_definitions_with(self.ui.language, &used));
-                    self.fonts_bound = used;
-                    self.fonts_rebind = true;
-                    ctx.request_repaint();
-                }
-            }
+        } else if !defer_font_change && !self.prepared_fonts && fonts::scan_done() {
+            self.rebind_workbook_fonts(ctx);
         }
-        if let Some(answer) = self.desktop_theme.take_change() {
-            self.desktop_dark = Some(answer);
+    }
+
+    /// Applies the pending font set. New fonts apply from the next frame on: paint nothing until
+    /// then. Startup always proceeds: without it a queued step would be re-offered forever.
+    fn start_font_setup(&mut self, ctx: &egui::Context) {
+        if self.fonts_set {
+            self.fonts_ready = true;
+            return;
         }
+        if self.prepared_fonts {
+            ctx.set_fonts(theme::pinned_font_definitions());
+            theme::apply(ctx, self.ui.dark);
+        } else {
+            SheetApp::setup_context_for_language(ctx, self.ui.dark, self.ui.language);
+        }
+        self.fonts_set = true;
+        // The rebuilt set has no workbook fonts yet: bind them again once it is active.
+        self.fonts_bound.clear();
+        self.fonts_seen = (0, 0);
+        self.fonts_han = Some(theme::HanOrder::of(self.ui.language));
+        ctx.request_repaint();
+    }
+
+    /// Binds the workbook's installed fonts once the background scan has finished. Adding fonts
+    /// re-applies the font set, which egui activates at the next pass, so skip this frame's paint
+    /// (same one-frame cost as startup). Only when an open workbook changed.
+    fn rebind_workbook_fonts(&mut self, ctx: &egui::Context) {
+        let seen = self.fonts_key();
+        if seen == self.fonts_seen {
+            return;
+        }
+        let used = self.used_fonts();
+        self.fonts_seen = seen;
+        if used == self.fonts_bound {
+            return;
+        }
+        ctx.set_fonts(theme::font_definitions_with(self.ui.language, &used));
+        self.fonts_bound = used;
+        self.fonts_rebind = true;
+        ctx.request_repaint();
+    }
+
+    /// Follows the desktop/system theme preference and records the effective theme.
+    fn sync_theme_preference(&mut self, ctx: &egui::Context) {
         let preference = match (
             self.ui.system_theme,
             ctx.system_theme().or_else(|| self.desktop_dark.map(|d| if d { egui::Theme::Dark } else { egui::Theme::Light })),
@@ -1234,15 +1580,20 @@ impl SheetApp {
             ctx.request_repaint();
         }
         self.effective_dark = ctx.theme() == egui::Theme::Dark;
+    }
+
+    /// Keeps egui's own keyboard zoom and quit shortcuts off and applies GridCraft's zoom factor.
+    fn sync_input_options(&mut self, ctx: &egui::Context) {
         // Interface size: the preference owns the zoom factor, so egui's own Ctrl/Cmd +/-/0 zoom
         // keys stay off (they would also swallow GridCraft's shortcuts).
         if ctx.options(|o| o.zoom_with_keyboard) {
             ctx.options_mut(|o| o.zoom_with_keyboard = false);
         }
         // egui closes the window on Ctrl+Q (and with Shift or Alt held too) without asking to save
-        // (#1443). Excel for Windows has no such key (Ctrl+Q is Quick Analysis); macOS keeps Cmd+Q,
-        // the app's Quit there.
-        if ctx.os() != egui::os::OperatingSystem::Mac && ctx.options(|o| !o.quit_shortcuts.is_empty()) {
+        // (#1443). Excel for Windows has no such key (Ctrl+Q is Quick Analysis). With a native
+        // window per workbook egui's Cmd+Q would close only the window it was typed in: the menu
+        // bar's Quit item has the key instead (it asks about unsaved workbooks first).
+        if (ctx.os() != egui::os::OperatingSystem::Mac || self.native_windows) && ctx.options(|o| !o.quit_shortcuts.is_empty()) {
             ctx.options_mut(|o| o.quit_shortcuts.clear());
         }
         let zoom = self.ui.zoom_factor();
@@ -1250,11 +1601,10 @@ impl SheetApp {
             ctx.set_zoom_factor(zoom);
             ctx.request_repaint();
         }
-        control::poll(self, ctx);
-        // The fork's work of every frame: its projects' panels (aniefork).
-        aniefork::poll(self, ctx);
-        self.guard_window_close(ctx);
-        // Files read asynchronously (web file picker, dropped files).
+    }
+
+    /// Opens files that arrived asynchronously (web file picker, dropped files).
+    fn poll_async_opens(&mut self) {
         let arrived: Vec<(String, Vec<u8>)> = self
             .services
             .inbox
@@ -1277,14 +1627,106 @@ impl SheetApp {
             }
             self.after_engine();
         }
-        if self.session.active().is_none() {
-            self.session.new_workbook();
+    }
+
+    /// AutoSave: save workbooks that have a file shortly after they change. This decision lives in
+    /// `logic` so a hidden or logic-only frame still saves; the monotonic timestamp check keeps a
+    /// forced hidden UI pass from saving the same change twice.
+    fn autosave(&mut self, ctx: &egui::Context) {
+        let dirty_xlsx = self.session.active().is_some_and(|d| d.is_dirty() && d.path.as_deref().is_some_and(|p| p.ends_with(".xlsx")));
+        let now = crate::monotonic_ms();
+        let autosave_due =
+            self.ui.autosave && self.editor.is_none() && self.text_box_editor.is_none() && now - self.grid.last_autosave > 2000.0 && dirty_xlsx;
+        if autosave_due {
+            self.grid.last_autosave = now;
+            self.store_view_state();
+            let _ = self.session.run("file.save", json!({}));
+        } else if self.ui.autosave && dirty_xlsx {
+            // Keep checking even when no input arrives while the window is hidden.
+            ctx.request_repaint_after(std::time::Duration::from_secs(2));
         }
     }
 
-    pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
-        if let Some(mut batch) = self.synthetic.pop_front() {
-            raw.events.append(&mut batch);
+    /// Look for a newer release once, in the background, as the desktop app starts (a no-op on the
+    /// web). A found release opens the update prompt; nothing is shown when GridCraft is current.
+    pub fn start_update_check(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        updates_ui::start(self, false);
+    }
+
+    /// Help ▸ Check for Updates…: look now, and say so when GridCraft is up to date or the check fails.
+    pub fn check_for_updates(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        updates_ui::start(self, true);
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.message = Some(("GridCraft".into(), "The web version is always the latest release.".into()));
+        }
+    }
+
+    /// Window title, next to the close/autosave state: `ViewportCommand::Title` is valid outside a
+    /// pass and a control-channel rename while hidden updates it on return.
+    fn update_title(&mut self, ctx: &egui::Context) {
+        // Native windows get theirs from `doc_windows`.
+        if self.native_windows {
+            return;
+        }
+        let Some(d) = self.session.active() else { return };
+        let title = format!("{}{}", d.display_title(), if d.is_dirty() { " — Edited" } else { "" });
+        if self.grid.last_title.as_deref() != Some(title.as_str()) {
+            // The application's name after upstream's title (aniefork).
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(aniefork::about::window_title(&title)));
+            self.grid.last_title = Some(title);
+        }
+    }
+
+    /// A queued/settling capture with a capturable size and an unapplied synthetic step both need
+    /// a real `ui` pass. Once a capture is issued, its `Screenshot` command's own `wants_paint`
+    /// paints the hidden window; after that a full hidden pass every frame only wastes CPU. A
+    /// minimized request has no size, so no hidden pass can reach issuance: the restore pass issues
+    /// it instead. Native eframe honours `RequestPaintWhileHidden`; the web runner does not (hidden
+    /// tabs only run `run_logic`), so a hidden web tab queues the work until it is shown again.
+    /// This is a shared eframe web follow-up, not a GridCraft-local workaround, and the control
+    /// protocol documents the limitation.
+    fn request_hidden_paint(&self, ctx: &egui::Context) {
+        if !(self.shots.needs_hidden_paint() || self.synthetic_pending || !self.synthetic.is_empty()) {
+            return;
+        }
+        // The web runner has no `RequestPaintWhileHidden`; sending it there only logs an
+        // unhandled command. A visible tab still gets the repaint below; a hidden tab keeps the
+        // work queued (see the shared eframe follow-up in docs/egui-037-local-followups.md).
+        #[cfg(not(target_arch = "wasm32"))]
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+        ctx.request_repaint();
+    }
+
+    /// Records capture geometry from the fresh raw frame, then offers exactly one pending synthetic batch and tracks whether it was applied.
+    pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // Capture geometry from this frame's real input before any synthetic event is added. This
+        // runs on every native frame, including hidden/minimized logic-only ticks, so a resize,
+        // DPI/zoom change, Wayland frame without `inner_rect`, or minimize/restore is recorded
+        // even though egui's last UI pass still describes the old layout.
+        let geometry = control::CaptureGeometry::from_raw_input(raw, ctx);
+        control::note_capture_geometry(self, geometry);
+        self.capture_geometry_from_raw = true;
+        // One unapplied gesture step at a time. eframe retains an unconsumed `RawInput` for the
+        // next pass and for a hidden logic-only tick, so the batch is offered once and survives
+        // until a `ui` pass applies it (which pops it). Press and release stay distinct batches.
+        //
+        // A completed egui pass may have consumed the injected events without applying them: the
+        // font gate returns before input handling, but `begin_pass` has already taken the events.
+        // `cumulative_pass_nr` only advances when a pass ends, so a newer value with the batch
+        // still pending means exactly that, and the step is offered again for the next real pass.
+        if self.synthetic_pending {
+            let consumed_by_an_unapplied_pass = self.synthetic_injected_at_pass.is_some_and(|pass| ctx.cumulative_pass_nr() > pass);
+            if !consumed_by_an_unapplied_pass {
+                return;
+            }
+        }
+        if let Some(batch) = self.synthetic.front() {
+            raw.events.extend(batch.iter().cloned());
+            self.synthetic_pending = true;
+            self.synthetic_injected_at_pass = Some(ctx.cumulative_pass_nr());
         }
     }
 
@@ -1297,15 +1739,24 @@ impl SheetApp {
     /// Lays out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        self.poll_printing(&ctx);
         if !self.fonts_ready || self.fonts_rebind {
             ctx.request_repaint();
             return;
         }
         let t0 = now_ms();
+        // A script may have switched windows since the last frame.
+        self.follow_active_window();
         text_box::before_ui(self, &ctx);
+        // Another window came forward without going through a command (which settles drafts
+        // first): the draft goes into its own window instead of floating over this one. If its
+        // workbook refuses it, its window comes back to the front with the draft open.
+        if self.draft_elsewhere() {
+            self.commit_edit(0, 0, false, false);
+        }
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
+        #[cfg(not(target_arch = "wasm32"))]
+        updates_ui::show(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         // A host can turn the File tab off while Backstage is already open: close it.
         if !self.chrome.file_tab {
@@ -1344,8 +1795,10 @@ impl SheetApp {
         dialogs::show(self, &ctx);
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);
-        control::issue_screenshots(self, &ctx);
-        control::collect_screenshots(self, &ctx);
+        // Requests are admitted in `logic`, for the root viewport, so only its pass issues them.
+        if ctx.viewport_id() == egui::ViewportId::ROOT {
+            control::issue_screenshots(self, &ctx);
+        }
         if !ctx.input(|i| i.focused) {
             // Nothing else to do.
         }
@@ -1358,25 +1811,15 @@ impl SheetApp {
             }
         }
         self.perf.last = now;
-        // AutoSave: save workbooks that have a file shortly after they change.
-        if self.ui.autosave
-            && self.editor.is_none()
-            && self.text_box_editor.is_none()
-            && now - self.grid.last_autosave > 2000.0
-            && self.session.active().is_some_and(|d| d.is_dirty() && d.path.as_deref().is_some_and(|p| p.ends_with(".xlsx")))
-        {
-            self.grid.last_autosave = now;
-            self.store_view_state();
-            let _ = self.session.run("file.save", json!({}));
-        }
-        // Window title.
-        if let Some(d) = self.session.active() {
-            let title = format!("{}{}", d.display_title(), if d.is_dirty() { " — Edited" } else { "" });
-            if self.grid.last_title.as_deref() != Some(title.as_str()) {
-                // The application's name after upstream's title (aniefork).
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(aniefork::about::window_title(&title)));
-                self.grid.last_title = Some(title);
-            }
+        // The step is applied only after a completed UI pass. A discarded or repeated pass of the
+        // same frame must not offer it again (grid sizing calls `ui` more than once per frame);
+        // provenance is the injected pass number, so only a pass that missed input handling is
+        // re-offered by `raw_input_hook`.
+        // Synthetic input reaches the root viewport only (`raw_input_hook`), so its pass consumes it.
+        if self.synthetic_pending && ctx.viewport_id() == egui::ViewportId::ROOT {
+            self.synthetic.pop_front();
+            self.synthetic_pending = false;
+            self.synthetic_injected_at_pass = None;
         }
     }
 
@@ -1477,10 +1920,270 @@ pub fn clean_error(e: &str) -> String {
     e.to_string()
 }
 
+/// Wall-clock milliseconds since the Unix epoch, for user-visible timestamps (Backstage's "last
+/// changed", toasts). It can jump when the system clock is adjusted, so it must not drive
+/// deadlines or pacing; use [`monotonic_ms`] for those.
 pub fn now_ms() -> f64 {
     gridcraft_engine::core::date::unix_now_ms().unwrap_or(0.0)
 }
 
+/// Monotonic milliseconds since the first call, for screenshot deadlines and AutoSave pacing.
+///
+/// Deliberately separate from [`now_ms`]: a wall-clock adjustment must not extend (or expire) a
+/// screenshot deadline or save a workbook twice. Native uses [`std::time::Instant`]; wasm uses the
+/// browser's `performance.now()`, which is monotonic too.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::disallowed_methods)] // the std clock is read only off wasm
+pub fn monotonic_ms() -> f64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
+}
+
+#[cfg(target_arch = "wasm32")]
+/// Web monotonic clock: the browser's `performance.now()`, or 0 when it is unavailable.
+pub fn monotonic_ms() -> f64 {
+    web_sys::window().and_then(|window| window.performance()).map_or(0.0, |performance| performance.now())
+}
+
 pub fn cell(r: u32, c: u32) -> CellRef {
     CellRef::new(r, c)
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    /// Builds a key-A press or release event without modifiers.
+    fn key_event(pressed: bool) -> egui::Event {
+        egui::Event::Key { key: egui::Key::A, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+
+    /// Returns a test app with a new workbook and default services.
+    fn app() -> SheetApp {
+        let mut session = Session::new();
+        session.new_workbook();
+        SheetApp::new(session, Services::default())
+    }
+
+    /// One headless pass; a test has no renderer for the texture atlas delta (0.37 panics when it
+    /// is dropped unapplied).
+    fn ui_pass(ctx: &egui::Context, raw: egui::RawInput, f: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
+        let mut out = ctx.run_ui(raw, f);
+        out.textures_delta.clear();
+        out
+    }
+
+    #[test]
+    /// Only one synthetic step is offered, is not duplicated by a hidden logic-only tick, and press/release remain distinct batches.
+    fn a_hidden_logic_tick_keeps_one_unapplied_synthetic_step() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.synthetic.push_back(vec![key_event(true)]);
+        app.synthetic.push_back(vec![key_event(false)]);
+
+        let mut first = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut first);
+        assert_eq!(first.events.len(), 1, "only one step is offered");
+        assert!(app.synthetic_pending);
+        assert_eq!(app.synthetic.len(), 2, "a logic-only frame does not consume the step");
+
+        // eframe carries the unconsumed `RawInput` into the next pass, so the hook offers the step
+        // only once; a hidden logic-only tick does not duplicate it or offer the release.
+        let mut second = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut second);
+        assert!(second.events.is_empty(), "an unapplied step is not injected a second time");
+        assert_eq!(app.synthetic.len(), 2, "press and release stay distinct batches");
+    }
+
+    /// Returns raw input with a screen rect at the given size.
+    fn raw_with_size(size: egui::Vec2) -> egui::RawInput {
+        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() }
+    }
+
+    #[test]
+    /// A font-gated early-returning pass does not lose the queued step; the hook offers it again and a later real pass applies it.
+    fn a_font_gated_pass_offers_the_synthetic_step_again() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(theme::font_definitions());
+        let mut app = app();
+        app.fonts_ready = true;
+        app.fonts_set = true;
+        // Binds `session.text_width`, as eframe's first frame does.
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        app.synthetic.push_back(vec![key_event(true)]);
+
+        // The font gate returns before input handling; `begin_pass` has still consumed the events.
+        app.fonts_rebind = true;
+        let mut raw = raw_with_size(egui::vec2(900.0, 700.0));
+        app.raw_input_hook(&ctx, &mut raw);
+        assert_eq!(raw.events.len(), 1);
+        let _ = ui_pass(&ctx, raw, |ui| app.ui(ui));
+        assert!(app.synthetic_pending, "the early-returning pass did not apply the step");
+        assert_eq!(app.synthetic.len(), 1, "the step is still queued");
+
+        // A completed pass that did not apply it made the hook offer it again for a real pass.
+        app.fonts_rebind = false;
+        let mut raw = raw_with_size(egui::vec2(900.0, 700.0));
+        app.raw_input_hook(&ctx, &mut raw);
+        assert_eq!(raw.events.len(), 1, "the step is not lost across the font gate");
+        let _ = ui_pass(&ctx, raw, |ui| app.ui(ui));
+        assert!(!app.synthetic_pending);
+        assert!(app.synthetic.is_empty(), "the real UI pass applied the step");
+    }
+
+    #[test]
+    /// A language-driven font rebuild waits while a synthetic step is pending and proceeds once it is clear.
+    fn a_pending_step_delays_a_font_change() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.fonts_ready = true;
+        app.fonts_han = Some(theme::HanOrder::Chinese);
+        app.ui.language = i18n::Language::Ja;
+        app.synthetic.push_back(vec![key_event(true)]);
+        app.synthetic_pending = true;
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert!(app.fonts_ready, "the font rebuild waits for the pass that applies the step");
+        app.synthetic.clear();
+        app.synthetic_pending = false;
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert!(!app.fonts_ready, "without pending input the language rebuild proceeds");
+    }
+
+    #[test]
+    /// Logic ticks see fresh viewport and DPI information; resizing back to the original size still advances the capture epoch.
+    fn a_hidden_logic_tick_sees_fresh_viewport_info_and_keeps_the_epoch_monotonic() {
+        /// Runs one logic tick with the requested width and native scale.
+        fn tick(ctx: &egui::Context, app: &mut SheetApp, width: f32, native_ppp: f32) {
+            let mut raw =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 400.0))), ..Default::default() };
+            if let Some(viewport) = raw.viewports.get_mut(&egui::ViewportId::ROOT) {
+                viewport.inner_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 400.0)));
+                viewport.native_pixels_per_point = Some(native_ppp);
+            }
+            let _ = ctx.run_logic(&raw, |ctx| app.logic(ctx));
+        }
+        let ctx = egui::Context::default();
+        let mut app = app();
+        tick(&ctx, &mut app, 800.0, 2.0);
+        let first = app.capture_geometry.expect("the first logic tick records the geometry");
+        assert_eq!(first.viewport, Some(egui::vec2(800.0, 400.0)));
+        assert_eq!(first.pixels_per_point, 2.0, "native scale times the interface zoom");
+        tick(&ctx, &mut app, 900.0, 2.0);
+        let resized = app.capture_geometry.expect("geometry");
+        assert_eq!(resized.viewport, Some(egui::vec2(900.0, 400.0)), "run_logic's ViewportInfo is the fresh size");
+        let epoch = app.capture_epoch;
+        tick(&ctx, &mut app, 800.0, 2.0);
+        assert_eq!(app.capture_geometry.map(|g| g.viewport), Some(Some(egui::vec2(800.0, 400.0))));
+        assert!(app.capture_epoch > epoch, "resizing back is still a new epoch: old pixels must not be saved");
+    }
+
+    #[test]
+    /// A resize and a resize back both advance the capture epoch.
+    fn the_capture_epoch_changes_even_when_the_geometry_returns() {
+        /// Runs one UI pass at the requested width.
+        fn tick(ctx: &egui::Context, app: &mut SheetApp, width: f32) {
+            let raw =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 400.0))), ..Default::default() };
+            let _ = ui_pass(ctx, raw, |ui| app.logic(ui.ctx()));
+        }
+        let ctx = egui::Context::default();
+        let mut app = app();
+        tick(&ctx, &mut app, 800.0);
+        let base = app.capture_epoch;
+        tick(&ctx, &mut app, 900.0);
+        let changed = app.capture_epoch;
+        assert!(changed > base, "a resize increments the capture epoch");
+        tick(&ctx, &mut app, 800.0);
+        assert!(app.capture_epoch > changed, "resizing back is still a new epoch: old pixels must not be saved");
+    }
+
+    /// Extracts title viewport commands from a logic output.
+    fn titles(out: &egui::LogicOutput) -> Vec<String> {
+        out.viewport_commands
+            .values()
+            .flatten()
+            .filter_map(|c| match c {
+                egui::ViewportCommand::Title(title) => Some(title.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    /// A hidden logic tick saves a dirty file-backed workbook once and clears its dirty state.
+    fn a_logic_only_tick_autosaves_a_dirty_workbook_once() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let dir = std::env::temp_dir().join(format!("gridcraft-logic-autosave-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("autosave.xlsx");
+        app.run("cell.set", serde_json::json!({"cell": "A1", "input": "42"})).unwrap();
+        app.ui.autosave = true;
+        app.session.active_mut().unwrap().path = Some(path.to_string_lossy().into_owned());
+        app.grid.last_autosave = monotonic_ms() - 3000.0;
+
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert!(path.exists(), "a hidden logic-only tick saves a dirty workbook with a file");
+        assert!(!app.session.active().unwrap().is_dirty(), "the save clears the dirty state");
+        let saved_at = app.grid.last_autosave;
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert_eq!(app.grid.last_autosave, saved_at, "the same change is not saved a second time");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    /// The title is sent on the first tick and after a rename, but not on every unchanged frame.
+    fn a_logic_only_tick_updates_the_title_once_per_change() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let first = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        let title = app.session.active().unwrap().display_title().to_string();
+        let expected = format!("{title}{}", if app.session.active().unwrap().is_dirty() { " — Edited" } else { "" });
+        // The fork's name after upstream's title (aniefork).
+        let expected = aniefork::about::window_title(&expected);
+        assert_eq!(titles(&first), [expected], "the first logic tick titles the window");
+        let second = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert!(titles(&second).is_empty(), "an unchanged title is not sent every frame");
+
+        app.session.active_mut().unwrap().title = "Renamed".into();
+        let third = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        let expected = aniefork::about::window_title(&format!("Renamed{}", if app.session.active().unwrap().is_dirty() { " — Edited" } else { "" }));
+        assert_eq!(titles(&third), [expected], "a rename while hidden updates the title");
+    }
+
+    #[test]
+    /// A hidden tick surfaces a failed print job in the app message.
+    fn a_logic_only_tick_polls_printing_feedback() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.printing.printers.push(crate::printing::Printer { name: "Queue".into(), label: String::new(), default: true });
+        app.run("ui.printSettings", serde_json::json!({"printer": "Queue"})).unwrap();
+        app.services.print_native = Some(Box::new(|_, _| {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            sender.send(Err("printer is offline".into())).unwrap();
+            receiver
+        }));
+        app.run("ui.printSubmit", serde_json::json!({})).unwrap();
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert_eq!(app.printing.message, Some(crate::printing::Feedback::Failed("printer is offline".into())));
+        assert!(app.message.as_ref().is_some_and(|(_, text)| text.contains("printer is offline")), "logic surfaces the failure");
+    }
+
+    #[test]
+    /// Pending synthetic input makes logic request a real hidden paint.
+    fn a_pending_synthetic_step_requests_a_hidden_paint() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.synthetic.push_back(vec![key_event(true)]);
+        app.synthetic_pending = true;
+        let out = ui_pass(&ctx, egui::RawInput::default(), |ui| app.logic(ui.ctx()));
+        let painted = out
+            .viewport_output
+            .get(&ctx.viewport_id())
+            .is_some_and(|output| output.commands.iter().any(|c| matches!(c, egui::ViewportCommand::RequestPaintWhileHidden)));
+        assert!(painted, "logic must ask for a real UI pass while a synthetic step is unapplied");
+    }
 }

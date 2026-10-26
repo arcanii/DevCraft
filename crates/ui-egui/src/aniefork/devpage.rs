@@ -75,11 +75,11 @@ struct Page {
 }
 
 fn id() -> egui::Id {
-    egui::Id::new("aniefork.devpage")
+    egui::Id::unique("aniefork.devpage")
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("aniefork.devpage.state")
+    egui::Id::unique("aniefork.devpage.state")
 }
 
 fn page(ctx: &egui::Context) -> Page {

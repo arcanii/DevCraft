@@ -28,8 +28,10 @@ use gridcraft_core::{CellRef, RangeRef, Value};
 use gridcraft_model::{Cell, DefinedName, Sheet, Workbook};
 use serde_json::{Value as Json, json};
 
+use super::check_arrays;
 use super::whatif::Trial;
-use super::*;
+use super::{CommandSpec, Ctx, DocState, EngineError, Result, Session, bad, bool_param, cmd, edit, f64_param, has_doc, str_param};
+use gridcraft_core::split_sheet;
 
 const CMD: &str = "data.solver";
 const REPORT_CMD: &str = "data.solverReport";
@@ -299,7 +301,7 @@ fn parse_model(s: &Session, p: &Json) -> Result<Model> {
     let d = s.doc()?;
     let wb = &d.wb;
     let obj_text = str_param(p, "objective").or_else(|| str_param(p, "setObjective")).or_else(|| str_param(p, "set")).unwrap_or("");
-    let (sheet, obj) = cells_of(wb, obj_text, wb.active_sheet, 1).map_err(|_| EngineError::Other("The objective must be a single cell.".into()))?;
+    let (sheet, obj) = cells_of(wb, obj_text, wb.active_sheet(), 1).map_err(|_| EngineError::Other("The objective must be a single cell.".into()))?;
     let objective = *obj.first().ok_or_else(|| EngineError::Other("The objective must be a single cell.".into()))?;
     let sh = wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
     if sh.cell(objective).is_none_or(|c| c.formula.is_none()) {
@@ -1705,6 +1707,26 @@ fn title(out: &mut Lines, kind: ReportKind, sheet: &str) -> u32 {
     3
 }
 
+fn format_constraint_row(sh: &Sheet, c: &Constraint, cell: CellRef, v: f64, rhs: &[f64], k: usize) -> Vec<Value> {
+    let (formula, status, slack) = match (c.rel, &c.rhs) {
+        (Rel::Int, _) => (format!("{}=Integer", abs_ref(cell)), "Binding", 0.0),
+        (Rel::Bin, _) => (format!("{}=Binary", abs_ref(cell)), "Binding", 0.0),
+        (rel, rhs_cells) => {
+            let b = rhs.get(k).or_else(|| rhs.first()).copied().unwrap_or(f64::NAN);
+            let rhs_text = match rhs_cells {
+                Rhs::Cells(cells) => cells.get(k).or_else(|| cells.first()).map(|c| abs_ref(*c)).unwrap_or_default(),
+                _ => gridcraft_core::number_to_text(b),
+            };
+            let slack = (v - b).abs();
+            let binding = rel == Rel::Eq || slack <= PRECISION * (1.0 + b.abs());
+            let slack = if binding { 0.0 } else { slack };
+            (format!("{}{}{rhs_text}", abs_ref(cell), rel.text()), if binding { "Binding" } else { "Not Binding" }, slack)
+        }
+    };
+    let num = |v: f64| if v.is_finite() { Value::number(v) } else { Value::Error(gridcraft_core::CellError::Value) };
+    vec![Value::text(abs_ref(cell)), Value::text(cell_name(sh, cell)), num(v), Value::text(formula), Value::text(status), num(slack)]
+}
+
 fn answer_report(d: &DocState, sh: &Sheet, inp: &ReportInput) -> Lines {
     let m = inp.model;
     let mut trial = Trial::new(d);
@@ -1768,29 +1790,7 @@ fn answer_report(d: &DocState, sh: &Sheet, inp: &ReportInput) -> Lines {
             Rhs::None => vec![],
         };
         for (k, (cell, v)) in c.lhs.iter().zip(&lhs).enumerate() {
-            let (formula, status, slack) = match (c.rel, &c.rhs) {
-                (Rel::Int, _) => (format!("{}=Integer", abs_ref(*cell)), "Binding", 0.0),
-                (Rel::Bin, _) => (format!("{}=Binary", abs_ref(*cell)), "Binding", 0.0),
-                (rel, rhs_cells) => {
-                    let b = rhs.get(k).or_else(|| rhs.first()).copied().unwrap_or(f64::NAN);
-                    let rhs_text = match rhs_cells {
-                        Rhs::Cells(cells) => cells.get(k).or_else(|| cells.first()).map(|c| abs_ref(*c)).unwrap_or_default(),
-                        _ => gridcraft_core::number_to_text(b),
-                    };
-                    let slack = (v - b).abs();
-                    let binding = rel == Rel::Eq || slack <= PRECISION * (1.0 + b.abs());
-                    let slack = if binding { 0.0 } else { slack };
-                    (format!("{}{}{rhs_text}", abs_ref(*cell), rel.text()), if binding { "Binding" } else { "Not Binding" }, slack)
-                }
-            };
-            rows.push(vec![
-                Value::text(abs_ref(*cell)),
-                Value::text(cell_name(sh, *cell)),
-                num(*v),
-                Value::text(formula),
-                Value::text(status),
-                num(slack),
-            ]);
+            rows.push(format_constraint_row(sh, c, *cell, *v, &rhs, k));
         }
     }
     table(&mut out, r + 1, &["Cell", "Name", "Cell Value", "Formula", "Status", "Slack"], rows);
@@ -1913,8 +1913,8 @@ fn write_reports(cx: &mut Ctx, at: usize, built: Vec<(String, Lines)>) -> Vec<St
             *sc += count;
         }
     }
-    if cx.wb.active_sheet >= at {
-        cx.wb.active_sheet += count;
+    if cx.wb.active_sheet() >= at {
+        cx.wb.set_active_sheet(cx.wb.active_sheet().saturating_add(count));
     }
     cx.structural = true;
     names
@@ -1939,7 +1939,7 @@ fn report(s: &mut Session, p: &Json) -> Result<Json> {
     let params = match p.get("model") {
         Some(m @ Json::Object(_)) => m.clone(),
         Some(Json::Null) | None => {
-            let mut params = saved_model(&d.wb, d.wb.active_sheet).unwrap_or_else(|| json!({}));
+            let mut params = saved_model(&d.wb, d.wb.active_sheet()).unwrap_or_else(|| json!({}));
             if let (Some(base), Some(over)) = (params.as_object_mut(), p.as_object()) {
                 for (k, v) in over {
                     base.insert(k.clone(), v.clone());
@@ -1988,7 +1988,7 @@ fn report(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn run(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
-    let active = d.wb.active_sheet;
+    let active = d.wb.active_sheet();
     let mut params = p.clone();
     if bool_param(p, "saved").unwrap_or(false) {
         let saved = saved_model(&d.wb, active).ok_or_else(|| EngineError::Other("This sheet has no saved Solver model.".into()))?;
@@ -2145,7 +2145,7 @@ mod tests {
     /// The first saved-model name scoped to the active sheet.
     fn saved(s: &Session) -> String {
         let d = s.doc().unwrap();
-        d.wb.names.iter().find(|n| n.scope == Some(d.wb.active_sheet)).map(|n| n.name.clone()).unwrap_or_default()
+        d.wb.names.iter().find(|n| n.scope == Some(d.wb.active_sheet())).map(|n| n.name.clone()).unwrap_or_default()
     }
     fn set(s: &mut Session, cells: &[(&str, &str)]) {
         for (c, v) in cells {

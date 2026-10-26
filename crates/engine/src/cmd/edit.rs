@@ -237,7 +237,7 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
     {
         return Err(EngineError::Other(m));
     }
-    let active_sheet = s.doc()?.wb.active_sheet;
+    let active_sheet = s.doc()?.wb.active_sheet();
     edit(s, |cx| {
         if array {
             // Legacy Ctrl+Shift+Enter array formula over the selection, when the selection holds
@@ -438,23 +438,18 @@ fn selection_set(s: &mut Session, p: &Json) -> Result<Json> {
 impl crate::DocState {
     /// Switches the active sheet, remembering each sheet's selection.
     pub fn wb_switch_sheet(&mut self, i: usize) {
-        if i >= self.wb.sheets.len() || i == self.wb.active_sheet {
+        if i >= self.wb.sheets.len() || i == self.wb.active_sheet() {
             return;
         }
-        let cur = self.wb.active_sheet;
+        let cur = self.wb.active_sheet();
         if self.sheet_selections.len() < self.wb.sheets.len() {
             self.sheet_selections.resize(self.wb.sheets.len(), crate::Selection::default());
         }
         if let Some(slot) = self.sheet_selections.get_mut(cur) {
             *slot = self.selection.clone();
         }
-        // The active sheet is view state: change it without making the workbook dirty.
-        let dirty = self.is_dirty();
-        let wb = std::sync::Arc::make_mut(&mut self.wb);
-        wb.active_sheet = i;
-        if !dirty {
-            self.saved = self.wb.clone();
-        }
+        // View state: set in place, so the workbook is neither copied nor made dirty.
+        self.wb.set_active_sheet(i);
         self.selection = self.sheet_selections.get(i).cloned().unwrap_or_default();
     }
 }
@@ -587,7 +582,7 @@ const GO_TO_NAME_DEPTH: usize = 8;
 pub(super) fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
     if bool_param(p, "list") == Some(true) {
         let d = s.doc()?;
-        return Ok(json!({"names": go_to_names(&d.wb, d.wb.active_sheet), "recent": d.go_to_recent}));
+        return Ok(json!({"names": go_to_names(&d.wb, d.wb.active_sheet()), "recent": d.go_to_recent}));
     }
     let Some(reference) = str_param(p, "reference").or_else(|| str_param(p, "range")) else { return Err(bad("edit.goTo", "missing `reference`")) };
     let d = s.doc()?;
@@ -595,7 +590,7 @@ pub(super) fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
     let mut areas: Vec<RangeRef> = Vec::new();
     let mut named = false;
     for part in reference_parts(reference) {
-        let Some((sheet, found, by_name)) = go_to_target(&d.wb, d.wb.active_sheet, part, 0) else {
+        let Some((sheet, found, by_name)) = go_to_target(&d.wb, d.wb.active_sheet(), part, 0) else {
             return Err(EngineError::Other("Reference isn't valid.".into()));
         };
         // One selection holds the areas of one sheet.
@@ -1701,7 +1696,7 @@ fn find(s: &mut Session, p: &Json) -> Result<Json> {
     let workbook = str_param(p, "within") == Some("workbook");
     s.last_find = Some(p.clone());
     let d = s.doc()?;
-    let sheets: Vec<usize> = if workbook { (0..d.wb.sheets.len()).collect() } else { vec![d.wb.active_sheet] };
+    let sheets: Vec<usize> = if workbook { (0..d.wb.sheets.len()).collect() } else { vec![d.wb.active_sheet()] };
     let mut hits: Vec<(usize, CellRef, String)> = Vec::new();
     for si in sheets {
         let Some(sh) = d.wb.sheet(si) else { continue };
@@ -1731,7 +1726,7 @@ fn find(s: &mut Session, p: &Json) -> Result<Json> {
         return Ok(json!({"count": list.len(), "results": list}));
     }
     // Next hit after the active cell.
-    let cur = (d.wb.active_sheet, d.selection.active);
+    let cur = (d.wb.active_sheet(), d.selection.active);
     let key = |si: usize, c: CellRef| if by_cols { (si, c.col, c.row) } else { (si, c.row, c.col) };
     let next = hits.iter().find(|(si, c, _)| key(*si, *c) > key(cur.0, cur.1)).or_else(|| hits.first()).cloned();
     let Some((si, c, t)) = next else { return Err(EngineError::Other("not found".into())) };
@@ -1753,7 +1748,7 @@ fn replace(s: &mut Session, p: &Json) -> Result<Json> {
     let workbook = str_param(p, "within") == Some("workbook");
     let active = s.doc()?.selection.active;
     let n = edit(s, |cx| {
-        let sheets: Vec<usize> = if workbook { (0..cx.wb.sheets.len()).collect() } else { vec![cx.wb.active_sheet] };
+        let sheets: Vec<usize> = if workbook { (0..cx.wb.sheets.len()).collect() } else { vec![cx.wb.active_sheet()] };
         let mut n = 0;
         for si in sheets {
             let cells: Vec<(CellRef, String)> =
@@ -1825,7 +1820,7 @@ fn replace_ci(text: &str, what: &str, with: &str) -> String {
 fn format_painter(s: &mut Session, p: &Json) -> Result<Json> {
     if let Some(dest) = str_param(p, "apply").and_then(RangeRef::parse) {
         let Some((wb, sheet, src, sticky)) = s.format_painter.clone() else { return Err(EngineError::Other("Pick up a format first.".into())) };
-        let dest_sheet = s.doc()?.wb.active_sheet;
+        let dest_sheet = s.doc()?.wb.active_sheet();
         let same = std::sync::Arc::ptr_eq(&wb, &s.doc()?.wb) || s.doc()?.wb.styles == wb.styles;
         edit(s, |cx| {
             let Some(src_sheet) = wb.sheet(sheet) else { return Ok(()) };
@@ -1905,7 +1900,7 @@ fn format_painter(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let sticky = bool_param(p, "sticky").unwrap_or(false);
     let d = s.doc()?;
-    s.format_painter = Some((d.wb.clone(), d.wb.active_sheet, d.selection.current(), sticky));
+    s.format_painter = Some((d.wb.clone(), d.wb.active_sheet(), d.selection.current(), sticky));
     ok()
 }
 
@@ -1965,11 +1960,11 @@ mod tests {
         let mut s = go_to_workbook();
         let out = s.execute("edit.goTo", json!({"reference": "Sheet2!Local"})).unwrap();
         assert_eq!(out["selection"], "C3", "{out}");
-        assert_eq!(s.doc().unwrap().wb.active_sheet, 1);
+        assert_eq!(s.doc().unwrap().wb.active_sheet(), 1);
         // A name of several areas selects all of them.
         let out = s.execute("edit.goTo", json!({"reference": "Areas"})).unwrap();
         assert_eq!(out["selection"], "A1,C3:C4", "{out}");
-        assert_eq!(s.doc().unwrap().wb.active_sheet, 0);
+        assert_eq!(s.doc().unwrap().wb.active_sheet(), 0);
     }
 
     /// A name matches in any case and any script, as a formula matches it.
@@ -1996,7 +1991,7 @@ mod tests {
         assert_eq!(out["selection"], "B2:B5,D2:D5", "{out}");
         let out = s.execute("edit.goTo", json!({"reference": "Sheet2!$A$1,Sheet2!B2"})).unwrap();
         assert_eq!(out["selection"], "A1,B2", "{out}");
-        assert_eq!(s.doc().unwrap().wb.active_sheet, 1);
+        assert_eq!(s.doc().unwrap().wb.active_sheet(), 1);
         // Areas on two sheets, and a part that is not a reference, leave the selection alone.
         for bad in ["A1,Sheet1!B2", "A1,Rate", "A1,", "Total"] {
             assert!(s.execute("edit.goTo", json!({"reference": bad})).is_err(), "{bad}");
@@ -2035,7 +2030,7 @@ mod tests {
         s.execute("selection.set", json!({"sheet": 1})).unwrap();
         let out = s.execute("edit.goTo", json!({"reference": "Sheet1!B14:C22,Sheet1!F19:G30", "record": true})).unwrap();
         assert_eq!(out["selection"], "B14:C22,F19:G30", "{out}");
-        assert_eq!(s.doc().unwrap().wb.active_sheet, 0);
+        assert_eq!(s.doc().unwrap().wb.active_sheet(), 0);
         for i in 0..GO_TO_RECENT + 2 {
             s.execute("edit.goTo", json!({"reference": format!("A{}", i + 1), "record": true})).unwrap();
         }

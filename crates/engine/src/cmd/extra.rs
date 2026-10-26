@@ -141,11 +141,27 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "view.customViews", "Custom Views…", ["View", "Workbook Views"], None, "{save?: name, show?: name, delete?: name} → list", has_doc, custom_views),
         cmd!(noundo "view.split", "Split", ["View", "Window"], None, "{} (toggles a split at the active cell; shown as frozen panes in this version)", has_doc, split),
-        cmd!(noundo "view.newWindow", "New Window", ["View", "Window"], None, "{} opens a second window on the same workbook (a linked copy)", has_doc, new_window),
-        cmd!(noundo "view.arrangeAll", "Arrange All", ["View", "Window"], None, "{}", has_doc, |_, _| ok()),
-        cmd!(noundo "view.hideWindow", "Hide", ["View", "Window"], None, "{}", has_doc, hide_window),
-        cmd!(noundo "view.unhideWindow", "Unhide…", ["View", "Window"], None, "{index?}", has_doc, unhide_window),
-        cmd!(query "view.switchWindows", "Switch Windows", ["View", "Window"], None, "{} → open windows", always, switch_windows),
+        cmd!(noundo "view.newWindow", "New Window", ["View", "Window"], None, "{} → {window, doc, title}: opens another window on the active workbook (the same workbook: saving from either window saves it)", has_doc, new_window),
+        cmd!(
+            noundo "view.arrangeAll",
+            "Arrange All",
+            ["View", "Window"],
+            None,
+            "{arrange?: tiled|horizontal|vertical|cascade, activeWorkbook?: bool} → {arrange, windows}: lays out the visible windows (tiled by default; `activeWorkbook` only the active workbook's), the active window first",
+            has_doc,
+            arrange_all
+        ),
+        cmd!(noundo "view.hideWindow", "Hide", ["View", "Window"], None, "{window?, doc?} (the active window by default)", has_doc, hide_window),
+        cmd!(noundo "view.unhideWindow", "Unhide…", ["View", "Window"], None, "{window?, doc?, index?} (the most recently hidden window by default)", has_doc, unhide_window),
+        cmd!(
+            noundo "view.switchWindows",
+            "Switch Windows",
+            ["View", "Window"],
+            None,
+            "{window?, doc?} → open windows [{window, doc, index, title, dirty, active, hidden}]; with `window` (an id from the list), or `doc` (a workbook id: its most recent window), shows and activates that window first",
+            always,
+            switch_windows
+        ),
         cmd!(noundo "view.ruler", "Ruler", ["View", "Show"], None, "{on?} → {on}: rulers in Page Layout view (an application option)", has_doc, ruler),
         cmd!(query "view.macros", "Macros", ["View", "Macros"], None, "{} → scripts", has_doc, all_scripts),
         // Table tools
@@ -294,7 +310,7 @@ pub fn specs() -> Vec<CommandSpec> {
 
 fn find_chart(s: &Session, p: &Json) -> Result<(usize, usize)> {
     let d = s.doc()?;
-    let si = d.wb.active_sheet;
+    let si = d.wb.active_sheet();
     let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
     let idx = match u32_param(p, "chart") {
         Some(id) => sh.charts.iter().position(|c| c.id == id),
@@ -460,7 +476,7 @@ fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
             let (sheet_name, body) = split_sheet(range);
             let src_si = match sheet_name {
                 Some(n) => d.wb.sheet_index(&n).ok_or_else(|| bad("chart.selectData", "no such sheet"))?,
-                None => d.wb.active_sheet,
+                None => d.wb.active_sheet(),
             };
             let r = RangeRef::parse(body).ok_or_else(|| bad("chart.selectData", "not a range"))?;
             if r.count() > 1_000_000 {
@@ -482,7 +498,7 @@ fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
             let (sheet_name, body) = split_sheet(t);
             let si = match sheet_name {
                 Some(n) => d.wb.sheet_index(&n).ok_or_else(|| bad("chart.selectData", "no such sheet"))?,
-                None => d.wb.active_sheet,
+                None => d.wb.active_sheet(),
             };
             let r = RangeRef::parse(body).ok_or_else(|| bad("chart.selectData", "`categories` is not a range"))?;
             let name = d.wb.sheet(si).map(|sh| sh.name.clone()).ok_or(EngineError::NoDocument)?;
@@ -564,7 +580,7 @@ fn shape_outline(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn with_shape(s: &mut Session, p: &Json, f: impl FnOnce(&mut Shape)) -> Result<Json> {
-    let si = s.doc()?.wb.active_sheet;
+    let si = s.doc()?.wb.active_sheet();
     let id = u32_param(p, "id");
     edit(s, |cx| {
         let shapes = &mut cx.sheet_mut(si)?.shapes;
@@ -582,7 +598,7 @@ fn arrange(s: &mut Session, p: &Json, forward: bool) -> Result<Json> {
     let id = u32_param(p, "id").ok_or_else(|| bad("arrange", "missing `id`"))?;
     let kind = str_param(p, "kind").unwrap_or("shape").to_string();
     let extreme = bool_param(p, "toFront").or(bool_param(p, "toBack")).unwrap_or(false);
-    let si = s.doc()?.wb.active_sheet;
+    let si = s.doc()?.wb.active_sheet();
     fn reorder<T>(v: &mut Vec<T>, i: usize, forward: bool, extreme: bool) {
         if i >= v.len() {
             return;
@@ -648,7 +664,7 @@ fn align(s: &mut Session, p: &Json) -> Result<Json> {
     let ids: Vec<u32> =
         p.get("ids").and_then(Json::as_array).map(|a| a.iter().filter_map(|v| v.as_u64().map(|x| x as u32)).collect()).unwrap_or_default();
     let how = str_param(p, "align").unwrap_or("left").to_string();
-    let si = s.doc()?.wb.active_sheet;
+    let si = s.doc()?.wb.active_sheet();
     edit(s, |cx| {
         let sheet = cx.sheet_mut(si)?;
         let geo: Vec<(u32, f64, f64, f32, f32)> = {
@@ -761,7 +777,7 @@ fn custom_views(s: &mut Session, p: &Json) -> Result<Json> {
     let mut views = stash_map(&d.wb, VIEWS_NAME);
     if let Some(name) = str_param(p, "save") {
         let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
-        views[name] = json!({"sheet": d.wb.active_sheet, "selection": d.selection.a1(), "zoom": sh.zoom, "freeze": sh.freeze});
+        views[name] = json!({"sheet": d.wb.active_sheet(), "selection": d.selection.a1(), "zoom": sh.zoom, "freeze": sh.freeze});
         let v = views.clone();
         edit(s, |cx| {
             stash_set(&mut cx.wb, VIEWS_NAME, &v);
@@ -808,47 +824,71 @@ fn split(s: &mut Session, _: &Json) -> Result<Json> {
 }
 
 fn new_window(s: &mut Session, _: &Json) -> Result<Json> {
-    let d = s.doc()?.clone();
-    let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()), d.trust);
-    copy.selection = d.selection.clone();
-    copy.scripts_trusted = d.scripts_trusted;
-    let i = s.add_document(copy);
-    Ok(json!({"index": i}))
+    let id = s.new_window()?;
+    let doc = s.window(id).map(|w| w.doc_uid);
+    Ok(json!({"window": id, "doc": doc, "title": s.window_title(id)}))
 }
 
-fn hide_window(s: &mut Session, _: &Json) -> Result<Json> {
-    s.hidden_windows.push(s.active_index());
-    let n = s.documents().len();
-    if n > 1 {
-        let next = (0..n).find(|i| !s.hidden_windows.contains(i)).unwrap_or(0);
-        s.set_active(next);
+/// The window a window command names: `window` (an id), else `doc` (a workbook id: its most
+/// recent window), else the active window.
+pub(crate) fn window_param(s: &Session, cmd: &str, p: &Json) -> Result<u64> {
+    let t = crate::Target::from_json(p).map_err(|e| bad(cmd, e.to_string()))?;
+    s.target_window(t).map_err(|e| bad(cmd, e.to_string()))
+}
+
+/// View › Arrange All. The engine has no window geometry: it picks the windows and the layout,
+/// and the interface moves its native windows ([`Session::window_list`] order, active first).
+fn arrange_all(s: &mut Session, p: &Json) -> Result<Json> {
+    let arrange = match str_param(p, "arrange").unwrap_or("tiled") {
+        a @ ("tiled" | "horizontal" | "vertical" | "cascade") => a,
+        other => return Err(bad("view.arrangeAll", format!("`arrange` must be tiled, horizontal, vertical or cascade, not `{other}`"))),
+    };
+    let active = s.active_window();
+    let doc = active.and_then(|w| s.window(w)).map(|w| w.doc_uid);
+    let only_active = p.get("activeWorkbook").and_then(Json::as_bool).unwrap_or(false);
+    let mut windows: Vec<u64> = s.windows().iter().filter(|w| !w.hidden && (!only_active || Some(w.doc_uid) == doc)).map(|w| w.id).collect();
+    if let Some(at) = windows.iter().position(|w| Some(*w) == active)
+        && let Some(first) = windows.get_mut(..=at)
+    {
+        first.rotate_right(1);
     }
+    Ok(json!({"arrange": arrange, "windows": windows}))
+}
+
+fn hide_window(s: &mut Session, p: &Json) -> Result<Json> {
+    let id = window_param(s, "view.hideWindow", p)?;
+    s.hide_window(id);
     ok()
 }
 
 fn unhide_window(s: &mut Session, p: &Json) -> Result<Json> {
-    let i = u32_param(p, "index").map(|v| v as usize).or_else(|| s.hidden_windows.last().copied());
-    if let Some(i) = i {
-        s.hidden_windows.retain(|x| *x != i);
-        s.set_active(i);
+    let id = if p.get("window").is_some_and(|v| !v.is_null()) || p.get("doc").is_some_and(|v| !v.is_null()) {
+        Some(window_param(s, "view.unhideWindow", p)?)
+    } else if let Some(i) = u32_param(p, "index") {
+        // A workbook's position in the document list.
+        let uid = s.documents().get(i as usize).map(|d| d.uid).ok_or_else(|| bad("view.unhideWindow", "no such window"))?;
+        s.windows().iter().filter(|w| w.doc_uid == uid && w.hidden).map(|w| w.id).next_back().or_else(|| s.doc_window(uid))
+    } else {
+        s.last_hidden_window()
+    };
+    if let Some(id) = id {
+        s.unhide_window(id);
     }
     ok()
 }
 
-fn switch_windows(s: &mut Session, _: &Json) -> Result<Json> {
-    Ok(Json::Array(
-        s.documents()
-            .iter()
-            .enumerate()
-            .map(|(i, d)| json!({"index": i, "title": d.display_title(), "active": i == s.active_index(), "hidden": s.hidden_windows.contains(&i)}))
-            .collect(),
-    ))
+fn switch_windows(s: &mut Session, p: &Json) -> Result<Json> {
+    if p.get("window").is_some_and(|v| !v.is_null()) || p.get("doc").is_some_and(|v| !v.is_null()) {
+        let id = window_param(s, "view.switchWindows", p)?;
+        s.unhide_window(id);
+    }
+    Ok(s.window_list())
 }
 
 fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
     let r = str_param(p, "range").and_then(RangeRef::parse).ok_or_else(|| bad("table.resize", "missing `range`"))?;
     let d = s.doc()?;
-    let si = d.wb.active_sheet;
+    let si = d.wb.active_sheet();
     let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
     let ti = match str_param(p, "table") {
         Some(n) => sh.tables.iter().position(|t| t.name.eq_ignore_ascii_case(n)),
@@ -941,7 +981,7 @@ fn from_csv(s: &mut Session, p: &Json) -> Result<Json> {
         return Err(EngineError::Other("Nothing to import.".into()));
     }
     let name = str_param(p, "sheet").map(str::to_string).or_else(|| {
-        str_param(p, "path").and_then(|x| std::path::Path::new(x).file_stem().and_then(|f| f.to_str()).map(|f| f.chars().take(31).collect()))
+        str_param(p, "path").and_then(|x| std::path::Path::new(x).file_stem().and_then(std::ffi::OsStr::to_str).map(|f| f.chars().take(31).collect()))
     });
     let r = s.execute("home.insertSheet", json!({"name": name})).or_else(|_| s.execute("home.insertSheet", json!({})))?;
     let w = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
@@ -957,7 +997,7 @@ fn from_table_range(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
     let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
     let r = if r.is_single() { crate::selection::current_region(sh, r.start) } else { r };
-    let text = crate::display::range_text(&d.wb, d.wb.active_sheet, r);
+    let text = crate::display::range_text(&d.wb, d.wb.active_sheet(), r);
     from_csv(s, &json!({"text": text, "delimiter": "\t", "sheet": format!("{} (2)", sh.name).chars().take(31).collect::<String>()}))
 }
 
@@ -1036,7 +1076,7 @@ fn denied_script_step(id: &str, params: &Json) -> Option<String> {
     }
     // Scripts are scoped to their workbook: a step that switches the active window would
     // point every later step at another open document, so those are refused too.
-    if id.starts_with("window.") {
+    if id.starts_with("window.") || matches!(id, "view.switchWindows" | "view.newWindow" | "view.hideWindow" | "view.unhideWindow") {
         return Some(format!("scripts can't run `{id}`: it reaches outside the workbook"));
     }
     if params.get("path").is_some() {
@@ -1207,7 +1247,7 @@ fn theme_fonts(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn background(s: &mut Session, p: &Json) -> Result<Json> {
     if bool_param(p, "clear").unwrap_or(false) {
-        let si = s.doc()?.wb.active_sheet;
+        let si = s.doc()?.wb.active_sheet();
         return edit(s, |cx| {
             cx.sheet_mut(si)?.images.retain(|i| i.alt != "Sheet background");
             Ok(Json::Null)
@@ -1300,7 +1340,7 @@ fn watch_window(s: &mut Session, p: &Json) -> Result<Json> {
         .iter()
         .map(|w| {
             let (sheet, body) = split_sheet(w);
-            let si = sheet.and_then(|n| d.wb.sheet_index(&n)).unwrap_or(d.wb.active_sheet);
+            let si = sheet.and_then(|n| d.wb.sheet_index(&n)).unwrap_or(d.wb.active_sheet());
             let c = CellRef::parse(body).unwrap_or_default();
             let sh = d.wb.sheet(si);
             json!({"cell": w, "value": sh.map(|s| s.value(c).display()), "formula": sh.and_then(|s| s.cell(c)).and_then(|x| x.formula.as_ref()).map(|f| format!("={}", f.text))})

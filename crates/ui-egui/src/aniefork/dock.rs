@@ -76,11 +76,11 @@ pub const GONE: &str = "This panel stopped: what showed it has closed. GridCraft
 pub const GUTTER: f32 = 6.0;
 
 fn id() -> egui::Id {
-    egui::Id::new("aniefork.dock")
+    egui::Id::unique("aniefork.dock")
 }
 
 fn host_id() -> egui::Id {
-    egui::Id::new("aniefork.dock.host")
+    egui::Id::unique("aniefork.dock.host")
 }
 
 /// The shell says it has a web view to show docked panels in. Called once, when it starts.

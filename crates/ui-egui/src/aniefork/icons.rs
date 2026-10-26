@@ -103,7 +103,7 @@ pub(super) fn badge(ui: &mut Ui, name: &str) -> Response {
     ui.painter().rect_filled(rect, 3.0, look.fill);
     ui.painter().galley(rect.center() - words.size() / 2.0, words, look.text);
     // It is read as its name, not as the capitals it is drawn in.
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, name));
     response
 }
 
@@ -127,7 +127,7 @@ pub(super) fn big_button(ui: &mut Ui, glyph: Glyph, label: &str, tip: &str) -> R
         ui.painter().galley(pos2(rect.center().x - line.size().x / 2.0, y - line.size().y / 2.0), line.clone(), t.text);
     }
     // Screen readers and tests find a button by its name, as they find upstream's.
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.replace('\n', " ")));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label.replace('\n', " ")));
     response.on_hover_text(language.tr(tip))
 }
 

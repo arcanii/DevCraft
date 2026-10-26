@@ -226,7 +226,7 @@ pub(super) struct State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("aniefork.development.state")
+    egui::Id::unique("aniefork.development.state")
 }
 
 /// The value that marks a dialog as already drawn: one without it has just been opened.

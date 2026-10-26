@@ -111,7 +111,7 @@ const HIDE: &str = "Hide the selection while another window is active";
 const HIDE_HINT: &str = "As Excel does: the outline, the shading of a range and the fill handle come back when you return to GridCraft";
 
 fn draft_id() -> egui::Id {
-    egui::Id::new("aniefork.options.userName")
+    egui::Id::unique("aniefork.options.userName")
 }
 
 /// Hook of upstream's Options page: the fork's settings, at the end of its General section. Like

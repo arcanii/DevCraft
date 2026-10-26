@@ -101,7 +101,7 @@ fn cell_arg(s: &Session, p: &Json, key: &str, cmd: &str) -> Result<(usize, CellR
     let d = s.doc()?;
     let t = str_param(p, key).ok_or_else(|| bad(cmd, format!("missing `{key}`")))?;
     let (sh, body) = split_sheet(t);
-    let si = sheet_named(&d.wb, sh, d.wb.active_sheet, cmd)?;
+    let si = sheet_named(&d.wb, sh, d.wb.active_sheet(), cmd)?;
     let c = CellRef::parse(body.trim()).ok_or_else(|| bad(cmd, format!("`{key}` is not a cell: `{t}`")))?;
     Ok((si, c))
 }
@@ -110,7 +110,7 @@ fn cell_arg(s: &Session, p: &Json, key: &str, cmd: &str) -> Result<(usize, CellR
 /// are trimmed to the used range.
 pub(crate) fn parse_range(wb: &Workbook, t: &str, cmd: &str) -> Result<(usize, RangeRef)> {
     let (sh, body) = split_sheet(t);
-    let si = sheet_named(wb, sh, wb.active_sheet, cmd)?;
+    let si = sheet_named(wb, sh, wb.active_sheet(), cmd)?;
     let r = RangeRef::parse(body.trim()).ok_or_else(|| bad(cmd, format!("not a range: `{t}`")))?;
     Ok((si, trim_to_used(wb, si, r)))
 }
@@ -152,7 +152,7 @@ fn cell_list(wb: &Workbook, t: &str, cmd: &str, cap: usize) -> Result<(usize, Ve
             return Err(bad(cmd, format!("too many cells (at most {cap})")));
         }
     }
-    Ok((sheet.unwrap_or(wb.active_sheet), out))
+    Ok((sheet.unwrap_or(wb.active_sheet()), out))
 }
 
 /// What a JSON value typed into a cell is, as a constant.
@@ -525,7 +525,7 @@ fn scenario_delete(s: &mut Session, p: &Json) -> Result<Json> {
 fn scenario_summary(s: &mut Session, p: &Json) -> Result<Json> {
     const CMD: &str = "data.scenarioSummary";
     let d = s.doc()?;
-    let si = d.wb.active_sheet;
+    let si = d.wb.active_sheet();
     let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
     let scenarios: Vec<Scenario> = load_scenarios(&d.wb).into_iter().filter(|x| x.sheet.eq_ignore_ascii_case(&sh.name)).collect();
     if scenarios.is_empty() {
@@ -799,7 +799,7 @@ fn advanced_filter(s: &mut Session, p: &Json) -> Result<Json> {
         Some(t) => parse_range(&d.wb, t, CMD)?,
         None => {
             let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
-            (d.wb.active_sheet, crate::selection::current_region(sh, d.selection.active))
+            (d.wb.active_sheet(), crate::selection::current_region(sh, d.selection.active))
         }
     };
     let criteria = str_param(p, "criteria").filter(|t| !t.trim().is_empty()).map(|t| parse_range(&d.wb, t, CMD)).transpose()?;
@@ -1024,7 +1024,7 @@ fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
             let (si, r) = parse_range(&d.wb, t, CMD)?;
             (si, r.start)
         }
-        None => (d.wb.active_sheet, d.selection.active),
+        None => (d.wb.active_sheet(), d.selection.active),
     };
     let mut row_keys: Vec<Key> = Vec::new();
     let mut col_keys: Vec<Key> = Vec::new();
@@ -1146,7 +1146,7 @@ mod tests {
     fn v(s: &Session, a: &str) -> Value {
         let d = s.doc().unwrap();
         let (sh, body) = super::split_sheet(a);
-        let si = sh.map(|n| d.wb.sheet_index(&n).unwrap()).unwrap_or(d.wb.active_sheet);
+        let si = sh.map(|n| d.wb.sheet_index(&n).unwrap()).unwrap_or(d.wb.active_sheet());
         d.wb.sheet(si).unwrap().value(CellRef::parse(body).unwrap())
     }
     fn n(s: &Session, a: &str) -> f64 {

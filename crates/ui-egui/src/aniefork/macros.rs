@@ -115,7 +115,7 @@ pub fn report(app: &SheetApp, p: &Json) -> Result<Json, String> {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("aniefork.macros.selected")
+    egui::Id::unique("aniefork.macros.selected")
 }
 
 /// What the dialog's values report when it opens. The window doesn't work from them.

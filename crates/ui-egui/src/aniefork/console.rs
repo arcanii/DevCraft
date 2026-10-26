@@ -154,7 +154,7 @@ struct State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("aniefork.console.state")
+    egui::Id::unique("aniefork.console.state")
 }
 
 /// How long ago, in a few words.
@@ -368,6 +368,11 @@ mod tests {
         assert_eq!(h.state().dialog.as_ref().unwrap().values["project"], json!(other));
     }
 
+    /// The console's Clear: the lowest on screen, as the ribbon's Home › Clear has the name too.
+    fn clear_button<'a>(h: &'a egui_kittest::Harness<'static, SheetApp>) -> egui_kittest::Node<'a> {
+        h.get_all_by_label("Clear").max_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap()
+    }
+
     #[test]
     fn clearing_the_console_is_for_the_person_at_the_screen() {
         console().push("clean-data", "clean.py", Kind::Printed, "something a project did");
@@ -380,7 +385,7 @@ mod tests {
         h.run_steps(2);
         h.get_by_label("Copied.");
         // The person at the screen clears it.
-        h.get_by_label("Clear").click();
+        clear_button(&h).click();
         h.run_steps(3);
         assert_eq!(console().counts(), (1, 0));
         h.get_by_label(EMPTY);
@@ -389,7 +394,7 @@ mod tests {
         console().push("clean-data", "panel", Kind::Log, "what a project did next");
         h.run_steps(2);
         crate::aniefork::projects::tests::drive(&mut h);
-        h.get_by_label("Clear").click();
+        clear_button(&h).click();
         h.run_steps(2);
         assert_eq!(console().counts(), (2, 1), "nothing was cleared");
         h.get_by_label(presence::BY_HAND);

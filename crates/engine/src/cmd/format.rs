@@ -1027,7 +1027,7 @@ fn line_targets(s: &Session, p: &Json, rows: bool) -> Result<(usize, Vec<(u32, u
         return Ok((sheet, lines));
     }
     let d = s.doc()?;
-    if sheet != d.wb.active_sheet {
+    if sheet != d.wb.active_sheet() {
         return Err(bad(key, format!("missing `{key}`: the selection is on the active sheet")));
     }
     Ok((sheet, d.selection.ranges.iter().map(|r| if rows { (r.start.row, r.end.row) } else { (r.start.col, r.end.col) }).collect()))

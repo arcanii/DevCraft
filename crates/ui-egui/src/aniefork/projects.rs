@@ -184,7 +184,7 @@ struct Job {
 }
 
 fn job_id() -> egui::Id {
-    egui::Id::new("aniefork.projects.job")
+    egui::Id::unique("aniefork.projects.job")
 }
 
 /// The current selection, as the data a script is handed: `{range, sheet, rows}`.
@@ -559,7 +559,7 @@ struct State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("aniefork.projects.state")
+    egui::Id::unique("aniefork.projects.state")
 }
 
 /// The value that marks a dialog as already drawn: one without it has just been opened.

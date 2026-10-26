@@ -2,6 +2,14 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-26: upstream `f6b0cec` (0.12.1) merged and pushed** on the owner's word. Seven
+conflicts, the hooks kept. Upstream's new **self-updater is held back** in the fork: it would
+install GridCraft over DevCraft, so the check at start is taken out and Check for Updates… says
+so (`aniefork::about::no_updates`). Window titles now go through `doc_windows.rs` too. On a
+right-to-left sheet the cell editor keeps upstream's width. **Two upstream tests fail on this Mac
+for want of craft-fonts** (glyphs "ẞ" and "ẻ"), as they do on upstream's code here. The log entry
+has the rest.
+
 **2026-10-25: upstream `17b9f6f` merged and pushed** on the owner's word: 163 commits, no
 release. Two conflicts (the ribbon's new scroll area beside the Developer arm; the cell editor,
 where upstream's new `editor_width` is now unused and allowed so, in the hooks table). **On a

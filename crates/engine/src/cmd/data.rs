@@ -167,7 +167,7 @@ fn data_target(s: &Session, p: &Json, cmd: &str) -> Result<(usize, RangeRef)> {
     {
         return Err(bad(cmd, format!("`{t}` names a sheet other than `sheet`")));
     }
-    if sheet != d.wb.active_sheet && p.get("range").is_none() {
+    if sheet != d.wb.active_sheet() && p.get("range").is_none() {
         return Err(bad(cmd, "missing `range`: the selection is on the active sheet"));
     }
     Ok((sheet, data_range(s, p)?))
@@ -219,7 +219,7 @@ fn sort_target(s: &Session, p: &Json) -> Result<(usize, RangeRef)> {
     {
         return Err(bad("data.sort", format!("`{t}` names a sheet other than `sheet`")));
     }
-    if sheet != d.wb.active_sheet && p.get("range").is_none() {
+    if sheet != d.wb.active_sheet() && p.get("range").is_none() {
         return Err(bad("data.sort", "missing `range`: the selection is on the active sheet"));
     }
     Ok((sheet, data_range(s, p)?))
@@ -511,7 +511,7 @@ fn toggle_filter(s: &mut Session, p: &Json) -> Result<Json> {
     let (sheet, r) = data_target(s, p, "data.filter")?;
     super::refuse_unless_allowed(s, sheet, "Filtering", |p| p.autofilter)?;
     // The active cell belongs to the active sheet: on another sheet the table is the one at `range`.
-    let at = if sheet == s.doc()?.wb.active_sheet { s.doc()?.selection.active } else { r.start };
+    let at = if sheet == s.doc()?.wb.active_sheet() { s.doc()?.selection.active } else { r.start };
     let has = s.doc()?.wb.sheet(sheet).is_some_and(|sh| sh.autofilter.is_some());
     let in_table = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.table_at(at).map(|t| t.name.clone()));
     if let Some(name) = in_table {
@@ -563,7 +563,7 @@ fn install_filter(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
-    let sheet = s.doc()?.wb.active_sheet;
+    let sheet = s.doc()?.wb.active_sheet();
     super::refuse_unless_allowed(s, sheet, "Filtering", |p| p.autofilter)?;
     let Some(sh) = s.doc()?.wb.sheet(sheet) else { return Err(EngineError::NoDocument) };
     let af = match &sh.autofilter {
@@ -768,7 +768,7 @@ pub(crate) fn apply_filter(wb: &mut Workbook, sheet: usize) {
 }
 
 fn clear_filter(s: &mut Session, _: &Json) -> Result<Json> {
-    let sheet = s.doc()?.wb.active_sheet;
+    let sheet = s.doc()?.wb.active_sheet();
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
         if let Some(a) = sh.autofilter.as_mut() {
@@ -781,7 +781,7 @@ fn clear_filter(s: &mut Session, _: &Json) -> Result<Json> {
 }
 
 fn reapply(s: &mut Session, _: &Json) -> Result<Json> {
-    let sheet = s.doc()?.wb.active_sheet;
+    let sheet = s.doc()?.wb.active_sheet();
     edit(s, |cx| {
         apply_filter(&mut cx.wb, sheet);
         cx.structural = true;
@@ -1285,7 +1285,7 @@ fn validate_cmd(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
     let at = cell_param(s, p, "cell")?.unwrap_or(d.selection.active);
     let input = str_param(p, "input").unwrap_or("");
-    match check_validation(&d.wb, d.wb.active_sheet, at, input) {
+    match check_validation(&d.wb, d.wb.active_sheet(), at, input) {
         None => Ok(json!({"ok": true})),
         Some((dv, msg)) => Ok(json!({"ok": false, "message": msg, "title": dv.error_title, "style": format!("{:?}", dv.error_style)})),
     }
@@ -1293,7 +1293,7 @@ fn validate_cmd(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn circle_invalid(s: &mut Session, _: &Json) -> Result<Json> {
     let d = s.doc()?;
-    let sheet = d.wb.active_sheet;
+    let sheet = d.wb.active_sheet();
     let Some(sh) = d.wb.sheet(sheet) else { return Err(EngineError::NoDocument) };
     let mut bad_cells = Vec::new();
     for dv in &sh.validations {
@@ -1332,7 +1332,7 @@ fn outline_lines(s: &Session, p: &Json) -> Result<(bool, u32, u32)> {
 fn group(s: &mut Session, p: &Json, on: bool) -> Result<Json> {
     let si = target_sheet(s, p)?;
     // The selection belongs to the active sheet, so another sheet needs its lines.
-    if si != s.doc()?.wb.active_sheet && p.get("rows").is_none() && p.get("cols").is_none() {
+    if si != s.doc()?.wb.active_sheet() && p.get("rows").is_none() && p.get("cols").is_none() {
         return Err(bad(if on { "data.group" } else { "data.ungroup" }, "missing `rows` or `cols`: the selection is on the active sheet"));
     }
     let (rows, a, b) = outline_lines(s, p)?;
@@ -1454,6 +1454,34 @@ fn show_levels(s: &mut Session, p: &Json) -> Result<Json> {
 
 /// Data ▸ Outline ▸ Settings: whether summary rows sit below their detail and summary columns
 /// right of it. A changed direction moves each collapsed group's mark (+) to its new summary line.
+/// Moves the collapsed marks of a line axis to the summary line on its new side (`on` is the new
+/// setting, `was_before` the old one). A line that nested groups share keeps its mark on the outermost
+/// group whose detail is all hidden, or the outermost when none is.
+fn move_marks(map: &mut std::collections::BTreeMap<u32, LineInfo>, was_before: bool, on: bool) {
+    let mut marked: Vec<outline::OutlineGroup> =
+        outline::groups_with(map, was_before).into_iter().filter(|g| g.has_summary() && map.get(&g.summary()).is_some_and(|e| e.collapsed)).collect();
+    // A mark on a line that nested groups share moves with the outermost of them whose
+    // detail is all hidden, or with the outermost when none is.
+    let mut owner: std::collections::BTreeMap<u32, (bool, u8)> = std::collections::BTreeMap::new();
+    for g in &marked {
+        let key = (!g.collapsed, g.level);
+        let best = owner.entry(g.summary()).or_insert(key);
+        *best = (*best).min(key);
+    }
+    marked.retain(|g| owner.get(&g.summary()) == Some(&(!g.collapsed, g.level)));
+    for g in &marked {
+        if let Some(e) = map.get_mut(&g.summary()) {
+            e.collapsed = false;
+        }
+    }
+    for g in marked {
+        let g = outline::OutlineGroup { summary_before: !on, ..g };
+        if g.has_summary() {
+            map.entry(g.summary()).or_default().collapsed = true;
+        }
+    }
+}
+
 fn outline_settings(s: &mut Session, p: &Json) -> Result<Json> {
     let si = target_sheet(s, p)?;
     edit(s, |cx| {
@@ -1469,31 +1497,7 @@ fn outline_settings(s: &mut Session, p: &Json) -> Result<Json> {
             if was_before != on {
                 continue;
             }
-            let map = if rows { &mut sh.rows } else { &mut sh.cols };
-            let mut marked: Vec<outline::OutlineGroup> = outline::groups_with(map, was_before)
-                .into_iter()
-                .filter(|g| g.has_summary() && map.get(&g.summary()).is_some_and(|e| e.collapsed))
-                .collect();
-            // A mark on a line that nested groups share moves with the outermost of them whose
-            // detail is all hidden, or with the outermost when none is.
-            let mut owner: std::collections::BTreeMap<u32, (bool, u8)> = std::collections::BTreeMap::new();
-            for g in &marked {
-                let key = (!g.collapsed, g.level);
-                let best = owner.entry(g.summary()).or_insert(key);
-                *best = (*best).min(key);
-            }
-            marked.retain(|g| owner.get(&g.summary()) == Some(&(!g.collapsed, g.level)));
-            for g in &marked {
-                if let Some(e) = map.get_mut(&g.summary()) {
-                    e.collapsed = false;
-                }
-            }
-            for g in marked {
-                let g = outline::OutlineGroup { summary_before: !on, ..g };
-                if g.has_summary() {
-                    map.entry(g.summary()).or_default().collapsed = true;
-                }
-            }
+            move_marks(if rows { &mut sh.rows } else { &mut sh.cols }, was_before, on);
         }
         Ok(json!({"summaryBelow": sh.summary_below, "summaryRight": sh.summary_right}))
     })

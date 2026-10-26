@@ -28,7 +28,7 @@ struct Watch {
 }
 
 fn id() -> egui::Id {
-    egui::Id::new("aniefork.presence")
+    egui::Id::unique("aniefork.presence")
 }
 
 /// Notes whether the control channel is putting input into the window. Called once a frame,

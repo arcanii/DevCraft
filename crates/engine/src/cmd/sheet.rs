@@ -7,7 +7,10 @@ use gridcraft_formula::adjust::{Axis, Edit};
 use gridcraft_model::{Anchor, AnchorMode, Sheet, Visibility};
 use serde_json::{Value as Json, json};
 
-use super::*;
+use super::{
+    CommandSpec, Ctx, EngineError, PROTECTED, Result, Session, bad, bool_param, cell_param_on, cmd, edit, has_clipboard, has_doc, ok, parse_lines,
+    str_param, target_range, target_sheet, u32_param,
+};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -203,11 +206,13 @@ fn shift_sheet_features(sh: &mut Sheet, axis: Axis, at: u32, count: u32, insert:
     for (o, a) in sh.shapes.iter_mut().zip(new_shapes) {
         o.anchor = a;
     }
-    for sp in sh.sparklines.iter_mut() {
-        if let Some(c) = map_cell(sp.cell) {
+    sh.sparklines.retain_mut(|sp| match map_cell(sp.cell) {
+        Some(c) => {
             sp.cell = c;
+            true
         }
-    }
+        None => false,
+    });
     if let Some(pa) = sh.print.print_area {
         sh.print.print_area = map_range(pa);
     }
@@ -270,6 +275,29 @@ fn cancel_copy_mode(s: &mut Session) {
     }
 }
 
+fn inherit_line_format(sh: &mut Sheet, axis: Axis, at: u32, count: u32) {
+    if at == 0 {
+        return;
+    }
+    let prev = if axis == Axis::Rows { sh.rows.get(&(at - 1)).copied() } else { sh.cols.get(&(at - 1)).copied() };
+    if let Some(info) = prev {
+        for i in at..at + count {
+            let map = if axis == Axis::Rows { &mut sh.rows } else { &mut sh.cols };
+            map.insert(i, gridcraft_model::LineInfo { hidden: false, outline: 0, collapsed: false, ..info });
+        }
+    }
+}
+
+fn check_push_off_sheet(s: &Session, sheet: usize, axis: Axis, at: u32, count: u32, limit: u32) -> Result<()> {
+    if let Some(u) = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.used_range()) {
+        let last = if axis == Axis::Rows { u.end.row } else { u.end.col };
+        if last >= at && last as u64 + count as u64 >= limit as u64 {
+            return Err(EngineError::Other("To prevent possible loss of data, Excel cannot shift nonblank cells off of the worksheet.".into()));
+        }
+    }
+    Ok(())
+}
+
 fn insert_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
     let (at, count) = lines(s, p, axis)?;
     let limit = if axis == Axis::Rows { MAX_ROWS } else { MAX_COLS };
@@ -279,13 +307,7 @@ fn insert_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
     }
     check_lines_protection(s, p, axis, at, count, true)?;
     let sheet = target_sheet(s, p)?;
-    // Refuse to push data off the sheet.
-    if let Some(u) = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.used_range()) {
-        let last = if axis == Axis::Rows { u.end.row } else { u.end.col };
-        if last >= at && last as u64 + count as u64 >= limit as u64 {
-            return Err(EngineError::Other("To prevent possible loss of data, Excel cannot shift nonblank cells off of the worksheet.".into()));
-        }
-    }
+    check_push_off_sheet(s, sheet, axis, at, count, limit)?;
     let out = edit(s, |cx| {
         let name = cx.wb.sheet(sheet).map(|s| s.name.clone()).unwrap_or_default();
         cx.protection_checked = true;
@@ -297,15 +319,7 @@ fn insert_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
             }
             shift_sheet_features(sh, axis, at, count, true);
             // New lines take the format of the line before (Excel's "Format Same As Above").
-            if at > 0 {
-                let prev = if axis == Axis::Rows { sh.rows.get(&(at - 1)).copied() } else { sh.cols.get(&(at - 1)).copied() };
-                if let Some(info) = prev {
-                    for i in at..at + count {
-                        let map = if axis == Axis::Rows { &mut sh.rows } else { &mut sh.cols };
-                        map.insert(i, gridcraft_model::LineInfo { hidden: false, outline: 0, collapsed: false, ..info });
-                    }
-                }
-            }
+            inherit_line_format(sh, axis, at, count);
         }
         rewrite(&mut cx.wb, &name, &Edit::Insert { axis, at, count });
         cx.structural = true;
@@ -693,7 +707,7 @@ fn insert_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     let before = p.get("before").and_then(Json::as_u64).map(|v| v as usize);
     let idx = edit_doc(d, |cx| {
         // Excel inserts before the active sheet; the "+" button appends after it.
-        let at = before.unwrap_or(cx.wb.active_sheet + 1).min(cx.wb.sheets.len());
+        let at = before.unwrap_or(cx.wb.active_sheet() + 1).min(cx.wb.sheets.len());
         cx.wb.sheets.insert(at, Arc::new(Sheet::new(name.clone())));
         // Names scoped to later sheets shift.
         for n in cx.wb.names.iter_mut() {
@@ -703,7 +717,7 @@ fn insert_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 *sc += 1;
             }
         }
-        cx.wb.active_sheet = at;
+        cx.wb.set_active_sheet(at);
         *cx.sel = crate::Selection::default();
         cx.structural = true;
         Ok(at)
@@ -791,8 +805,8 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
         }
-        if cx.wb.active_sheet >= cx.wb.sheets.len() || cx.wb.active_sheet > i {
-            cx.wb.active_sheet = cx.wb.active_sheet.saturating_sub(1).min(cx.wb.sheets.len().saturating_sub(1));
+        if cx.wb.active_sheet() >= cx.wb.sheets.len() || cx.wb.active_sheet() > i {
+            cx.wb.set_active_sheet(cx.wb.active_sheet().saturating_sub(1).min(cx.wb.sheets.len().saturating_sub(1)));
         }
         *cx.sel = crate::Selection::default();
         cx.structural = true;
@@ -906,12 +920,12 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             }
             cx.wb.names.extend(copies);
             cx.wb.sheets.insert(at, Arc::new(sh));
-            cx.wb.active_sheet = at;
+            cx.wb.set_active_sheet(at);
         } else {
             let sh = cx.wb.sheets.remove(i);
             let at = to.min(n - 1);
             cx.wb.sheets.insert(at, sh);
-            cx.wb.active_sheet = at;
+            cx.wb.set_active_sheet(at);
             // Sheet-level names follow their sheet.
             for nm in cx.wb.names.iter_mut() {
                 if let Some(sc) = nm.scope.as_mut() {
@@ -948,8 +962,8 @@ fn hide_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     }
     edit(s, |cx| {
         cx.sheet_mut(i)?.visibility = Visibility::Hidden;
-        if cx.wb.active_sheet == i {
-            cx.wb.active_sheet = cx.wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0);
+        if cx.wb.active_sheet() == i {
+            cx.wb.set_active_sheet(cx.wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0));
         }
         Ok(Json::Null)
     })
@@ -970,7 +984,7 @@ fn unhide_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     let i = target_sheet(s, p)?;
     edit(s, |cx| {
         cx.sheet_mut(i)?.visibility = Visibility::Visible;
-        cx.wb.active_sheet = i;
+        cx.wb.set_active_sheet(i);
         Ok(Json::Null)
     })
 }
@@ -984,7 +998,7 @@ fn activate(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn step_sheet(s: &mut Session, dir: isize) -> Result<Json> {
     let d = s.doc()?;
-    let mut i = d.wb.active_sheet;
+    let mut i = d.wb.active_sheet();
     while let Some(next) = i.checked_add_signed(dir) {
         let Some(sheet) = d.wb.sheet(next) else { break };
         if sheet.visibility == Visibility::Visible {

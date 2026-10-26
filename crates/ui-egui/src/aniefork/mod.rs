@@ -90,6 +90,8 @@ pub fn run_command(app: &mut SheetApp, id: &str, p: &Json) -> Option<Result<Json
         "developer.console" => Some(console::report(p)),
         "developer.agents" => Some(Ok(agents::report())),
         "developer.macros" => Some(macros::report(app, p)),
+        // Upstream's updater would install GridCraft over the fork (see `about::no_updates`).
+        "app.checkForUpdates" | "help.checkForUpdates" => Some(about::no_updates(app)),
         _ => None,
     }
 }
