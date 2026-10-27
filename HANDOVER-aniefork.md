@@ -2,6 +2,11 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-28: upstream `11bb673` merged and pushed** on the owner's word: 15 commits, no
+conflict, every hook present. The fork's two combo boxes are `craft_ui::ComboBox`, as upstream's
+clippy now requires. Upstream's Windows installer installs into an `ArtCraft` folder: left as
+upstream's, since the fork builds no installer (in the log).
+
 **2026-10-27: upstream `45f5ab1` merged and pushed** on the owner's word: upstream's
 reorganisation (#2690) split `lib.rs`, `grid.rs`, `ribbon.rs`, `dialogs.rs` and `backstage.rs`
 into modules. Every hook was put back where its code now is, and the hooks table names the new

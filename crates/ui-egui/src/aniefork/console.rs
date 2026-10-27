@@ -208,7 +208,7 @@ pub fn ui(_app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, _open: &mut bo
     ui.horizontal(|ui| {
         let label = ui.label("Show");
         let current = if state.project.is_empty() { ALL } else { state.project.as_str() };
-        let list = egui::ComboBox::from_id_salt("aniefork_console_project").width(200.0).selected_text(current).show_ui(ui, |ui| {
+        let list = craft_ui::ComboBox::from_id_salt("aniefork_console_project").width(200.0).selected_text(current).show_ui(ui, |ui| {
             if ui.selectable_label(state.project.is_empty(), ALL).clicked() {
                 chosen = Some(String::new());
             }

@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-27, upstream `45f5ab1` (56 commits since the merge before, 54 of them not merges; no release: upstream's reorganisation into modules) |
+| Last merge of upstream | 2026-10-28, upstream `11bb673` (15 commits since the merge before, 12 of them not merges; no release) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -831,6 +831,28 @@ included.
 
 Newest first.
 
+- **2026-10-28 (merge of upstream `11bb673`):** On the owner's word ("Merge upstream main into
+  the fork's main, check the hooks, bring the fork crate's Cargo.lock entry up to date, run the
+  gate's steps, log it in ROADMAP-aniefork.md, then commit and push main to origin"). 15 commits
+  since the merge before, 12 of them not merges, no release (the workspace stays 0.12.1, and so
+  does the fork's crate in `Cargo.lock`): faster XLSX worksheet writing (with a benchmark), the
+  stacked chart types in Format Chart Area, dropdown menus that grow back after a search with no
+  matches, and the Windows installer's install-scope policy.
+  - **No conflict.** Every hook in the table was checked present, and upstream's update check
+    at start is still out of `main.rs`. Nothing came into `docs/brand/` or `ATTRIBUTION.md`. The
+    fork's mentions in upstream's code: 87, as before.
+  - **Left as upstream's, to see to before the fork publishes a Windows installer:** upstream's
+    installer (`packaging/windows/gridcraft.wxs`) now installs per user into an `ArtCraft`
+    folder. Like its links to getartcraft.com and the ArtCraft Discord, which it already had,
+    this carries upstream's marks. The fork builds no installer, so it is left as it is.
+  - **Upstream forbids `egui::ComboBox` now** (`clippy.toml`, `disallowed-types`: its menu can't
+    grow back while open, egui#5225). The fork's two, the console's project list and the Options
+    page's outline weight, are `craft_ui::ComboBox`, upstream's replacement with the same calls.
+  - Checked on the result, on macOS, step by step: fmt, clippy, nextest 0.9.150 (2,873 tests:
+    2,871 pass, 3 skipped, and the two that need craft-fonts' glyphs "ẞ" and "ẻ" fail here as on
+    upstream's own code; the console's and the Options page's 12 tests run again after the
+    combo-box change, and pass), `mac_menu_appkit` with `cargo test`, doctests, assets, layers,
+    wasm, parity, keytips.
 - **2026-10-27 (merge of upstream `45f5ab1`, upstream's reorganisation):** On the owner's word
   ("Merge upstream main into the fork's main, move the fork's hooks to where upstream's
   reorganisation put their code, check the hooks, bring the fork crate's Cargo.lock entry up to

@@ -153,7 +153,7 @@ pub fn page(app: &mut SheetApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let label = ui.label(lang.tr(OUTLINE));
         let list =
-            egui::ComboBox::from_id_salt("aniefork_selection_outline").width(160.0).selected_text(lang.tr(current.label())).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("aniefork_selection_outline").width(160.0).selected_text(lang.tr(current.label())).show_ui(ui, |ui| {
                 for outline in Outline::ALL {
                     if ui.selectable_label(outline == current, lang.tr(outline.label())).clicked() {
                         chosen = Some(outline);
