@@ -8,6 +8,7 @@ use wasm_bindgen::JsValue;
 const CANVAS_ID: &str = "gridcraft_canvas";
 const LOADING_ID: &str = "gridcraft_loading";
 
+/// Starts the eframe web runner for the GridCraft canvas. It adjusts the WebGPU device limits to the adapter's, optionally selects the WebGL backend from the query string, and builds the shell with the requested sample or host bridge, browser language rules, stored preferences and the loading/error page state.
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     wasm_bindgen_futures::spawn_local(async {
@@ -71,8 +72,10 @@ pub fn start() {
                             _ => {}
                         }
                     }
-                    // Follow the browser's language, except a CJK one: the web build has no system
-                    // CJK fonts (none are bundled), so that interface would render as tofu.
+                    // Follow the browser's language, except a CJK one. CJK coverage comes from
+                    // optional craft-fonts input, not a guaranteed web font set, so a CJK browser
+                    // cannot be assumed to render localized labels without tofu. Users can still
+                    // choose a language explicitly.
                     let browser = gridcraft_ui_egui::i18n::Language::system();
                     if !matches!(
                         browser,
@@ -167,8 +170,9 @@ impl eframe::App for WebShell {
         }
     }
 
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.app.raw_input_hook(raw);
+    /// Forwards a browser frame's raw input to the shared app before eframe handles it.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.app.raw_input_hook(ctx, raw);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

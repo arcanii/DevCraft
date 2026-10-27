@@ -244,8 +244,8 @@ pub fn write_xlsx_named(wb: &Workbook, kind: XlsxKind, book_name: Option<&str>) 
 
     // Which sheet is active (must be visible), and at least one visible sheet.
     let any_visible = wb.sheets.iter().any(|s| s.visibility == Visibility::Visible);
-    let active = if wb.sheets.get(wb.active_sheet).is_some_and(|s| s.visibility == Visibility::Visible) {
-        wb.active_sheet
+    let active = if wb.sheets.get(wb.active_sheet()).is_some_and(|s| s.visibility == Visibility::Visible) {
+        wb.active_sheet()
     } else {
         wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0)
     };
