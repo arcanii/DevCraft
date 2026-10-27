@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-26, upstream `f6b0cec` (97 commits since the merge before, 53 of them not merges: releases 0.12.0 and 0.12.1) |
+| Last merge of upstream | 2026-10-27, upstream `45f5ab1` (56 commits since the merge before, 54 of them not merges; no release: upstream's reorganisation into modules) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -702,16 +702,17 @@ still there:
 |---|---|
 | `crates/ui-egui/src/lib.rs` | `pub mod aniefork;` |
 | `crates/ui-egui/src/lib.rs`, `UiState` and its `Default` | the field `aniefork: aniefork::Prefs`, flattened (`#[serde(flatten)]`), after `autocomplete` (upstream's, which follows `animations`): every preference of the fork's, in one field |
-| `crates/ui-egui/src/grid.rs`, `paint_selection`, first thing | `let look = crate::aniefork::selection::look(app, p.ctx());`, and then `look.shown` added to four conditions (the fill's `keep`, the outline, the active cell's own stroke, the fill handle) |
-| `crates/ui-egui/src/grid.rs`, `paint_selection`, the outline | `crate::aniefork::selection::paint_outline(p, outline, look.width, t.sel_border);` in place of upstream's loop over `outline_bands`. The hook draws with upstream's `outline_bands` itself: nothing else in the app calls it, so if the hook stopped using it the build would fail on an unused function |
-| `crates/ui-egui/src/grid.rs`, `paint_selection`, the fill handle | `crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);` in place of upstream's three lines that size and paint it |
-| `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's size | `let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);` in place of upstream's `w` and `h`, and `Rect::from_min_size(rect.min, grown)` for `erect`. On a right-to-left sheet upstream's size is kept (`editor_width`): the editor grows leftwards there but its text starts at its left edge, so grown a whole cell the text would sit over the next cell, not its own (upstream's `frozen_column_editor_paints_in_both_panes_on_a_right_to_left_sheet` found it, 2026-10-26) |
-| `crates/ui-egui/src/grid.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
-| `crates/ui-egui/src/grid.rs`, `show`, after `vertical_scrollbar(...)` | `crate::aniefork::scrollbar::above_the_track(ui.painter(), track_x, available.top(), geo.cells.top(), geo.cells.top() + geo.frozen_h, &t);` paints the scrollbar's column beside the headings and frozen rows |
-| `crates/ui-egui/src/lib.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
-| `crates/ui-egui/src/lib.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
-| `crates/ui-egui/src/lib.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls projects' panels made, and sees to what agents asked of the Development server |
-| `crates/ui-egui/src/lib.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a project's docked panel, before the grid takes what is left |
+| `crates/ui-egui/src/grid/selection.rs`, `paint_selection`, first thing | `let look = crate::aniefork::selection::look(app, p.ctx());`, and then `look.shown` added to four conditions (the fill's `keep`, the outline, the active cell's own stroke, the fill handle) |
+| `crates/ui-egui/src/grid/selection.rs`, `paint_selection`, the outline | `crate::aniefork::selection::paint_outline(p, outline, look.width, t.sel_border);` in place of upstream's loop over `outline_bands`. The hook draws with upstream's `outline_bands` itself: nothing else in the app calls it, so if the hook stopped using it the build would fail on an unused function |
+| `crates/ui-egui/src/grid/selection.rs`, `paint_selection`, the fill handle | `crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);` in place of upstream's three lines that size and paint it |
+| `crates/ui-egui/src/grid.rs`, the module's re-exports | `pub(crate) use selection::outline_bands;`, with a comment marked (aniefork): since upstream's reorganisation (#2690, 2026-10-26) `outline_bands` is in the private module `grid::selection`, and the fork's `paint_outline` draws with it |
+| `crates/ui-egui/src/grid/editor.rs`, `in_cell_editor`, the editor's size | `let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);` in place of upstream's `w` and `h`, and `Rect::from_min_size(rect.min, grown)` for `erect`. On a right-to-left sheet upstream's size is kept (`editor_width`): the editor grows leftwards there but its text starts at its left edge, so grown a whole cell the text would sit over the next cell, not its own (upstream's `frozen_column_editor_paints_in_both_panes_on_a_right_to_left_sheet` found it, 2026-10-26) |
+| `crates/ui-egui/src/grid/editor.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
+| `crates/ui-egui/src/grid/show.rs`, `show`, after `vertical_scrollbar(...)` | `crate::aniefork::scrollbar::above_the_track(ui.painter(), track_x, available.top(), geo.cells.top(), geo.cells.top() + geo.frozen_h, &t);` paints the scrollbar's column beside the headings and frozen rows |
+| `crates/ui-egui/src/services.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
+| `crates/ui-egui/src/app/commands.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
+| `crates/ui-egui/src/app.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls projects' panels made, and sees to what agents asked of the Development server |
+| `crates/ui-egui/src/app.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a project's docked panel, before the grid takes what is left |
 | `apps/gridcraft/src/main.rs`, the `mod` lines | `mod aniefork;`: the fork's part of the shell |
 | `apps/gridcraft/src/main.rs`, `App::ui`, after `self.1.show(&mut self.0, ui);` (upstream's `DocWindows`, which draws the app since 0.12; `self.0.ui(ui)` before) | `aniefork::frame(&mut self.0, ui.ctx(), _frame);` puts the docked panel's web view in its place |
 | `apps/gridcraft/Cargo.toml`, the Windows and macOS dependencies | `wry = { version = "0.57", default-features = false }`: the system web view, under `cfg(any(target_os = "windows", target_os = "macos"))` |
@@ -720,25 +721,25 @@ still there:
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
 | `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
-| `crates/ui-egui/src/backstage.rs`, `options`, after the formula bar checkbox | `crate::aniefork::options_page(app, ui);` draws the fork's two settings |
+| `crates/ui-egui/src/backstage/options.rs`, `options`, after the formula bar checkbox | `crate::aniefork::options_page(app, ui);` draws the fork's two settings |
 | `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them |
-| `crates/ui-egui/src/dialogs.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
+| `crates/ui-egui/src/dialogs/show.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
 | `apps/gridcraft/src/main.rs`, `services()` | `confirm` is a native message dialog (`rfd::MessageDialog`, Yes/No) |
 | `xtask/src/layers.rs`, `TABLE` and `INTRA_LAYER_ORDER` | the crate `aniefork-dev` at layer 6, and the chain `["aniefork-dev", "ui-egui"]` so the UI crate may use it |
 | `crates/ui-egui/src/widgets.rs`, `message_box`, the title | `crate::aniefork::about::titled(&title)`: a message box's "GridCraft" is the application's name |
-| `crates/ui-egui/src/dialogs.rs`, `show`, the window's title | `app.ui.language.tr(&crate::aniefork::about::titled(&d.title))`: "About GridCraft" is "About DevCraft (GridCraft fork)" |
-| `crates/ui-egui/src/dialogs.rs`, `about`, the heading and version (upstream's: `ui.heading("GridCraft")` and "Version …") | `crate::aniefork::about::heading(ui)`: the name, and DevCraft's version beside GridCraft's |
-| `crates/ui-egui/src/ribbon.rs`, the title GridCraft draws in its title bar | `crate::aniefork::about::window_title(…)` around upstream's title |
-| `crates/ui-egui/src/ribbon.rs`, `automate`, the About button (upstream's label: "About\\nGridCraft") | `crate::aniefork::about::RIBBON_ABOUT` |
-| `crates/ui-egui/src/lib.rs`, `update_title` (called from `logic`), the window's title | `ViewportCommand::Title(aniefork::about::window_title(&title))`; used when the app has no native windows of its own (the desktop app has, below) |
-| `crates/ui-egui/src/lib.rs`, `lifecycle_tests::a_logic_only_tick_updates_the_title_once_per_change` | its expected titles go through `aniefork::about::window_title`, as the window's do |
+| `crates/ui-egui/src/dialogs/show.rs`, `show`, the window's title | `app.ui.language.tr(&crate::aniefork::about::titled(&d.title))`: "About GridCraft" is "About DevCraft (GridCraft fork)" |
+| `crates/ui-egui/src/dialogs/about.rs`, `about`, the heading and version (upstream's: `ui.heading("GridCraft")` and "Version …") | `crate::aniefork::about::heading(ui)`: the name, and DevCraft's version beside GridCraft's |
+| `crates/ui-egui/src/ribbon/title_bar.rs`, the title GridCraft draws in its title bar | `crate::aniefork::about::window_title(…)` around upstream's title |
+| `crates/ui-egui/src/ribbon/automate.rs`, `automate`, the About button (upstream's label: "About\\nGridCraft") | `crate::aniefork::about::RIBBON_ABOUT` |
+| `crates/ui-egui/src/app.rs`, `update_title` (called from `logic`), the window's title | `ViewportCommand::Title(aniefork::about::window_title(&title))`; used when the app has no native windows of its own (the desktop app has, below) |
+| `crates/ui-egui/src/app.rs`, `lifecycle_tests::a_logic_only_tick_updates_the_title_once_per_change` | its expected titles go through `aniefork::about::window_title`, as the window's do |
 | `crates/ui-egui/src/doc_windows.rs`, `window_title` | its title goes through `crate::aniefork::about::window_title`: upstream's desktop app gives each workbook window a native window since 0.12, titled here ("Book1", "Book1:2"), and `update_title` returns early |
 | `apps/gridcraft/src/main.rs`, after `app.watch_desktop_theme();` | upstream's `app.start_update_check();` taken out, with a comment marked (aniefork): upstream's updater (0.12, `craft_update`) looks for storytold/gridcraft's releases and offers to install one over the running program, which would replace the fork with GridCraft. Check for Updates… (`app.checkForUpdates`, `help.checkForUpdates`, the Automate tab's button and the macOS Help menu) is answered by `aniefork::run_command` (`about::no_updates`), which says so |
 | `apps/gridcraft/src/main.rs`, the viewport | `with_title(…::about::APP_NAME)` and `with_app_id(…::about::APP_ID)` in place of upstream's "GridCraft" and `ai.storyteller.gridcraft` |
 | `apps/gridcraft/src/native_menu.rs`, the application menu and its About item. macOS only | `…::about::APP_NAME` and `…::about::titled("About GridCraft")`; and `apps/gridcraft/tests/mac_menu_appkit.rs` expects that name |
 | `packaging/macos/Info.plist.in`, `CFBundleDisplayName` and `CFBundleName` | "DevCraft (GridCraft fork)" and "DevCraft" |
-| `crates/ui-egui/src/dialogs.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
+| `crates/ui-egui/src/dialogs/about.rs`, `about`, the last arm (upstream's is three lines: a label ending "Part of ArtCraft." and two links, to getartcraft.com and to its Discord) | `crate::aniefork::about::credits(ui)` in their place: what the fork is, the fork's page, "Based on GridCraft by the ArtCraft team." and upstream's repository. **This hook takes upstream's lines out**: after a conflict there, upstream's three lines go again |
 | `apps/gridcraft/src/native_menu.rs`, the Help menu's last two items (upstream's are "GridCraft on getartcraft.com" and "Join the ArtCraft Discord…"). macOS only | the two items of `gridcraft_ui_egui::aniefork::about::HELP_MENU` in their place: the fork's page and upstream's repository. **Never compiled here** (no Mac): a test in `about.rs` checks that the items have the shape that menu writes |
 | `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
 | `crates/ui-egui/tests/it/in_cell_editor_size.rs` (upstream's #1755; `tests/` until upstream gathered each crate's tests into one binary), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
@@ -757,7 +758,11 @@ To look before merging (none of this touches the working tree):
 ```sh
 git fetch upstream
 git log --oneline main..upstream/main
-git diff --stat main...upstream/main -- crates/ui-egui/src/lib.rs crates/ui-egui/src/grid.rs crates/ui-egui/src/control.rs crates/ui-egui/src/ribbon.rs
+git diff --stat main...upstream/main -- crates/ui-egui/src/lib.rs crates/ui-egui/src/app.rs \
+  crates/ui-egui/src/app crates/ui-egui/src/services.rs crates/ui-egui/src/grid.rs crates/ui-egui/src/grid \
+  crates/ui-egui/src/ribbon.rs crates/ui-egui/src/ribbon crates/ui-egui/src/dialogs.rs crates/ui-egui/src/dialogs \
+  crates/ui-egui/src/backstage crates/ui-egui/src/control.rs crates/ui-egui/src/widgets.rs crates/ui-egui/src/doc_windows.rs \
+  apps/gridcraft/src
 git merge-tree --write-tree --name-only main upstream/main
 ```
 
@@ -826,6 +831,31 @@ included.
 
 Newest first.
 
+- **2026-10-27 (merge of upstream `45f5ab1`, upstream's reorganisation):** On the owner's word
+  ("Merge upstream main into the fork's main, move the fork's hooks to where upstream's
+  reorganisation put their code, check the hooks, bring the fork crate's Cargo.lock entry up to
+  date, run the gate's steps, log it in ROADMAP-aniefork.md, then commit and push main to
+  origin"). 56 commits since the merge before, 54 of them not merges, no release (the workspace
+  stays 0.12.1, and so does the fork's crate in `Cargo.lock`). Most of them are upstream's
+  #2690, which splits the big files into modules: `lib.rs` into `app.rs`, `app/*`,
+  `services.rs` and others; `grid.rs` into `grid/*`; `ribbon.rs` into `ribbon/*`;
+  `dialogs.rs` into `dialogs/*`; `backstage.rs` into `backstage/*`; and the engine's
+  `cmd/data.rs`, `cmd/edit.rs` and `cmd/insert.rs` into folders.
+  - **Five conflicts** (`backstage.rs`, `dialogs.rs`, `grid.rs`, `lib.rs`, `ribbon.rs`), each
+    between a hook and code upstream moved. Each file was taken as upstream's and every hook
+    put back where its code now is, found by upstream's own lines (each matching once):
+    `backstage/options.rs`, `dialogs.rs`, `dialogs/show.rs`, `dialogs/about.rs`, `lib.rs`,
+    `services.rs`, `app.rs`, `app/commands.rs`, `ribbon.rs`, `ribbon/title_bar.rs`,
+    `ribbon/automate.rs`, `grid/show.rs`, `grid/selection.rs` and `grid/editor.rs`. The hooks
+    table names the new files.
+  - **One new hook:** `outline_bands` is now in the private module `grid::selection`, so
+    `grid.rs` re-exports it for the fork's outline (in the hooks table).
+  - Every hook in the table was checked present. Nothing came into `docs/brand/` or
+    `ATTRIBUTION.md`. The fork's mentions in upstream's code: 87.
+  - Checked on the result, on macOS, step by step: fmt, clippy, nextest 0.9.150 (2,865 tests:
+    2,863 pass, 3 skipped, and the two that need craft-fonts' glyphs "ẞ" and "ẻ" fail here as on
+    upstream's own code), `mac_menu_appkit` with `cargo test`, doctests, assets, layers, wasm,
+    parity, keytips.
 - **2026-10-26 (merge of upstream `f6b0cec`, GridCraft 0.12.1):** On the owner's word ("Merge
   upstream main into the fork's main, check the hooks, bring the fork crate's Cargo.lock entry
   to the new version, run the gate's steps, log it in ROADMAP-aniefork.md, then commit and push

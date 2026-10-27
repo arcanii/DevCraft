@@ -2,6 +2,12 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-27: upstream `45f5ab1` merged and pushed** on the owner's word: upstream's
+reorganisation (#2690) split `lib.rs`, `grid.rs`, `ribbon.rs`, `dialogs.rs` and `backstage.rs`
+into modules. Every hook was put back where its code now is, and the hooks table names the new
+files (and the sync procedure's list of them). One new hook: `grid.rs` re-exports
+`outline_bands`. Upstream now asks for cargo-nextest 0.9.150, which the owner installed.
+
 **2026-10-26: upstream `f6b0cec` (0.12.1) merged and pushed** on the owner's word. Seven
 conflicts, the hooks kept. Upstream's new **self-updater is held back** in the fork: it would
 install GridCraft over DevCraft, so the check at start is taken out and Check for Updates… says
