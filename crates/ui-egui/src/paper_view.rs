@@ -280,14 +280,14 @@ pub(crate) fn paint_headers_footers(app: &SheetApp, ui: &egui::Ui, p: &Painter, 
 pub(crate) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &Geo, sh: &Sheet, wb: &Workbook) {
     // Leaving the sheet or the view commits.
     if let Some(e) = &app.grid.hf_edit
-        && (e.sheet != wb.active_sheet || sh.view != SheetViewMode::PageLayout || geo.paper.is_none())
+        && (e.sheet != wb.active_sheet() || sh.view != SheetViewMode::PageLayout || geo.paper.is_none())
     {
         commit(app);
     }
     let Some(pg) = geo.paper.clone() else { return };
-    ruler_margins(app, ui, geo, &pg, sh, wb.active_sheet);
+    ruler_margins(app, ui, geo, &pg, sh, wb.active_sheet());
     if std::mem::take(&mut app.grid.hf_start) {
-        begin(app, wb.active_sheet, sh, (pg.data_rows.0, pg.data_cols.0), HfZone { footer: false, section: 1 });
+        begin(app, wb.active_sheet(), sh, (pg.data_rows.0, pg.data_cols.0), HfZone { footer: false, section: 1 });
     }
     if resp.clicked_by(egui::PointerButton::Primary)
         && let Some(p) = ui.input(|i| i.pointer.interact_pos())
@@ -295,7 +295,7 @@ pub(crate) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
         let (x, y) =
             (geo.scroll.x as f64 + ((p.x - geo.cells.left()) / geo.z) as f64, geo.scroll.y as f64 + ((p.y - geo.cells.top()) / geo.z) as f64);
         match pg.hf_zone_at(x, y) {
-            Some((page, zone)) if geo.cells.contains(p) => begin(app, wb.active_sheet, sh, page, zone),
+            Some((page, zone)) if geo.cells.contains(p) => begin(app, wb.active_sheet(), sh, page, zone),
             _ => {
                 // A click anywhere else ends the edit; the grid then handles the click.
                 if app.grid.hf_edit.is_some() {

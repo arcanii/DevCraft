@@ -2647,7 +2647,8 @@ fn keytip_wvr_() {
 fn keytip_ww_() {
     let mut h = harness(blank());
     sequence(&mut h, "WW", false);
-    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WW must run view.switchWindows cleanly");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WW must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
 }
 
 #[test]

@@ -299,7 +299,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         cx.warn("the workbook has no worksheets; added an empty sheet");
         wb.sheets.push(Arc::new(Sheet::new("Sheet1")));
     }
-    wb.active_sheet = file_to_model.get(active_tab).copied().flatten().unwrap_or(0);
+    wb.set_active_sheet(file_to_model.get(active_tab).copied().flatten().unwrap_or(0));
 
     // Defined names. Chartex parts refer to their data through hidden `_xlchart.*` names.
     let mut chart_names: Vec<(String, String)> = vec![];

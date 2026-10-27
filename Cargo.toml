@@ -24,7 +24,9 @@ gridcraft-engine = { path = "crates/engine" }
 gridcraft-ui-egui = { path = "crates/ui-egui" }
 gridcraft-mcp = { path = "crates/mcp" }
 gridcraft-pdf = { path = "crates/pdf" }
-craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "db19c373c8d59a545972ca340987aecfb3611a4b", features = ["egui"] }
+# Every craft-libs crate (craft-update and craft-window here, craft-ui in ui-egui, craft-print in
+# the app) comes from one storytold/craft-libs revision.
+craft-update = { git = "https://github.com/storytold/craft-libs", rev = "b926b5c03e256c86ca10934f58d03f628810b5b7", version = "=0.1.0", features = ["egui"] }
 
 # foundation
 thiserror = "2"
@@ -57,6 +59,9 @@ sys-locale = "0.3"
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 # Real font bytes for tests (Ubuntu Light, compiled into epaint).
 epaint_default_fonts = "0.37"
+# One native window per workbook: the window list, Window menu titles and the immediate-viewport
+# driver. Same craft-libs revision as craft-update above.
+craft-window = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b926b5c03e256c86ca10934f58d03f628810b5b7", default-features = false, features = ["egui"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
