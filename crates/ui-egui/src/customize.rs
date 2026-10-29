@@ -846,7 +846,7 @@ pub fn dialog(app: &mut SheetApp, ui: &mut Ui, d: &mut crate::dialogs::Dialog, c
             }
             let shown = |c: &str| if c.is_empty() { lang.tr("All Commands").to_string() } else { lang.tr(c).to_string() };
             let mut pick_category = category.clone();
-            egui::ComboBox::from_id_salt("customize.category").selected_text(shown(&category)).width(240.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("customize.category").selected_text(shown(&category)).width(240.0).show_ui(ui, |ui| {
                 for c in &cats {
                     ui.selectable_value(&mut pick_category, c.to_string(), shown(c));
                 }

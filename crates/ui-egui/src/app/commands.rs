@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, Json, NoticeKind, SheetApp, UiRequest, backstage, clamp_interface_scale, clean_error, dialogs,
+    formula_locale, i18n, json, now_ms, printing,
+};
 
 impl SheetApp {
     /// Runs an engine command (or a UI command) and handles UI requests it makes.
@@ -139,8 +142,8 @@ impl SheetApp {
                 self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
                 Ok(Json::Null)
             }
-            "ui.customizeRibbon" => customize::customize_command(self, p),
-            "ui.quickAccessToolbar" => customize::quick_access_command(self, p),
+            "ui.customizeRibbon" => crate::customize::customize_command(self, p),
+            "ui.quickAccessToolbar" => crate::customize::quick_access_command(self, p),
             "view.expandFormulaBar" => {
                 self.ui.formula_bar_expanded = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.formula_bar_expanded);
                 Ok(json!({"on": self.ui.formula_bar_expanded}))
@@ -329,6 +332,14 @@ impl SheetApp {
             "backstage" => {
                 let page = params.get("page").and_then(Json::as_str).and_then(backstage::Page::parse).unwrap_or(backstage::Page::Home);
                 self.open_backstage(page);
+            }
+            // The macro step editor stays until it closes itself (its draft, overlays and debug
+            // run go with it), so another dialog can't replace it.
+            _ if self.dialog.as_ref().is_some_and(|d| d.name == "macroEditor") => {
+                self.message = Some((
+                    "Macro".into(),
+                    "Close the macro step editor first: it keeps its window until it closes itself, so its steps and debug run are not lost.".into(),
+                ));
             }
             other => self.dialog = dialogs::Dialog::open(self, other, params),
         }
