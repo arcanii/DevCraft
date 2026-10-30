@@ -2,6 +2,23 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-31: upstream `68a4b1a` merged on Windows.** `main` was first brought level with
+`origin/main` (a fast-forward). Then 3 commits came in, with one conflict: upstream's
+`UPDATE_APP` constant above `pub mod aniefork;` in `lib.rs`. The updater stays held back. The gate
+log is `target/k3-prep/gate-merge-68a4b1a.log`.
+- **The merge is `1a6d1be9`** ("Merge remote-tracking branch 'upstream/main'"). It was committed
+  from the staged merge and pushed while the gate's result waited on the owner.
+- **The commit after it holds the rest**, and is not pushed. It fixes two Windows-only faults in
+  upstream's code from 0.13.0, whose merge was gated on a Mac: a clippy lint in the CLI's
+  `check.rs`, and a unix-only test in the engine. Both are in the hooks table. It also carries
+  this record.
+- **Still failing on Windows:** two upstream tests need craft-fonts, which is not here.
+
+**#1921 and #549 now conflict far more widely.** Upstream split `grid.rs` (`grid/selection.rs`,
+`grid/show.rs`, `grid/editor.rs`), where both pull requests make their changes. The local fixes
+`d059da7` and `f56944a` (below) predate the split. Both need rebuilding on upstream's `main`
+before anything is pushed.
+
 **2026-10-30: upstream 0.13.0 merged and pushed** on the owner's word: 253 commits, four
 conflicts, every hook kept. Upstream's strict Clippy now covers the fork's code too: the fork's
 crate and files name their imports and long types, and its long scenario tests allow
@@ -74,8 +91,15 @@ note of the #549 split (`6534c96`).
 **Pull requests:**
 - **#1921 and #549** are waiting for review (see "#549 and #1921" further down).
 - **#1921**: CodeRabbit asked for the outline's pixels to be worked out after the right-to-left
-  mirror. This is not checked yet; a right-to-left case in `tests/selection_outline.rs` would
-  show it. The owner has not yet said to look.
+  mirror. It was right: at 125% and 175% the gridline showed a pixel inside the outline.
+  - **Fixed** in `19eab8a`, with a right-to-left test at five scales, and replied to on the PR
+    (2026-10-21). #549's editor gets the same, with a right-to-left test.
+  - **Pushed then**: `selection-outline` at `19eab8a`, and `editor-highlight` force-pushed to
+    `cea5e77`. The old head `c04018f` is kept in the local branch `editor-highlight-pre-rtl`.
+  - **A conflict this caused**: the fix's revision line in `docs/ui-parity.md` went first in the
+    table, where upstream had added rows, so both PRs conflicted. `d059da7` moves the line, and
+    #549 was rebuilt on it as `f56944a` (local `editor-highlight-split`).
+  - **Waiting on the owner**: pushing those two, and the descriptions in `target/k3-prep/pr549/`.
 
 ## 2026-10-19
 

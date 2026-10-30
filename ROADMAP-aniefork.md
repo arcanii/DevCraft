@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-30, upstream `39a10b1` (253 commits since the merge before, 184 of them not merges: release 0.13.0) |
+| Last merge of upstream | 2026-10-30, upstream `68a4b1a` (3 commits since the merge before, no release since 0.13.0) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -744,6 +744,8 @@ still there:
 | `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
 | `crates/ui-egui/tests/it/in_cell_editor_size.rs` (upstream's #1755; `tests/` until upstream gathered each crate's tests into one binary), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
+| `apps/gridcraft-cli/src/check.rs`, above `fn walk` | `#[cfg_attr(not(unix), allow(clippy::only_used_in_recursion))]`. Off unix upstream's `seen` is only passed down the recursion, which clippy refuses; upstream gates on Linux and macOS and never sees it. A fix of upstream's code, not a hook: drop it once upstream fixes it |
+| `crates/engine/src/io/tests.rs`, `save_fails_upfront_when_the_temp_name_is_taken` | `#[cfg(unix)]`: the test makes a unix symlink and does not build on Windows. A fix of upstream's code, not a hook: drop it once upstream fixes it |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
@@ -794,7 +796,9 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
   and the outline in `grid.rs`, where upstream replaced its stroked rectangle with four filled
   sides cut to the screen (`outline_bands`, its #767: a whole column's outline lost its sides).
   The fork's outline is its own ring on the gridlines; it is now drawn by that function, so the
-  fork has upstream's fix too.
+  fork has upstream's fix too. The merge of `68a4b1a` conflicted at the head of the module list
+  in `lib.rs`, where upstream put its `UPDATE_APP` constant just above `pub mod aniefork;`:
+  upstream's constant first, then the fork's line.
 - **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
   must list commands in the shape upstream's listing uses (0.5.0 added `params`). The fork's
   own strings are in English in every interface language (upstream had eleven at the merge of
@@ -831,6 +835,25 @@ included.
 
 Newest first.
 
+- **2026-10-30 (merge of upstream `68a4b1a`):** On the owner's word ("merge upstream, commit
+  when the gate passes"), after `main` was brought level with `origin/main`. 3 commits since the
+  merge before, none of them a merge:
+  - **The update prompt** shows the app's icon and accent colour (`UPDATE_APP` in `lib.rs`,
+    used by `updates_ui.rs` and by `self_update::finish` in the app's `main.rs`).
+  - **Update checks** honour an app's pretend version.
+  - **CI** calls craft-common-actions at `@main`.
+
+  **One conflict**, the module list in `lib.rs` ("Syncing with upstream" has it). The fork's
+  updater hook in `main.rs` is still in place: upstream changed the line above it, and nothing
+  calls `start_update_check`. Nothing came into `docs/brand/` or `ATTRIBUTION.md`. The fork's
+  mentions in upstream's code (`crates`, `apps`, `xtask`, outside its own files) were counted
+  before and after the merge itself: 88. The two fixes below make it 90.
+
+  **The gate on Windows failed in two pieces of upstream's code** that came with 0.13.0, whose
+  merge was gated on a Mac. Neither is touched by these 3 commits. Clippy refused `walk` in the
+  CLI's `check.rs`, whose `seen` is used only on unix. A test in the engine's `io/tests.rs` makes
+  a unix symlink and does not build on Windows. Each is fixed in the merge, marked (aniefork) and
+  in the hooks table until upstream fixes it.
 - **2026-10-30 (merge of upstream `39a10b1`, GridCraft 0.13.0):** On the owner's word ("Yes,
   merge it", to merging upstream main into the fork's main with the hooks moved, checked and
   logged, the gate run, and main pushed). 253 commits since the merge before, 184 of them not
