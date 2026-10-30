@@ -57,9 +57,12 @@ pub(super) struct Read {
     pub project: Arc<Result<Project, String>>,
 }
 
+/// A project read, and for which key.
+type Kept = (Key, Arc<Result<Project, String>>);
+
 thread_local! {
     /// The project last read, so that a window drawn many times a second reads it once.
-    static KEPT: RefCell<Option<(Key, Arc<Result<Project, String>>)>> = const { RefCell::new(None) };
+    static KEPT: RefCell<Option<Kept>> = const { RefCell::new(None) };
 }
 
 /// Which project the open workbook carries; `None` when it carries none.

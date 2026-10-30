@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-28, upstream `11bb673` (15 commits since the merge before, 12 of them not merges; no release) |
+| Last merge of upstream | 2026-10-30, upstream `39a10b1` (253 commits since the merge before, 184 of them not merges: release 0.13.0) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -707,9 +707,9 @@ still there:
 | `crates/ui-egui/src/grid/selection.rs`, `paint_selection`, the fill handle | `crate::aniefork::selection::paint_fill_handle(p, outline, look.width, t.sel_border);` in place of upstream's three lines that size and paint it |
 | `crates/ui-egui/src/grid.rs`, the module's re-exports | `pub(crate) use selection::outline_bands;`, with a comment marked (aniefork): since upstream's reorganisation (#2690, 2026-10-26) `outline_bands` is in the private module `grid::selection`, and the fork's `paint_outline` draws with it |
 | `crates/ui-egui/src/grid/editor.rs`, `in_cell_editor`, the editor's size | `let grown = crate::aniefork::selection::editor_size(geo, sh, cell, rect, size, lines, text_w);` in place of upstream's `w` and `h`, and `Rect::from_min_size(rect.min, grown)` for `erect`. On a right-to-left sheet upstream's size is kept (`editor_width`): the editor grows leftwards there but its text starts at its left edge, so grown a whole cell the text would sit over the next cell, not its own (upstream's `frozen_column_editor_paints_in_both_panes_on_a_right_to_left_sheet` found it, 2026-10-26) |
-| `crates/ui-egui/src/grid/editor.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke` |
+| `crates/ui-egui/src/grid/editor.rs`, `in_cell_editor`, the editor's background and border | `crate::aniefork::selection::paint_editor(app, &painter, geo, rect, grown, text_w, fill);` in place of upstream's `rect_filled` and `rect_stroke`. Since 0.13 the file names its imports, and `Stroke`, `StrokeKind` and `Tokens`, which only upstream's border used, are left out of them |
 | `crates/ui-egui/src/grid/show.rs`, `show`, after `vertical_scrollbar(...)` | `crate::aniefork::scrollbar::above_the_track(ui.painter(), track_x, available.top(), geo.cells.top(), geo.cells.top() + geo.frozen_h, &t);` paints the scrollbar's column beside the headings and frozen rows |
-| `crates/ui-egui/src/services.rs`, `Services` | the field `confirm`: a yes/no question asked by the operating system, which the UI can't answer for the user |
+| `crates/ui-egui/src/services.rs`, `Services` | the field `confirm` (`Option<Confirm>`, its type named beside upstream's since 0.13): a yes/no question asked by the operating system, which the UI can't answer for the user |
 | `crates/ui-egui/src/app/commands.rs`, `run_ui_command`, first thing | `aniefork::run_command(self, id, p)` runs the fork's UI commands and returns early |
 | `crates/ui-egui/src/app.rs`, `logic`, right after `control::poll(self, ctx);` | `aniefork::poll(self, ctx);` does the fork's work of every frame: it notes whether the control channel is putting input into the window, carries out the calls projects' panels made, and sees to what agents asked of the Development server |
 | `crates/ui-egui/src/app.rs`, `ui`, after `panes::show(self, ui);` | `aniefork::dock::show(self, ui);` draws the pane of a project's docked panel, before the grid takes what is left |
@@ -831,6 +831,43 @@ included.
 
 Newest first.
 
+- **2026-10-30 (merge of upstream `39a10b1`, GridCraft 0.13.0):** On the owner's word ("Yes,
+  merge it", to merging upstream main into the fork's main with the hooks moved, checked and
+  logged, the gate run, and main pushed). 253 commits since the merge before, 184 of them not
+  merges, with release 0.13.0: macros (Record Macro, the Macros dialog, a macro step editor with
+  a debugger), strict Clippy across the workspace, and packaging fixes.
+  - **Four conflicts.** `grid.rs`: the `outline_bands` re-export beside upstream's new
+    `QuadrantPaint`. `grid/selection.rs`: `paint_selection` takes a `SelectionPaintInput` now;
+    the selection's look, outline and fill handle hooks are back in it. `grid/show.rs`: upstream
+    split `show`; the scrollbar hook is after `vertical_scrollbar` again. `services.rs`:
+    upstream names its callbacks' types; the fork's `confirm` is `Option<Confirm>` beside them.
+  - **Upstream's strict Clippy** (`cognitive_complexity`, `too_many_arguments` and
+    `wildcard_imports` denied, `type_complexity` no longer allowed) reaches the fork's code:
+    - `aniefork-dev`: the native-only `server` and `host` modules of `agents.rs`, `bridge.rs`,
+      `c.rs` and `python.rs` import what they use from their parent by name (the names only
+      their tests use, in those tests); `c.rs`, `starter.rs` and `setup/tests.rs` name their
+      long types.
+    - the fork's files in `ui-egui`: `card.rs`, `development.rs`, `kits.rs` and `macros.rs`
+      name their long types.
+    - the long step-by-step tests (`agents.rs`'s `tests` and `served`, `development.rs`'s and
+      `kits.rs`'s `tests`) allow `cognitive_complexity`, with the reason beside it: they follow
+      one plan, page or kit through, a check after each step.
+    - the hooks in `app.rs` and `app/commands.rs` say `crate::aniefork::` (upstream no longer
+      imports the crate wholesale there), and `grid/editor.rs` imports neither `Stroke`,
+      `StrokeKind` nor `Tokens`, which only upstream's editor border used.
+  - **The updater:** still held back. Upstream's only ways in are the command, which
+    `aniefork::run_command` answers first, and `start_update_check`, which nothing calls.
+  - Every hook in the table was checked present. Nothing came into `docs/brand/` or
+    `ATTRIBUTION.md`. `Cargo.lock` takes the fork's crate to 0.13.0 with the workspace. The
+    fork's mentions in upstream's code: 88.
+  - **Clippy on a Mac** also refuses upstream's own `apps/gridcraft/src/native_menu.rs` when
+    `tests/mac_menu_appkit.rs` builds it (unused code, five errors): that test is macOS only and
+    upstream's CI never builds it. The rest of the workspace passes; the test itself passes.
+  - Checked on the result, on macOS, step by step: fmt, clippy (all but upstream's
+    `native_menu.rs` in that test, above), nextest 0.9.150 (3,064 tests: 3,062 pass, 3
+    skipped, and the two that need craft-fonts' glyphs "ẞ" and "ẻ" fail here as on upstream's
+    own code), `mac_menu_appkit` with `cargo test`, doctests, assets, layers, wasm, parity,
+    keytips.
 - **2026-10-28 (merge of upstream `11bb673`):** On the owner's word ("Merge upstream main into
   the fork's main, check the hooks, bring the fork crate's Cargo.lock entry up to date, run the
   gate's steps, log it in ROADMAP-aniefork.md, then commit and push main to origin"). 15 commits

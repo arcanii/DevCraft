@@ -564,6 +564,10 @@ mod web {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server {
+    use super::{
+        Arc, AtomicBool, CLIENT, Call, CommandDoc, Duration, EVENTS, Event, Json, Limits, MAX_BATCH, MAX_BODY_BYTES, MAX_EVENTS, MAX_LISTENERS,
+        MAX_WAITING, Ordering, Permission, Places, Request, mpsc, typings,
+    };
     use std::collections::{HashMap, VecDeque};
     use std::io::Write;
     use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -573,7 +577,6 @@ mod server {
 
     use serde_json::json;
 
-    use super::*;
     use crate::console::{self, Console};
     use crate::http::{self, Incoming, lock, same};
     use crate::python::{self, PythonHost, RunError};

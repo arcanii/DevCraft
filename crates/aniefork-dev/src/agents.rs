@@ -1035,6 +1035,11 @@ mod web {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod server {
+    use super::{
+        Action, Asked, Client, Done, Duration, Json, Kind, Level, Limits, MAX_FILE_BYTES, MAX_PLAN_BYTES, MAX_PLAN_MINUTES, MAX_PLAN_STEPS,
+        MAX_WAITING, Outcome, PLAN_MINUTES, Places, Plan, PlanStep, Policy, Record, StepState, TrustStore, can_go_unasked, file_at, fs, log_file,
+        manifest, parts, policy, project, project_dir, read_file, runs_unreviewed, shows, sights, starter, stood,
+    };
     use std::collections::VecDeque;
     use std::io::Write;
     use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -1045,7 +1050,6 @@ mod server {
 
     use serde_json::json;
 
-    use super::*;
     use crate::bridge::{self, CommandDoc};
     use crate::console::{self, Console};
     use crate::http::{self, Incoming, lock, same};
@@ -3191,6 +3195,9 @@ the person has to supply it."#;
 }
 
 #[cfg(test)]
+// Some tests follow an agent through a whole plan, step by step, with a check after each step;
+// split up, the steps would lose the state each one leaves for the next.
+#[allow(clippy::cognitive_complexity)]
 mod tests {
     use super::*;
     use crate::project::tests::{TempDir, sample};
@@ -3713,6 +3720,8 @@ mod tests {
 
 /// The Development server over real connections, as an agent's client would use it.
 #[cfg(test)]
+// As in `tests`: a client is followed through a whole exchange, with a check after each step.
+#[allow(clippy::cognitive_complexity)]
 mod served {
     use std::io::{Read, Write};
     use std::net::TcpStream;

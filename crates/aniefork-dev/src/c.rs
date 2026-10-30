@@ -463,6 +463,10 @@ mod web {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod host {
+    use super::{
+        Built, Entry, GL_HEADER, GL1_OBJECT, GL1_SOURCE, GLES3_OBJECT, GLES3_SOURCE, JUMP_FLAGS, JUMP_TAG, KIT_HEADERS, MAX_OUTPUT_BYTES, OUTPUT,
+        Path, PathBuf, Recipe, built_dir, dependencies, manifest, program_for,
+    };
     use std::collections::HashMap;
     use std::fs;
     use std::io::Read;
@@ -471,7 +475,6 @@ mod host {
     use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
     use std::time::{Duration, Instant};
 
-    use super::*;
     use crate::bridge::Places;
     use crate::trust::TrustStore;
     use crate::{kit, project};
@@ -916,11 +919,14 @@ mod host {
         Done(Result<Built, String>),
     }
 
+    /// The builds asked for, by project folder and program name.
+    type Builds = HashMap<(PathBuf, String), Arc<Mutex<State>>>;
+
     /// Builds that were asked for, each on a thread of its own: a build takes seconds or
     /// minutes, and the window that asked goes on being drawn.
     #[derive(Default)]
     pub struct Builder {
-        builds: Mutex<HashMap<(PathBuf, String), Arc<Mutex<State>>>>,
+        builds: Mutex<Builds>,
     }
 
     impl Builder {
@@ -978,6 +984,7 @@ mod host {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::c::{Standing, standing};
 
         #[test]
         fn where_zig_keeps_its_own_files_is_read_from_what_it_says_in_either_form() {

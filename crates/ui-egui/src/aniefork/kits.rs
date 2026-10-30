@@ -146,16 +146,24 @@ pub(super) struct Found {
     stamp: u64,
 }
 
+/// The open workbook's macros with what the projects say of them, for which workbook and which
+/// reading of the projects.
+type Covered = ((macros::Key, u64), Arc<Coverage>);
+/// The file being read, as it is shown, for which project, fingerprint and file.
+type Viewed = ((String, Option<String>, String), Arc<Json>);
+/// The shell's way to let the person choose a file.
+type Picker = Box<dyn Fn() -> Option<String>>;
+
 thread_local! {
     /// What was last read, where, and when: the windows draw many times a second, and reading
     /// the projects reads every file of every one of them.
     static KEPT: RefCell<Option<(f64, PathBuf, Found)>> = const { RefCell::new(None) };
     /// The open workbook's macros with what the projects say of them: for which workbook and
     /// which reading of the projects.
-    static COVERED: RefCell<Option<((macros::Key, u64), Arc<Coverage>)>> = const { RefCell::new(None) };
+    static COVERED: RefCell<Option<Covered>> = const { RefCell::new(None) };
     /// The file that is being read, as it is shown: of which project, as which fingerprint,
     /// and which file. Reading a file into lines is not done again for every frame.
-    static VIEWED: RefCell<Option<((String, Option<String>, String), Arc<Json>)>> = const { RefCell::new(None) };
+    static VIEWED: RefCell<Option<Viewed>> = const { RefCell::new(None) };
     /// The space the kits use, as it was last measured: when, and for which reading of the projects.
     static MEASURE: RefCell<Option<(f64, PathBuf, Arc<Space>)>> = const { RefCell::new(None) };
 }
@@ -388,7 +396,7 @@ pub(super) fn kit_named(id: &str) -> Option<&'static Kit> {
 
 thread_local! {
     /// The shell's way to let the person choose a kit's package file, when it has one.
-    static PICKER: RefCell<Option<Box<dyn Fn() -> Option<String>>>> = const { RefCell::new(None) };
+    static PICKER: RefCell<Option<Picker>> = const { RefCell::new(None) };
 }
 
 /// The shell says how the person chooses a kit's package: the operating system's own file dialog.
@@ -409,7 +417,7 @@ pub(super) fn pick_package() -> Result<Option<String>, String> {
 
 thread_local! {
     /// The shell's way to let the person choose the compiler's program, when it has one.
-    static COMPILER_PICKER: RefCell<Option<Box<dyn Fn() -> Option<String>>>> = const { RefCell::new(None) };
+    static COMPILER_PICKER: RefCell<Option<Picker>> = const { RefCell::new(None) };
 }
 
 /// The shell says how the person chooses the compiler: the operating system's own file dialog.
@@ -1415,6 +1423,9 @@ pub(super) fn pane(app: &SheetApp, ctx: &egui::Context, pane: &Pane, now: &agent
 }
 
 #[cfg(test)]
+// Some tests follow the person through a whole page or kit, step by step, with a check after
+// each step; split up, the steps would lose the state each one leaves for the next.
+#[allow(clippy::cognitive_complexity)]
 mod tests {
     use super::*;
     use crate::aniefork::macros::tests::{carry, sample};

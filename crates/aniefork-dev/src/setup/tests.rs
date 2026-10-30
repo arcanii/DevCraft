@@ -63,9 +63,12 @@ fn tar_gz_of(files: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 /// A stand-in for the network: an answer for each address, and what was asked.
+/// What the stand answers for an address: status, redirect, body and a length it claims.
+type Answer = (u16, Option<String>, Vec<u8>, Option<u64>);
+
 #[derive(Default)]
 struct Stand {
-    answers: HashMap<String, (u16, Option<String>, Vec<u8>, Option<u64>)>,
+    answers: HashMap<String, Answer>,
     asked: Mutex<Vec<String>>,
 }
 

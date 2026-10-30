@@ -1,7 +1,15 @@
+#[cfg(test)]
+use super::clock::monotonic_ms;
 use super::clock::now_ms;
 use super::services::{Chrome, Services};
 use super::state::{NoticeKind, OpenWindow, SaveAnswer, SheetView};
-use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use super::updates_ui;
+use super::{
+    CellRef, HashMap, INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, Json, Notice, Perf, RangeRef, Session, SheetApp, UiRequest, UiState, backstage,
+    clamp_interface_scale, clean_error, control, desktop_theme, dialogs, editor, floating_pictures, formula_bar, formula_locale, grid, i18n, json,
+    keytips, macro_ui, panes, pivot_pane, printing, ribbon, tabs, text_box, theme, widgets,
+};
 
 mod clipboard;
 mod commands;
@@ -64,6 +72,7 @@ impl SheetApp {
             clipboard_text_at_copy: None,
             cut_text: None,
             tab_run: None,
+            macros: macro_ui::MacroUi::default(),
             started: now_ms(),
             allow_close: false,
             open_switch_windows: false,
@@ -119,7 +128,7 @@ impl SheetApp {
         control::drain_screenshots(self, ctx);
         control::poll(self, ctx);
         // The fork's work of every frame: its projects' panels (aniefork).
-        aniefork::poll(self, ctx);
+        crate::aniefork::poll(self, ctx);
         // Printing feedback is polled once per frame, here, so hidden windows and logic-only
         // frames still see worker completion. `ui` and the desktop app no longer poll it.
         self.poll_printing(ctx);
@@ -150,7 +159,7 @@ impl SheetApp {
         let title = format!("{}{}", d.display_title(), if d.is_dirty() { " — Edited" } else { "" });
         if self.grid.last_title.as_deref() != Some(title.as_str()) {
             // The application's name after upstream's title (aniefork).
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(aniefork::about::window_title(&title)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(crate::aniefork::about::window_title(&title)));
             self.grid.last_title = Some(title);
         }
     }
@@ -224,7 +233,7 @@ impl SheetApp {
             pivot_pane::show(self, ui);
             panes::show(self, ui);
             // A project's panel docked in the window (aniefork).
-            aniefork::dock::show(self, ui);
+            crate::aniefork::dock::show(self, ui);
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.grid_bg)).show(ui, |ui| {
                 let g0 = now_ms();
                 grid::show(self, ui);
@@ -232,6 +241,8 @@ impl SheetApp {
             });
         }
         dialogs::show(self, &ctx);
+        macro_ui::forget_closed_editor(self);
+        macro_ui::question_box(self, &ctx);
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);
         // Requests are admitted in `logic`, for the root viewport, so only its pass issues them.
@@ -481,14 +492,15 @@ mod lifecycle_tests {
         let title = app.session.active().unwrap().display_title().to_string();
         let expected = format!("{title}{}", if app.session.active().unwrap().is_dirty() { " — Edited" } else { "" });
         // The fork's name after upstream's title (aniefork).
-        let expected = aniefork::about::window_title(&expected);
+        let expected = crate::aniefork::about::window_title(&expected);
         assert_eq!(titles(&first), [expected], "the first logic tick titles the window");
         let second = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
         assert!(titles(&second).is_empty(), "an unchanged title is not sent every frame");
 
         app.session.active_mut().unwrap().title = "Renamed".into();
         let third = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
-        let expected = aniefork::about::window_title(&format!("Renamed{}", if app.session.active().unwrap().is_dirty() { " — Edited" } else { "" }));
+        let expected =
+            crate::aniefork::about::window_title(&format!("Renamed{}", if app.session.active().unwrap().is_dirty() { " — Edited" } else { "" }));
         assert_eq!(titles(&third), [expected], "a rename while hidden updates the title");
     }
 

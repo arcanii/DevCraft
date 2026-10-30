@@ -373,8 +373,12 @@ fn after_id(text: &str, lines: &[String]) -> String {
 /// The files a new project of a kit from a package begins with: the kit's own starter, with
 /// the project's id and name written in where it says `{{id}}` and `{{name}}`; or, for a kit
 /// that brought none, the starter of the kit it stands on, naming this kit.
+/// A project packaged for a kit: its folder name, and each file's path and bytes.
 #[cfg(not(target_arch = "wasm32"))]
-fn packaged_files(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&str>) -> Option<(String, Vec<(String, Vec<u8>)>)> {
+type Packaged = (String, Vec<(String, Vec<u8>)>);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn packaged_files(projects_dir: &Path, kit: &Kit, name: &str, workbook: Option<&str>) -> Option<Packaged> {
     let shown = plain(name);
     let id = slug(&shown);
     if shown.is_empty() || !manifest::valid_id(&id) {

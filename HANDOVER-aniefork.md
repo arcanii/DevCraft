@@ -2,6 +2,12 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-10-30: upstream 0.13.0 merged and pushed** on the owner's word: 253 commits, four
+conflicts, every hook kept. Upstream's strict Clippy now covers the fork's code too: the fork's
+crate and files name their imports and long types, and its long scenario tests allow
+`cognitive_complexity` with the reason given. Clippy on a Mac still refuses upstream's own
+`native_menu.rs` inside the macOS-only `mac_menu_appkit` test; upstream's CI never builds it.
+
 **2026-10-28: upstream `11bb673` merged and pushed** on the owner's word: 15 commits, no
 conflict, every hook present. The fork's two combo boxes are `craft_ui::ComboBox`, as upstream's
 clippy now requires. Upstream's Windows installer installs into an `ArtCraft` folder: left as

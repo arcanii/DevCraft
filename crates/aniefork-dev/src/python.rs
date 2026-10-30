@@ -162,7 +162,8 @@ mod web {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod host {
-    use super::*;
+    use super::{Calls, Duration, Interpreter, Json, MAX_REPLY_BYTES, MAX_REQUEST_BYTES, MAX_TIMEOUT, Output, PRINTED_KEPT, RunError};
+
     use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::path::{Path, PathBuf};
@@ -816,6 +817,7 @@ _serve()
     mod tests {
         use super::*;
         use crate::project::tests::TempDir;
+        use crate::python::DEFAULT_TIMEOUT;
 
         /// The Python on this machine, or `None` (with a note) when there is none: the tests that
         /// need one are then skipped, and the refusals are still tested.

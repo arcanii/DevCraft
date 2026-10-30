@@ -215,8 +215,10 @@ pub(super) fn named(asked: &Asked) -> String {
 /// The mark of what a request holds, worked out once: a plan's is of all it holds, and a card
 /// is drawn many times a second.
 fn mark(asked: &Asked) -> String {
+    /// Each request's mark, by the request and its plan's number.
+    type Marks = Vec<((u64, Option<u64>), String)>;
     thread_local! {
-        static MARKS: std::cell::RefCell<Vec<((u64, Option<u64>), String)>> = const { std::cell::RefCell::new(Vec::new()) };
+        static MARKS: std::cell::RefCell<Marks> = const { std::cell::RefCell::new(Vec::new()) };
     }
     // A request's number begins again with each server: when it was asked tells them apart.
     let key = (asked.id, asked.at_ms);

@@ -183,6 +183,9 @@ pub(super) enum Act {
     Immediate(String),
 }
 
+/// A plan followed through: for which request, when, and what was found.
+type Followed = (u64, f64, Arc<Result<Vec<Sight>, String>>);
+
 /// What the window works from, kept between frames. It is the window's own, out of the dialog's
 /// values, which anything on the control channel can rewrite: the values only report.
 #[derive(Clone, Default)]
@@ -200,7 +203,7 @@ pub(super) struct State {
     pub(super) whole: bool,
     pub(super) said: String,
     /// The plan being looked at, followed through: for which request, when, and what was found.
-    followed: Option<(u64, f64, Arc<Result<Vec<Sight>, String>>)>,
+    followed: Option<Followed>,
     /// The part of the window that is shown.
     pub(super) pane: Pane,
     /// The name being typed for a new project, and whether it is to be the open workbook's code.
@@ -1836,6 +1839,9 @@ fn allow(app: &mut SheetApp, ctx: &egui::Context, state: &mut State, id: u64, sa
 }
 
 #[cfg(test)]
+// Some tests follow the person through a whole page or kit, step by step, with a check after
+// each step; split up, the steps would lose the state each one leaves for the next.
+#[allow(clippy::cognitive_complexity)]
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpStream;
