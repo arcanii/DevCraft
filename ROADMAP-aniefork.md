@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-10-30, upstream `68a4b1a` (3 commits since the merge before, no release since 0.13.0) |
+| Last merge of upstream | 2026-11-11, upstream `ff9f4b8` (701 commits since the merge before, releases 0.14.2, 0.15.0 and 0.16.0) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -721,7 +721,7 @@ still there:
 | `crates/ui-egui/src/control.rs`, `handle`, `engine.commands` | after upstream's UI commands are listed and before the listing is filtered: `v.extend(crate::aniefork::commands());` |
 | `crates/ui-egui/src/ribbon.rs`, `show`, after `tabs` is made from `TABS` | `crate::aniefork::developer::tabs(app, &mut tabs);` adds the Developer tab when it is on |
 | `crates/ui-egui/src/ribbon.rs`, `show`, the match on the active tab | the arm `"Developer" => crate::aniefork::developer::ribbon(app, ui)` |
-| `crates/ui-egui/src/backstage/options.rs`, `options`, after the formula bar checkbox | `crate::aniefork::options_page(app, ui);` draws the fork's two settings |
+| `crates/ui-egui/src/backstage/options.rs`, `options`, after upstream's Highlight the active cell's row checkbox (which follows the formula bar's) | `crate::aniefork::options_page(app, ui);` draws the fork's two settings |
 | `crates/ui-egui/src/dialogs.rs`, `Dialog::open`, the last arm of the match (upstream's is `_ => return None`) | `name => …` asks `crate::aniefork::dialog(app, name, &params)?` for a title, starting values and a command, and builds a custom dialog from them |
 | `crates/ui-egui/src/dialogs/show.rs`, `show`, before the `_ => form(…)` arm | `_ if crate::aniefork::draws_dialog(&d.name) => crate::aniefork::dialog_ui(…)` draws any of the fork's dialogs |
 | `crates/ui-egui/Cargo.toml`, `[dependencies]` | `gridcraft-aniefork-dev = { path = "../aniefork-dev" }` |
@@ -745,7 +745,6 @@ still there:
 | `crates/ui-egui/tests/it/in_cell_editor_size.rs` (upstream's #1755; `tests/` until upstream gathered each crate's tests into one binary), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
 | `apps/gridcraft-cli/src/check.rs`, above `fn walk` | `#[cfg_attr(not(unix), allow(clippy::only_used_in_recursion))]`. Off unix upstream's `seen` is only passed down the recursion, which clippy refuses; upstream gates on Linux and macOS and never sees it. A fix of upstream's code, not a hook: drop it once upstream fixes it |
-| `crates/engine/src/io/tests.rs`, `save_fails_upfront_when_the_temp_name_is_taken` | `#[cfg(unix)]`: the test makes a unix symlink and does not build on Windows. A fix of upstream's code, not a hook: drop it once upstream fixes it |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
@@ -798,7 +797,14 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
   The fork's outline is its own ring on the gridlines; it is now drawn by that function, so the
   fork has upstream's fix too. The merge of `68a4b1a` conflicted at the head of the module list
   in `lib.rs`, where upstream put its `UPDATE_APP` constant just above `pub mod aniefork;`:
-  upstream's constant first, then the fork's line.
+  upstream's constant first, then the fork's line. The merge of `ff9f4b8` (0.16.0 and after)
+  conflicted at five: the Options page, where upstream's Highlight the active cell's row
+  checkbox took the line after the formula bar's (upstream's first, then the fork's); the
+  dialog window in `dialogs/show.rs`, which upstream now names `window_id`, and its `form`,
+  which takes `app` now; the updater line in the app's `main.rs`, where upstream moved
+  `after_engine` further down; the macOS menu test, which upstream extended with the Window
+  menu's list of workbooks; and `Info.plist.in`, where upstream declared the interface
+  languages above the fork's names.
 - **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
   must list commands in the shape upstream's listing uses (0.5.0 added `params`). The fork's
   own strings are in English in every interface language (upstream had eleven at the merge of
@@ -835,6 +841,36 @@ included.
 
 Newest first.
 
+- **2026-11-11 (merge of upstream `ff9f4b8`, GridCraft 0.16.0 and after):** On the owner's word
+  ("Yes, merge it", to merging upstream main into the fork's main), after `main` was brought
+  level with `origin/main`. 701 commits since the merge before, 450 of them not merges, with
+  releases 0.14.2, 0.15.0 and 0.16.0. Among them: form controls (Insert › Controls), reference
+  boxes (RefEdit) in Goal Seek, Solver and Data Analysis, Solver's Sensitivity report, Python
+  cells and a Python mode in the formula bar, equations, one selection for every floating
+  object, chart data tables, the Function Library laid out as Excel's, Arabic bidi layout, CJK
+  text on the Latin baseline, a formula bar resized by its edge, and File › Options' Highlight
+  the active cell's row. The owner's storytold/gridcraft#1641 and #1643 are still open there.
+  - **Eight conflicts.** `README.md`: the fork's kept; upstream's change is the list of its
+    sister apps, nothing for the fork's. `Cargo.lock`: upstream's taken and `cargo metadata`
+    added the fork's again; the fork's crate is 0.16.0 with the workspace. Of the other six,
+    five are at hooks ("Syncing with upstream" has them), each settled with upstream's code and
+    the hook put back, and one at the fork's fix in the engine's `io/tests.rs` (below).
+  - **One fix dropped:** upstream now builds `save_fails_upfront_when_the_temp_name_is_taken`
+    on unix only itself, so the fork's own `#[cfg(unix)]` there, and its row in the hooks
+    table, are gone. The CLI's `walk` still needs the fork's `allow`.
+  - **The updater:** still held back. Upstream's new result window (`CheckResultDialog`) is
+    reached only through `updates_ui::start`, which only `start_update_check` (called by
+    nothing) and Check for Updates… (answered first by `aniefork::run_command`) call.
+  - Every hook in the table was checked present. Nothing came into `docs/brand/`, and the
+    only new files are upstream's. The fork's mentions in upstream's code: 89 (90 before, less
+    the dropped fix).
+  - Checked on the result, on macOS, step by step: fmt, clippy (now also upstream's
+    `native_menu.rs` as the macOS menu test builds it, which it refused at 0.13.0), nextest
+    0.9.150 (4,099 tests: 4,096 pass, 6 skipped, and three of upstream's fail here as on
+    upstream's own code: the two that need craft-fonts' glyphs "ẞ" and "ẻ", and the new
+    `caret_after_typing_arabic_is_drawn_at_its_left_end`, the same caret position on upstream's
+    `ec12eba8` alone), `mac_menu_appkit` with `cargo test`, doctests, assets, layers, wasm,
+    parity, keytips.
 - **2026-10-30 (merge of upstream `68a4b1a`):** On the owner's word ("merge upstream, commit
   when the gate passes"), after `main` was brought level with `origin/main`. 3 commits since the
   merge before, none of them a merge:

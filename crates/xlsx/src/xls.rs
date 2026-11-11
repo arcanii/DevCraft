@@ -3,25 +3,31 @@
 //! <https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xls/cd03cb5f-ca02-4934-a391-bb674cb8aa06>.
 //!
 //! Read: worksheets, shared strings, cell values, formulas (text and cached results, including
-//! shared and array formulas), number formats, the 1904 date system, merged cells, column
-//! widths, row heights, defined names, print areas, print titles and the calculation settings
-//! (mode, iteration, precision as displayed). Everything else (fonts, fills, borders, charts,
-//! pictures, comments, conditional formats, validation, macros) is skipped with a warning.
+//! shared and array formulas), cell formatting (number formats, fonts, fills, borders,
+//! alignment, protection, the colour palette and user-defined cell styles), the 1904 date
+//! system, merged cells, column widths, row heights, defined names, print areas, print titles
+//! and the calculation settings (mode, iteration, precision as displayed). Everything else
+//! (charts, pictures, comments, conditional formats, validation, macros) is skipped with a
+//! warning.
 //! Encrypted workbooks and pre-BIFF8 versions are refused.
+//!
+//! Every formula in the file is a legacy (pre-dynamic-array) one, so it is read with Excel's
+//! implicit `@` (see `array_formula.rs`), like an `.xlsx` formula saved without `cm`.
 
 mod formula;
 mod ftab;
 mod records;
+mod styles;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
-use gridcraft_model::{CalcMode, CalcSettings, Cell, DefinedName, Formula, LineInfo, NumFmt, Sheet, Style, StyleId, Visibility, Workbook};
+use gridcraft_model::{CalcMode, CalcSettings, Cell, DefinedName, Formula, LineInfo, Sheet, StyleId, Visibility, Workbook};
 
 use crate::cfb::Compound;
-use crate::tables::{builtin_format, col_width_to_px, pt_to_px};
-use crate::{IoError, ReadReport};
+use crate::tables::{col_width_to_px, pt_to_px};
+use crate::{FunctionInfo, IoError, ReadReport};
 use formula::{Links, Mode, SupBook, Unsupported, Xti, cell_error, decode};
 use records::{Cursor, Record, Records};
 
@@ -131,20 +137,27 @@ struct Globals {
     sheets: Vec<BoundSheet>,
     date1904: bool,
     formats: HashMap<u16, String>,
-    xf_formats: Vec<u16>,
+    styles: styles::StyleRecords,
     sst: Vec<Arc<str>>,
     links: Links,
     names: Vec<Lbl>,
     precision_as_displayed: bool,
 }
 
-/// Reads an Excel 97-2003 workbook. Inspect the report's warnings for what was skipped.
+/// Reads an Excel 97-2003 workbook, with the default [`FunctionInfo`]. Inspect the report's
+/// warnings for what was skipped.
 pub fn read_xls(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
-    read_xls_with(bytes, Budget::default())
+    read_xls_budgeted(bytes, Budget::default(), FunctionInfo::default())
 }
 
-/// [`read_xls`] with an explicit resource budget.
-pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workbook, ReadReport), IoError> {
+/// [`read_xls`] with the function library's facts, which decide where the legacy formulas get
+/// Excel's implicit `@`.
+pub fn read_xls_with(bytes: &[u8], functions: FunctionInfo) -> Result<(Workbook, ReadReport), IoError> {
+    read_xls_budgeted(bytes, Budget::default(), functions)
+}
+
+/// [`read_xls_with`] with an explicit resource budget.
+pub(crate) fn read_xls_budgeted(bytes: &[u8], mut budget: Budget, functions: FunctionInfo) -> Result<(Workbook, ReadReport), IoError> {
     let cf = Compound::open(bytes).map_err(invalid)?;
     let stream = match cf.root_stream("Workbook").map_err(invalid)? {
         Some(s) => s,
@@ -161,19 +174,11 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     let mut wb = Workbook::new();
     wb.sheets.clear();
     wb.date_system = if g.date1904 { DateSystem::D1904 } else { DateSystem::D1900 };
-    // One model style per XF: only the number format is imported.
-    let styles: Vec<StyleId> = g
-        .xf_formats
-        .iter()
-        .map(|ifmt| {
-            let code = g.formats.get(ifmt).map(String::as_str).or_else(|| builtin_format(u32::from(*ifmt))).unwrap_or("General");
-            if code.eq_ignore_ascii_case("General") {
-                StyleId::DEFAULT
-            } else {
-                wb.styles.intern(Style { num_fmt: NumFmt::new(code), ..Style::default() })
-            }
-        })
-        .collect();
+    // One model style per XF.
+    let styles = styles::build(&g.styles, &g.formats, &mut wb);
+    if g.styles.short {
+        report.warn("Some cell formatting records were shorter than expected; the formatting present was kept.");
+    }
 
     // BoundSheet8 index → model sheet index.
     let mut model_index: Vec<Option<usize>> = Vec::with_capacity(g.sheets.len());
@@ -206,13 +211,22 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     }
     wb.calc.precision_as_displayed = g.precision_as_displayed;
     defined_names(&g, &model_index, &mut wb, &mut report);
+    // Every .xls formula is a legacy (pre-dynamic-array) one: read with Excel's implicit `@`, like
+    // an .xlsx formula without `cm`. Ctrl+Shift+Enter arrays are read as they are.
+    let legacy = wb.sheets.iter().enumerate().map(|(si, s)| (si, legacy_cells(s))).collect();
+    crate::array_formula::apply_legacy(&mut wb, legacy, functions);
     wb.set_active_sheet(wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0));
     // The overview comes first.
     report.warnings.insert(
         0,
-        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, number formats, merged cells, column widths, row heights and defined names were read. Fonts, fills, borders, charts, pictures, comments and other features are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
+        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting, merged cells, column widths, row heights and defined names were read. Charts, pictures, comments and other features are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
     );
     Ok((wb, report))
+}
+
+/// The cells holding a formula that is not a Ctrl+Shift+Enter array.
+fn legacy_cells(sheet: &Sheet) -> Vec<CellRef> {
+    sheet.cells.iter().filter(|(_, c)| c.formula.as_ref().is_some_and(|f| f.array.is_none())).map(|(at, _)| at).collect()
 }
 
 fn bof(rec: &Record<'_>) -> Result<(u16, u16), IoError> {
@@ -280,10 +294,10 @@ fn globals(stream: &[u8], budget: &mut Budget, report: &mut ReadReport) -> Resul
                 budget.text(code.len())?;
                 g.formats.insert(ifmt, code);
             }
-            0x00E0 if g.xf_formats.len() < MAX_XFS => {
-                c.u16()?;
-                g.xf_formats.push(c.u16()?);
-            }
+            0x00E0 => g.styles.xf(&mut c, MAX_XFS),
+            0x0031 => g.styles.font(&mut c),
+            0x0092 => g.styles.palette(&mut c),
+            0x0293 => g.styles.style(&mut c),
             0x00FC => g.sst = shared_strings(&mut c, budget)?,
             0x01AE => {
                 let _ctab = c.u16()?;
@@ -454,7 +468,7 @@ impl SheetState<'_> {
             return Ok(Some(pos));
         }
         budget.cell()?;
-        self.sheet.cells.set(pos, Cell { value, formula: None, style });
+        self.sheet.cells.set(pos, Cell { value, formula: None, style, py: None });
         Ok(Some(pos))
     }
 
@@ -468,11 +482,13 @@ impl SheetState<'_> {
                     self.unsupported("syntax GridCraft can't parse yet");
                     return;
                 }
-                f.array = array.filter(|r| !r.is_single());
+                // A one-cell Ctrl+Shift+Enter array keeps its range, as when an .xlsx is read:
+                // it evaluates as an array, not with implicit intersection.
+                f.array = array;
                 if let Some(cell) = self.sheet.cells.get_mut(pos) {
                     cell.formula = Some(Arc::new(f));
                 } else {
-                    self.sheet.cells.set(pos, Cell { value: Value::Empty, formula: Some(Arc::new(f)), style: StyleId::DEFAULT });
+                    self.sheet.cells.set(pos, Cell { value: Value::Empty, formula: Some(Arc::new(f)), style: StyleId::DEFAULT, py: None });
                 }
             }
             Err(Unsupported(why)) => self.unsupported(why),
@@ -531,7 +547,7 @@ fn blank_array_followers(st: &mut SheetState<'_>, pending: &[Pending]) {
         let filled = st.sheet.cell(p.anchor).and_then(|c| c.formula.as_ref()).and_then(|f| f.array).is_some_and(|r| r.contains(p.pos));
         if p.pos != p.anchor && filled {
             let style = st.sheet.style_id(p.pos);
-            st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
+            st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style, py: None });
         }
     }
 }
@@ -677,7 +693,7 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
                 if let Some(cell) = st.sheet.cells.get_mut(pos) {
                     cell.value = Value::from(s);
                 } else {
-                    st.sheet.cells.set(pos, Cell { value: Value::from(s), formula: None, style });
+                    st.sheet.cells.set(pos, Cell { value: Value::from(s), formula: None, style, py: None });
                 }
             }
         }
@@ -832,7 +848,7 @@ fn formula_cell(c: &mut Cursor<'_, '_>, st: &mut SheetState<'_>, budget: &mut Bu
     let Some(pos) = st.pos(r, col) else { return Ok(()) };
     budget.cell()?;
     let style = st.style(x);
-    st.sheet.cells.set(pos, Cell { value, formula: None, style });
+    st.sheet.cells.set(pos, Cell { value, formula: None, style, py: None });
     st.last_formula = Some(pos);
     if string_result {
         st.pending_string = Some((pos, style));
