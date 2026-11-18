@@ -2,14 +2,29 @@
 
 ## Now: read this first (2026-10-22)
 
-**2026-11-16: upstream `407e0e1` (0.19.1) merged on Windows.** `main` was first brought level
-with `origin/main`, which had the merge of 0.16.0 made on macOS on 2026-11-11 (its record is in
-ROADMAP-aniefork.md's log). 194 commits came in, with three conflicts (`Cargo.lock`, the CLI's
-`walk`, the window's application id in the app's `main.rs`) and one more Windows fix of
-upstream's code (`xtask/src/stats.rs`'s tests, in the hooks table). The log entry has the rest.
+**2026-11-18: upstream merged to `f8af138`, in two merges, on Windows; committed, not pushed.**
+`main` was first brought level with `origin/main`, which had the merge of 0.16.0 made on macOS
+on 2026-11-11 (its record is in ROADMAP-aniefork.md's log). Then:
+- **Upstream `407e0e1` (0.19.1)**, 194 commits, merged and gated on 2026-11-16 and committed on
+  2026-11-18 ("Let's merge"): three conflicts (`Cargo.lock`, the CLI's `walk`, the window's
+  application id in the app's `main.rs`) and one more Windows fix of upstream's code
+  (`xtask/src/stats.rs`'s tests, in the hooks table).
+- **Upstream `f8af138`**, the 144 commits after it, on the same word: one conflict, the fork's
+  `README.md` kept.
+- The log entries have the rest. Neither commit carries a line naming the agent: upstream's
+  `AGENTS.md` now says "No agent attribution".
 - **Seven tests fail on Windows**, each the same on upstream's code alone: the two craft-fonts
   ones, the Arabic caret one, IMSQRT's last digit, a CJK baseline one, and two of the sandbox's
-  that take unix paths for absolute. Gate logs: `target/k3-prep/gate-merge-407e0e1/`.
+  that take unix paths for absolute. Gate logs: `target/k3-prep/gate-merge-407e0e1/` and
+  `gate-merge-f8af138/`.
+- **#549 was reviewed again on 2026-11-18** (FredApps, changes requested): port both pull
+  requests onto `main` keeping its editor (Wrap Text, `editor_slack`, the frozen-pane checks),
+  run `main`'s editor tests with them (`in_cell_editor_stops_growing_at_five_lines` is now
+  `in_cell_editor_grows_with_every_line` and `an_unwrapped_multiline_edit_shows_every_line`),
+  push so the hosted CI runs; and trim the corner stubs left when the editor clears its bottom
+  or right side (CodeRabbit's finding, confirmed), with a test that samples the corner. The
+  rebuilt branches below have the port but not the corners, and conflict again. The house rules
+  give 7 days to answer, from 2026-11-18.
 - **Not part of the merge:** the plug-in records (ADR-0002 in `docs/decisions-aniefork.md`, and
   its row in ROADMAP-aniefork.md's Open work). They were set aside while it was made, and wait
   for the owner, uncommitted.

@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-11-16, upstream `407e0e1` (194 commits since the merge before, releases 0.19.0 and 0.19.1) |
+| Last merge of upstream | 2026-11-18, upstream `f8af138` (144 commits after `407e0e1`, merged just before it: 338 since the merge of 0.16.0, with releases 0.19.0 and 0.19.1) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -810,7 +810,9 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
   `rescan` flag came with its own `allow(unused_mut)` off unix; both are only passed down off
   unix, so the fork's `allow` stays, after upstream's line); and the window in the app's
   `main.rs`, where upstream added `with_decorations` for its own Linux title bar after the
-  line the fork's application id stands on (the fork's id, then upstream's line).
+  line the fork's application id stands on (the fork's id, then upstream's line). The merge of
+  `f8af138` conflicted in `README.md` alone, where upstream's change was its count of worksheet
+  functions (513 to 514); the fork's README gives no count.
 - **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
   must list commands in the shape upstream's listing uses (0.5.0 added `params`). The fork's
   own strings are in English in every interface language (upstream had eleven at the merge of
@@ -847,6 +849,23 @@ included.
 
 Newest first.
 
+- **2026-11-18 (merge of upstream `f8af138`):** On the owner's word ("Let's merge"), right after
+  the merge below was committed. 144 commits since `407e0e1`, 67 of them not merges, and no
+  release (the workspace stays 0.19.1). Among them: the Custom Sort dialog redesigned, Excel
+  2010 conditional formats read, worked out and written in XLSX, `GETPIVOTDATA`, RATE iterating
+  as Excel's does, native Wayland again by default on Linux, punctuation shortcuts that follow
+  the character the keyboard layout types, the native JSON workbook through craft-libs, and a
+  spill that keeps its cells when another array grows into them.
+  - **One conflict**, `README.md` ("Syncing with upstream" has it): the fork's kept.
+  - `Cargo.lock` merged by itself; `cargo metadata` changed nothing, and every package of
+    upstream's is there at its version, beside the fork's 96.
+  - Every hook in the table was checked present: 90 mentions before and after, the same in
+    every file. Nothing came into `docs/brand/`, and nothing calls `start_update_check`.
+  - **Checked on the result, on Windows**, step by step: fmt, clippy, doctests, assets, layers,
+    wasm and parity pass; keytips is current (its check failed on this checkout's line endings
+    alone). Tests: 4,382 pass, 9 are ignored, and the same 7 fail as at the merge below, each on
+    upstream's code alone too (IMSQRT's, whose source changed, run again on upstream's
+    `f8af138`). Logs: `target/k3-prep/gate-merge-f8af138/`.
 - **2026-11-16 (merge of upstream `407e0e1`, GridCraft 0.19.1 and after):** On the owner's word
   ("check upstream and merge with fork"; committed on "Let's merge", 2026-11-18, with the merge
   of the commits after it, above), after `main` was brought level with `origin/main` (a
