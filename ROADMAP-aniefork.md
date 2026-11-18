@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-11-11, upstream `ff9f4b8` (701 commits since the merge before, releases 0.14.2, 0.15.0 and 0.16.0) |
+| Last merge of upstream | 2026-11-16, upstream `407e0e1` (194 commits since the merge before, releases 0.19.0 and 0.19.1) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -744,7 +744,8 @@ still there:
 | `apps/gridcraft/build.rs`, the Windows version information (upstream's: `ProductName` "GridCraft", `FileDescription` "GridCraft spreadsheet") | `ProductName` "DevCraft" and `FileDescription` "DevCraft (GridCraft fork)": what Task Manager and the file's properties call the program. The program is still `gridcraft.exe`, and its settings are still in `GridCraft`. `packaging/windows/app-build.rs.in`, upstream's copy for installers, is left as it is |
 | `crates/ui-egui/tests/it/in_cell_editor_size.rs` (upstream's #1755; `tests/` until upstream gathered each crate's tests into one binary), both tests | `#[ignore = "aniefork: …"]`: they look for the editor's white background painted from the cell's top-left corner, and the fork paints it inside the selection's highlight (`paint_editor`). What they check, an editor as big as its cell for one line and wider for a long one, is checked by the fork's own tests in `aniefork/selection.rs` |
 | `xtask/src/assets.rs`, `run` | one line after `ATTRIBUTION.md` is read: `ATTRIBUTION-aniefork.md` is read with it, so the fork's own asset files (the README's pictures) are checked against the fork's own table |
-| `apps/gridcraft-cli/src/check.rs`, above `fn walk` | `#[cfg_attr(not(unix), allow(clippy::only_used_in_recursion))]`. Off unix upstream's `seen` is only passed down the recursion, which clippy refuses; upstream gates on Linux and macOS and never sees it. A fix of upstream's code, not a hook: drop it once upstream fixes it |
+| `apps/gridcraft-cli/src/check.rs`, above `fn walk`, after upstream's own `allow(unused_mut)` | `#[cfg_attr(not(unix), allow(clippy::only_used_in_recursion))]`. Off unix upstream's `seen` and `rescan` are only passed down the recursion, which clippy refuses; upstream gates on Linux and macOS and never sees it. A fix of upstream's code, not a hook: drop it once upstream fixes it |
+| `xtask/src/stats.rs`, above `mod tests` | `#[cfg_attr(not(unix), allow(unused_imports, unused_mut))]`. Off unix the tests that use `Counts` and `walk` are left out, and a directory builder's `mut` is used only on unix, which clippy refuses (upstream's #3287); upstream's CI never builds them on Windows. A fix of upstream's code, not a hook: drop it once upstream fixes it |
 | `Cargo.lock` | the new crate's entry, with `getrandom` among its dependencies; and `wry` and `tao` with what they bring (`webview2-com`, `dpi`, `windows` and others); and `cfb` and `encoding_rs`, for reading a VBA project; and `zip` among the Development crate's dependencies (the workspace's own, for a kit's package). When upstream changes dependencies, take upstream's file and let `cargo` add the entry back |
 
 ## Syncing with upstream
@@ -804,7 +805,12 @@ Sync often: upstream lands many commits a day, and small merges are easy. What c
   which takes `app` now; the updater line in the app's `main.rs`, where upstream moved
   `after_engine` further down; the macOS menu test, which upstream extended with the Window
   menu's list of workbooks; and `Info.plist.in`, where upstream declared the interface
-  languages above the fork's names.
+  languages above the fork's names. The merge of `407e0e1` (0.19.1 and after) conflicted at
+  two: the CLI's `walk` in `check.rs`, which upstream reworked (`seen` became a map, and a
+  `rescan` flag came with its own `allow(unused_mut)` off unix; both are only passed down off
+  unix, so the fork's `allow` stays, after upstream's line); and the window in the app's
+  `main.rs`, where upstream added `with_decorations` for its own Linux title bar after the
+  line the fork's application id stands on (the fork's id, then upstream's line).
 - **What the hooks hand to upstream's code**, which no conflict flags. `aniefork::commands()`
   must list commands in the shape upstream's listing uses (0.5.0 added `params`). The fork's
   own strings are in English in every interface language (upstream had eleven at the merge of
@@ -841,6 +847,39 @@ included.
 
 Newest first.
 
+- **2026-11-16 (merge of upstream `407e0e1`, GridCraft 0.19.1 and after):** On the owner's word
+  ("check upstream and merge with fork"; committed on "Let's merge", 2026-11-18, with the merge
+  of the commits after it, above), after `main` was brought level with `origin/main` (a
+  fast-forward to the merge of 0.16.0 below, made on macOS). 194 commits since the merge before,
+  112 of them not merges, with releases 0.19.0 and 0.19.1; the workspace is 0.19.1, the fork's
+  crate with it. Among them: WordArt (Insert › WordArt), charts' data and drawing kept between
+  frames, LINEST by QR, Linux's title bar carrying the window's controls, Arabic text shaped and
+  laid right to left in PDF export, `.xls`, CSV, OPC and encrypted workbooks read through
+  craft-libs' shared crates, and more bounds on work and size. The owner's
+  storytold/gridcraft#1641 and #1643 are still open there.
+  - **Three conflicts.** `Cargo.lock`: upstream's taken, and `cargo metadata` added the fork's
+    again (96 packages, and every one of upstream's at its version). The other two at hooks
+    ("Syncing with upstream" has them): the CLI's `walk`, and the window's application id in
+    the app's `main.rs`.
+  - **One more fix of upstream's code, for Windows:** clippy refuses the tests of
+    `xtask/src/stats.rs` there, where #3287 left two imports and a `mut` used on unix only. An
+    `allow` off unix, in the hooks table until upstream fixes it.
+  - **The updater:** still held back. Nothing calls `start_update_check`, and the fork answers
+    Check for Updates… first. The Linux title bar's new code draws the title through the
+    fork's hook.
+  - Every hook in the table was checked present: the fork's mentions in upstream's code were 89
+    before and after the merge itself, the same in every file; 90 with the fix above. Nothing
+    came into `docs/brand/`.
+  - **Checked on the result, on Windows**, step by step (nextest is not installed here): fmt,
+    clippy, doctests, assets, layers and wasm pass. Parity and keytips are current: their
+    check failed on this checkout's line endings alone, and regenerated they differ in nothing.
+    Tests: 4,249 pass, 8 are ignored and 7 fail, each the same on upstream's `407e0e1` alone on
+    this machine: the two that need craft-fonts, `caret_after_typing_arabic_is_drawn_at_its_left_end`
+    (as on macOS at the merge before), and four of upstream's that meet Windows: `complex_numbers`
+    (IMSQRT's last digit), `same_row_cells_keep_their_baseline_with_baseline_aligned_fallbacks`
+    ("cell text is painted"), and two of the sandbox's, which take unix paths for absolute ones
+    (`what_a_policy_refuses`, `a_launch_whose_check_fails_runs_nothing`). Logs:
+    `target/k3-prep/gate-merge-407e0e1/`.
 - **2026-11-11 (merge of upstream `ff9f4b8`, GridCraft 0.16.0 and after):** On the owner's word
   ("Yes, merge it", to merging upstream main into the fork's main), after `main` was brought
   level with `origin/main`. 701 commits since the merge before, 450 of them not merges, with

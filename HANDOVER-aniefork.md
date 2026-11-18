@@ -2,22 +2,58 @@
 
 ## Now: read this first (2026-10-22)
 
+**2026-11-16: upstream `407e0e1` (0.19.1) merged on Windows.** `main` was first brought level
+with `origin/main`, which had the merge of 0.16.0 made on macOS on 2026-11-11 (its record is in
+ROADMAP-aniefork.md's log). 194 commits came in, with three conflicts (`Cargo.lock`, the CLI's
+`walk`, the window's application id in the app's `main.rs`) and one more Windows fix of
+upstream's code (`xtask/src/stats.rs`'s tests, in the hooks table). The log entry has the rest.
+- **Seven tests fail on Windows**, each the same on upstream's code alone: the two craft-fonts
+  ones, the Arabic caret one, IMSQRT's last digit, a CJK baseline one, and two of the sandbox's
+  that take unix paths for absolute. Gate logs: `target/k3-prep/gate-merge-407e0e1/`.
+- **Not part of the merge:** the plug-in records (ADR-0002 in `docs/decisions-aniefork.md`, and
+  its row in ROADMAP-aniefork.md's Open work). They were set aside while it was made, and wait
+  for the owner, uncommitted.
+- **A scratch worktree in the temp folder loses files**: the one #1921 and #549 were rebuilt in
+  (`%TEMP%\claude\...\scratchpad\pr549`) was found twice with files missing, most likely Windows'
+  own clean-up of old temporary files. Its branches are in the repository; keep a worktree that
+  has to last somewhere else.
+
 **2026-10-31: upstream `68a4b1a` merged on Windows.** `main` was first brought level with
 `origin/main` (a fast-forward). Then 3 commits came in, with one conflict: upstream's
 `UPDATE_APP` constant above `pub mod aniefork;` in `lib.rs`. The updater stays held back. The gate
 log is `target/k3-prep/gate-merge-68a4b1a.log`.
 - **The merge is `1a6d1be9`** ("Merge remote-tracking branch 'upstream/main'"). It was committed
   from the staged merge and pushed while the gate's result waited on the owner.
-- **The commit after it holds the rest**, and is not pushed. It fixes two Windows-only faults in
+- **The commit after it holds the rest** (`a9b7a2f7`, pushed since). It fixes two Windows-only faults in
   upstream's code from 0.13.0, whose merge was gated on a Mac: a clippy lint in the CLI's
   `check.rs`, and a unix-only test in the engine. Both are in the hooks table. It also carries
   this record.
 - **Still failing on Windows:** two upstream tests need craft-fonts, which is not here.
 
-**#1921 and #549 now conflict far more widely.** Upstream split `grid.rs` (`grid/selection.rs`,
-`grid/show.rs`, `grid/editor.rs`), where both pull requests make their changes. The local fixes
-`d059da7` and `f56944a` (below) predate the split. Both need rebuilding on upstream's `main`
-before anything is pushed.
+**#1921 and #549 rebuilt on upstream `1f4c67ef` (2026-10-31), not pushed.** Upstream had split
+`grid.rs` into `grid/` and moved the UI tests into `tests/it/`, so both were ported by hand:
+- **Branches** (local; built in a scratch worktree of the session):
+  `selection-outline-rebuilt` = `b2681dc2` (#1921, one commit: the outline and its right-to-left
+  fix) and `editor-highlight-rebuilt` = `0de16110` (#549, on top of it). The old heads are
+  untouched: `selection-outline` `d059da7`, `editor-highlight-split` `f56944a`.
+- **#549 now sits on upstream's editor**: Wrap Text, `editor_slack` (#2336), one line at the
+  cell's height (#1755), frozen-pane clipping. Its whole cells apply to Wrap Text rows too. Its
+  text field keeps upstream's width, so on a right-to-left sheet the text stays over its own
+  cell (upstream's `frozen_column_editor_paints_in_both_panes_on_a_right_to_left_sheet` failed
+  on the first port). The fork's own editor solves that differently: it keeps upstream's width
+  on a right-to-left sheet and grows no whole cells there.
+- **One upstream test changes**: `in_cell_editor_size.rs` reads the editor's recorded rect
+  instead of a white rectangle at the cell's corner.
+- **Gate, on Windows**: everything passes but three tests, the same on upstream's code
+  (IMSQRT's last digit, new upstream; the two craft-fonts ones). Clippy needs the fork's
+  `check.rs` allow, applied only for the run. Logs and four screenshots: `target/k3-prep/pr549/gate-rebuilt/`.
+- **Not pushed**: force-pushing both branches over `selection-outline` and `editor-highlight`
+  was stopped by the agent tool's own safety check on 2026-11-01, and has not been run since.
+  The descriptions wait in `target/k3-prep/pr549/body-1921-rebuilt.md` and `body-549-rebuilt.md`.
+- **Both now conflict with upstream again** (seen 2026-11-06 and since): `grid/quadrant.rs`,
+  where upstream rewrote the gridline loops for frozen panes (#2544) and #1921 puts
+  `gridline_centre` in them, and `docs/ui-parity.md`. Bring them up to date, and run the outline
+  and editor tests again, before pushing.
 
 **2026-10-30: upstream 0.13.0 merged and pushed** on the owner's word: 253 commits, four
 conflicts, every hook kept. Upstream's strict Clippy now covers the fork's code too: the fork's
