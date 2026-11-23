@@ -2,7 +2,15 @@
 
 ## Now: read this first (2026-10-22)
 
-**2026-11-18: upstream merged to `f8af138`, in two merges, on Windows; committed, not pushed.**
+**2026-11-23: upstream `927d4d6` merged on Windows** ("yes, merge it"): 41 commits, no
+conflict, every hook present. **The merge commit `2b8b0d5f` was made and pushed by something
+other than the agent**, within minutes of the merge being staged and before the gate ran, as
+`1a6d1be9` was on 2026-10-31. The owner was asked whether it was them; if not, something on this
+machine commits staged merges and pushes them, so stage the next merge only when ready to commit
+it. The gate ran afterwards on the result: the same seven upstream failures as before, nothing
+else (`target/k3-prep/gate-merge-927d4d6/`). The records came in a commit after it.
+
+**2026-11-18: upstream merged to `f8af138`, in two merges, on Windows; committed, pushed since.**
 `main` was first brought level with `origin/main`, which had the merge of 0.16.0 made on macOS
 on 2026-11-11 (its record is in ROADMAP-aniefork.md's log). Then:
 - **Upstream `407e0e1` (0.19.1)**, 194 commits, merged and gated on 2026-11-16 and committed on
@@ -23,8 +31,26 @@ on 2026-11-11 (its record is in ROADMAP-aniefork.md's log). Then:
   `in_cell_editor_grows_with_every_line` and `an_unwrapped_multiline_edit_shows_every_line`),
   push so the hosted CI runs; and trim the corner stubs left when the editor clears its bottom
   or right side (CodeRabbit's finding, confirmed), with a test that samples the corner. The
-  rebuilt branches below have the port but not the corners, and conflict again. The house rules
-  give 7 days to answer, from 2026-11-18.
+  house rules give 7 days to answer, from 2026-11-18.
+  - **Done and pushed, 2026-11-19:** both rebased onto upstream `00e8f4f` without the agent's
+    attribution lines (upstream's rule 15), `selection-outline` = `f74d7f8b` (#1921) and
+    `editor-highlight` = `03a6a2c4` and `451451d8` (#549; the second commit is the corners),
+    with the descriptions `target/k3-prep/pr549/body-*-1119.md` and the reply
+    `reply-549-1119.md`. The owner allowed these by rules in `.claude/settings.local.json`
+    (force-push with a lease, `gh pr edit`, `gh pr comment`), after the agent tool's safety
+    check had refused the force-push. Heads before: `*-rebuilt-1031`. Worktree:
+    `target/wt-pr549` (git there needs `safe.directory` for its path, given by the
+    environment, and `core.autocrlf=false`). Gate logs: `target/k3-prep/pr549/gate-1119-*`.
+  - **Since:** the hosted CI passed on both, and both are mergeable. FredApps re-reviewed #549
+    on 2026-11-20 as a comment (the port and the corners confirmed; "#1921 remains relevant to
+    landing"); the changes requested of 2026-11-18 still stand on GitHub until FredApps approves.
+  - **Open: CodeRabbit's review of #549, 2026-11-19**, five minor findings and a nitpick, none
+    checked yet (bot findings start no clock). The two worth checking first: the outline of a
+    cell flush with the grid's top or left edge (A1) may be clipped away whole, as #1921 lays the
+    sides outward; and a Wrap Text cell scrolled partly out of view may wrap at the visible width
+    only, unlike `main`. The others: a run of more than 2,048 hidden columns, a multi-line edit
+    in a frozen pane's last row, a covered neighbour's own overflow beyond the cover, and a test
+    that ignores the pane's clip.
 - **Not part of the merge:** the plug-in records (ADR-0002 in `docs/decisions-aniefork.md`, and
   its row in ROADMAP-aniefork.md's Open work). They were set aside while it was made, and wait
   for the owner, uncommitted.

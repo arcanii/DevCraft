@@ -20,7 +20,7 @@ logged in this file instead.
 | | |
 |---|---|
 | Fork `main` is based on | upstream `13664fe` (GridCraft 0.4.0), 2026-10-09 |
-| Last merge of upstream | 2026-11-18, upstream `f8af138` (144 commits after `407e0e1`, merged just before it: 338 since the merge of 0.16.0, with releases 0.19.0 and 0.19.1) |
+| Last merge of upstream | 2026-11-23, upstream `927d4d6` (41 commits since the merge before, no release; still 0.19.1) |
 | Fork is behind upstream by | 0 commits at that merge |
 | Fork carries | 18 changes upstream lacks (below) |
 
@@ -849,6 +849,27 @@ included.
 
 Newest first.
 
+- **2026-11-23 (merge of upstream `927d4d6`):** On the owner's word ("yes, merge it"). 41
+  commits since the merge before, 31 of them not merges, and no release (still 0.19.1). Among
+  them: XLSB and XLSX reading and writing moved further onto craft-libs' shared crates (XLSB
+  external links, Office Math, ODS), the MCP server's framing on `craft-mcp-server` (the fork's
+  own Development server does not use upstream's MCP crate), shapes selected, resized from every
+  handle and rotated, a selected chart's data outline dragged to change its range, Undo and Redo
+  reaching the sheet while Find and Replace is open, and a large batch of Russian strings.
+  - **No conflict.** `Cargo.lock` merged by itself; `cargo metadata` changed nothing, and every
+    package of upstream's is there at its version, beside the fork's 96.
+  - **The merge commit is `2b8b0d5f`** ("Merge remote-tracking branch 'upstream/main'"). It was
+    committed from the staged merge and pushed to `origin/main` within minutes of being staged,
+    before the gate had run, and not by the agent that staged it: the same as `1a6d1be9` on
+    2026-10-31. It holds exactly the staged merge. This entry and the handover's came after it.
+  - Every hook in the table was checked present: 90 mentions before and after, the same in
+    every file. Nothing came into `docs/brand/`, nothing calls `start_update_check`, and the
+    fork's `run_command` still answers Check for Updates… first.
+  - **Checked on the result, on Windows**, step by step, after it was committed: fmt, clippy,
+    doctests, assets, layers, wasm and parity pass; keytips is current (its check failed on this
+    checkout's line endings alone). Tests: 4,450 pass, 9 are ignored, and the same 7 fail as at
+    the merges before, each on upstream's code alone too (the two craft-fonts ones, whose file
+    changed, run again on upstream's `927d4d6`). Logs: `target/k3-prep/gate-merge-927d4d6/`.
 - **2026-11-18 (merge of upstream `f8af138`):** On the owner's word ("Let's merge"), right after
   the merge below was committed. 144 commits since `407e0e1`, 67 of them not merges, and no
   release (the workspace stays 0.19.1). Among them: the Custom Sort dialog redesigned, Excel
